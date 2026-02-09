@@ -28,7 +28,7 @@ func main() {
 			ctx.Send("LLM未开启，可使用 /llm on 开启")
 			return
 		}
-		reply, err := llmManager.Reply(context.Background(), prompt, sessionKey(ctx))
+		reply, err := llmManager.Reply(context.Background(), prompt, sessionKey(ctx), speakerLabel(ctx))
 		if err != nil {
 			ctx.Send("LLM调用失败: " + err.Error())
 			return
@@ -76,7 +76,7 @@ func main() {
 		if strings.HasPrefix(text, cfg.CommandPrefix) {
 			return
 		}
-		reply, err := llmManager.Reply(context.Background(), text, sessionKey(ctx))
+		reply, err := llmManager.Reply(context.Background(), text, sessionKey(ctx), speakerLabel(ctx))
 		if err != nil {
 			ctx.Send("LLM调用失败: " + err.Error())
 			return
@@ -190,4 +190,53 @@ func sessionKey(ctx *zero.Ctx) string {
 		return fmt.Sprintf("private:%d", ctx.Event.UserID)
 	}
 	return fmt.Sprintf("group:%d", ctx.Event.GroupID)
+}
+
+func speakerLabel(ctx *zero.Ctx) string {
+	if ctx == nil || ctx.Event == nil {
+		return ""
+	}
+	if ctx.Event.DetailType == "private" {
+		return ""
+	}
+	name, speakerID := speakerNameAndID(ctx)
+	if strings.TrimSpace(name) == "" {
+		if strings.TrimSpace(speakerID) == "" {
+			return "用户"
+		}
+		return "ID=" + speakerID
+	}
+	if strings.TrimSpace(speakerID) == "" {
+		return "昵称=" + name
+	}
+	return "昵称=" + name + ";ID=" + speakerID
+}
+
+func speakerNameAndID(ctx *zero.Ctx) (string, string) {
+	if ctx == nil || ctx.Event == nil {
+		return "", ""
+	}
+	var name string
+	var speakerID string
+	if ctx.Event.Sender != nil {
+		name = strings.TrimSpace(ctx.Event.Sender.AnonymousName)
+		if name == "" {
+			name = strings.TrimSpace(ctx.Event.Sender.Card)
+		}
+		if name == "" {
+			name = strings.TrimSpace(ctx.Event.Sender.NickName)
+		}
+		if ctx.Event.Sender.TinyID != "" {
+			speakerID = strings.TrimSpace(ctx.Event.Sender.TinyID)
+		} else if ctx.Event.Sender.ID != 0 {
+			speakerID = fmt.Sprintf("%d", ctx.Event.Sender.ID)
+		}
+	}
+	if speakerID == "" {
+		speakerID = strings.TrimSpace(ctx.Event.TinyID)
+	}
+	if speakerID == "" && ctx.Event.UserID != 0 {
+		speakerID = fmt.Sprintf("%d", ctx.Event.UserID)
+	}
+	return name, speakerID
 }

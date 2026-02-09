@@ -17,6 +17,7 @@ const (
 	defaultLLMAPI         = "https://api.openai.com/v1/responses"
 	defaultOpenAIAPI      = "https://api.openai.com/v1/chat/completions"
 	defaultSystemPrompt   = "你是一个可爱的猫娘，说话亲切可爱，回答时适当使用猫娘语气词。"
+	speakerSystemPrompt   = "对话中可能包含群聊多用户消息，用户消息格式为“[说话人]: 内容”。请根据说话人标签区分不同用户的身份、上下文和指代，不要把不同用户的话混为一人。"
 	defaultRequestTimeout = 30 * time.Second
 	summarySystemPrompt   = "你是对话摘要助手。请将以下对话压缩为简洁要点，保留关键信息、结论、用户偏好与待办事项。使用中文，不要加入无关内容，不超过200字。"
 	lightSummaryPrompt    = "你是对话压缩助手。请在不丢关键信息与意图的前提下，将以下对话做轻量压缩为要点，保持语气自然，使用中文，字数尽量短但不过度省略。"
@@ -58,6 +59,7 @@ type llmManager struct {
 	provider      string
 	model         string
 	systemPrompt  string
+	basePrompt    string
 	defaultModel  string
 	defaultPrompt string
 	defaultAPI    string
@@ -70,10 +72,8 @@ type llmManager struct {
 }
 
 func newLLMManager(cfg *appConfig) *llmManager {
-	systemPrompt := strings.TrimSpace(cfg.LLM.SystemPrompt)
-	if systemPrompt == "" {
-		systemPrompt = defaultSystemPrompt
-	}
+	basePrompt := composeSystemPrompt(defaultSystemPrompt, speakerSystemPrompt)
+	systemPrompt := composeSystemPrompt(basePrompt, cfg.LLM.SystemPrompt)
 	provider := normalizeProvider(cfg.LLM.Provider)
 	apiURL := normalizeAPIURL(provider, cfg.LLM.API)
 	historyMax := cfg.LLM.HistoryMax
@@ -86,6 +86,7 @@ func newLLMManager(cfg *appConfig) *llmManager {
 		provider:      provider,
 		model:         strings.TrimSpace(cfg.LLM.Model),
 		systemPrompt:  systemPrompt,
+		basePrompt:    basePrompt,
 		defaultModel:  strings.TrimSpace(cfg.LLM.Model),
 		defaultPrompt: systemPrompt,
 		defaultAPI:    apiURL,
@@ -130,7 +131,7 @@ func (m *llmManager) SetModel(model string) {
 func (m *llmManager) SetSystemPrompt(prompt string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.systemPrompt = strings.TrimSpace(prompt)
+	m.systemPrompt = composeSystemPrompt(m.basePrompt, prompt)
 }
 
 func (m *llmManager) SetImmersive(sessionKey string, enabled bool) {
@@ -176,7 +177,7 @@ func (m *llmManager) Status() (enabled bool, provider string, model string, syst
 	return m.enabled, m.provider, m.model, m.systemPrompt, m.client.apiURL
 }
 
-func (m *llmManager) Reply(ctx context.Context, userInput, sessionKey string) (string, error) {
+func (m *llmManager) Reply(ctx context.Context, userInput, sessionKey, speaker string) (string, error) {
 	m.mu.RLock()
 	provider := m.provider
 	model := m.model
@@ -190,7 +191,8 @@ func (m *llmManager) Reply(ctx context.Context, userInput, sessionKey string) (s
 	}
 	m.compressHistoryIfNeeded(ctx, provider, model, sessionKey)
 	history := m.historySnapshot(sessionKey)
-	messages := append(history, llmMessage{Role: "user", Content: userInput})
+	userContent := formatUserContent(userInput, speaker)
+	messages := append(history, llmMessage{Role: "user", Content: userContent})
 	messages = m.compressMessages(ctx, provider, model, systemPrompt, messages)
 	reqCtx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
 	defer cancel()
@@ -207,7 +209,7 @@ func (m *llmManager) Reply(ctx context.Context, userInput, sessionKey string) (s
 	if err != nil {
 		return "", err
 	}
-	m.appendHistory(sessionKey, userInput, reply)
+	m.appendHistory(sessionKey, userContent, reply)
 	return reply, nil
 }
 
@@ -226,13 +228,13 @@ func (m *llmManager) historySnapshot(sessionKey string) []llmMessage {
 	return copied
 }
 
-func (m *llmManager) appendHistory(sessionKey, userInput, assistantReply string) {
+func (m *llmManager) appendHistory(sessionKey, userContent, assistantReply string) {
 	if strings.TrimSpace(sessionKey) == "" {
 		return
 	}
-	userInput = strings.TrimSpace(userInput)
+	userContent = strings.TrimSpace(userContent)
 	assistantReply = strings.TrimSpace(assistantReply)
-	if userInput == "" || assistantReply == "" {
+	if userContent == "" || assistantReply == "" {
 		return
 	}
 	m.mu.Lock()
@@ -241,7 +243,7 @@ func (m *llmManager) appendHistory(sessionKey, userInput, assistantReply string)
 		m.history = make(map[string][]llmMessage)
 	}
 	history := m.history[sessionKey]
-	history = append(history, llmMessage{Role: "user", Content: userInput})
+	history = append(history, llmMessage{Role: "user", Content: userContent})
 	history = append(history, llmMessage{Role: "assistant", Content: assistantReply})
 	maxMessages := m.historyMax * 2
 	if m.historyMax > 0 && len(history) > maxMessages {
@@ -568,6 +570,30 @@ func formatConversation(messages []llmMessage, contextMax int) string {
 		}
 	}
 	return result
+}
+
+func composeSystemPrompt(basePrompt, extraPrompt string) string {
+	base := strings.TrimSpace(basePrompt)
+	extra := strings.TrimSpace(extraPrompt)
+	if base == "" {
+		return extra
+	}
+	if extra == "" {
+		return base
+	}
+	return base + "\n" + extra
+}
+
+func formatUserContent(userInput, speaker string) string {
+	content := strings.TrimSpace(userInput)
+	if content == "" {
+		return ""
+	}
+	label := strings.TrimSpace(speaker)
+	if label == "" {
+		return content
+	}
+	return "[" + label + "]: " + content
 }
 
 func compactText(text string, maxRunes int) string {
