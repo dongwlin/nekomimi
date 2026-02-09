@@ -11,6 +11,7 @@ import (
 )
 
 func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
+	buffer := NewImmersiveBuffer(cfg.LLM.Immersive, llmManager, cfg.NickName)
 	zero.OnCommand("ai").Handle(func(ctx *zero.Ctx) {
 		prompt := strings.TrimSpace(ctx.State["args"].(string))
 		if prompt == "" {
@@ -46,6 +47,7 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 			ctx.Send("沉浸模式已开启，直接发消息即可对话（/chat off 关闭）")
 		case "off":
 			llmManager.SetImmersive(sessionKey(ctx), false)
+			buffer.Clear(sessionKey(ctx))
 			ctx.Send("沉浸模式已关闭")
 		case "status":
 			status := "关闭"
@@ -69,12 +71,8 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 		if strings.HasPrefix(text, cfg.CommandPrefix) {
 			return
 		}
-		reply, err := llmManager.Reply(context.Background(), text, sessionKey(ctx), speakerLabel(ctx))
-		if err != nil {
-			ctx.Send("LLM调用失败: " + err.Error())
-			return
-		}
-		ctx.Send(reply)
+		isPrivate := ctx.Event != nil && ctx.Event.DetailType == "private"
+		buffer.Enqueue(ctx, sessionKey(ctx), text, speakerLabel(ctx), isPrivate)
 	})
 
 	zero.OnCommand("llm", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {

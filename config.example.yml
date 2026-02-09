@@ -12,6 +12,21 @@ llm:
   system_prompt: "你的自定义提示词（会追加在内置系统提示词后）"
   history_max: 10 # 多轮对话保留的轮数（每轮=一问一答），<=0 不限制
   context_max: 8000 # 模型上下文上限（token 估算），<=0 不启用压缩
+  immersive:
+    cooldown_min_ms: 800 # 冷静期下限（毫秒）
+    cooldown_max_ms: 3500 # 冷静期上限（毫秒）
+    cooldown_base_ms: 1200 # 群聊基准冷静期（毫秒）
+    private_base_ms: 200 # 私聊基准冷静期（毫秒）
+    window_ms: 5000 # 动态判定窗口（毫秒）
+    jitter_ms: 200 # 随机抖动范围（毫秒）
+    max_batch_messages: 10 # 单次合并最大消息数
+    max_batch_chars: 1200 # 单次合并最大字数（按 rune 计）
+    immediate_delay_ms: 120 # 被@或问题触发的最小延迟（毫秒）
+    mention_judge:
+      enabled: false # 被@时是否调用判定助手决定秒回
+      model: "" # 判定模型名，空则复用主模型
+      prompt: "" # 判定提示词，空则使用内置默认
+      timeout_ms: 1200 # 判定超时（毫秒）
 driver:
   websocket:
     url: "ws://localhost:3001"

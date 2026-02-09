@@ -5,12 +5,13 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	"github.com/dongwlin/nekomimi/internal/llm/history"
-	"github.com/dongwlin/nekomimi/internal/llm/provider"
 	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
+	"github.com/dongwlin/nekomimi/internal/llm/provider"
 )
 
 type Manager struct {
@@ -30,6 +31,10 @@ type Manager struct {
 	historyMax    int
 	contextMax    int
 	immersive     map[string]bool
+	judgeEnabled  bool
+	judgeModel    string
+	judgePrompt   string
+	judgeTimeout  time.Duration
 }
 
 func NewManager(cfg config.LLMConfig) *Manager {
@@ -41,6 +46,15 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	contextMax := cfg.ContextMax
 	if contextMax < 0 {
 		contextMax = 0
+	}
+	judgePrompt := strings.TrimSpace(cfg.Immersive.MentionJudge.Prompt)
+	if judgePrompt == "" {
+		judgePrompt = llmprompt.MentionJudgePrompt
+	}
+	judgeModel := strings.TrimSpace(cfg.Immersive.MentionJudge.Model)
+	judgeTimeout := time.Duration(cfg.Immersive.MentionJudge.TimeoutMS) * time.Millisecond
+	if judgeTimeout <= 0 {
+		judgeTimeout = 1200 * time.Millisecond
 	}
 	client := llmclient.New(apiURL, cfg.Key)
 	return &Manager{
@@ -58,6 +72,10 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		historyStore:  history.NewMemoryStore(historyMax),
 		historyMax:    historyMax,
 		contextMax:    contextMax,
+		judgeEnabled:  cfg.Immersive.MentionJudge.Enabled,
+		judgeModel:    judgeModel,
+		judgePrompt:   judgePrompt,
+		judgeTimeout:  judgeTimeout,
 	}
 }
 

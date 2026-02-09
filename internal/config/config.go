@@ -17,14 +17,35 @@ type Config struct {
 }
 
 type LLMConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	Provider     string `yaml:"provider"`
-	API          string `yaml:"api"`
-	Key          string `yaml:"key"`
-	Model        string `yaml:"model"`
-	SystemPrompt string `yaml:"system_prompt"`
-	HistoryMax   int    `yaml:"history_max"`
-	ContextMax   int    `yaml:"context_max"`
+	Enabled      bool            `yaml:"enabled"`
+	Provider     string          `yaml:"provider"`
+	API          string          `yaml:"api"`
+	Key          string          `yaml:"key"`
+	Model        string          `yaml:"model"`
+	SystemPrompt string          `yaml:"system_prompt"`
+	HistoryMax   int             `yaml:"history_max"`
+	ContextMax   int             `yaml:"context_max"`
+	Immersive    ImmersiveConfig `yaml:"immersive"`
+}
+
+type ImmersiveConfig struct {
+	CooldownMinMS    int                `yaml:"cooldown_min_ms"`
+	CooldownMaxMS    int                `yaml:"cooldown_max_ms"`
+	CooldownBaseMS   int                `yaml:"cooldown_base_ms"`
+	PrivateBaseMS    int                `yaml:"private_base_ms"`
+	WindowMS         int                `yaml:"window_ms"`
+	JitterMS         int                `yaml:"jitter_ms"`
+	MaxBatchMessages int                `yaml:"max_batch_messages"`
+	MaxBatchChars    int                `yaml:"max_batch_chars"`
+	ImmediateDelayMS int                `yaml:"immediate_delay_ms"`
+	MentionJudge     MentionJudgeConfig `yaml:"mention_judge"`
+}
+
+type MentionJudgeConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Model     string `yaml:"model"`
+	Prompt    string `yaml:"prompt"`
+	TimeoutMS int    `yaml:"timeout_ms"`
 }
 
 type DriverConfig struct {
