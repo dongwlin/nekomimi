@@ -3,6 +3,14 @@ nickname:
 command_prefix: "/"
 super_users:
   - 123456789
+llm:
+  enabled: false
+  provider: "responses" # responses | openai | gemini(未实现)
+  api: "https://api.openai.com/v1/responses"
+  key: "your_api_key"
+  model: "gpt-4.1-mini"
+  system_prompt: "你是一个可爱的猫娘，说话亲切可爱，回答时适当使用猫娘语气词。"
+  history_max: 10 # 多轮对话保留的轮数（每轮=一问一答）
 driver:
   websocket:
     url: "ws://localhost:3001"

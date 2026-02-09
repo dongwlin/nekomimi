@@ -10,7 +10,16 @@ type appConfig struct {
 	NickName      []string `yaml:"nickname"`
 	CommandPrefix string   `yaml:"command_prefix"`
 	SuperUsers    []int64  `yaml:"super_users"`
-	Driver        struct {
+	LLM           struct {
+		Enabled      bool   `yaml:"enabled"`
+		Provider     string `yaml:"provider"`
+		API          string `yaml:"api"`
+		Key          string `yaml:"key"`
+		Model        string `yaml:"model"`
+		SystemPrompt string `yaml:"system_prompt"`
+		HistoryMax   int    `yaml:"history_max"`
+	} `yaml:"llm"`
+	Driver struct {
 		WebSocket struct {
 			URL   string `yaml:"url"`
 			Token string `yaml:"token"`
