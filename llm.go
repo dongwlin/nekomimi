@@ -18,6 +18,8 @@ const (
 	defaultOpenAIAPI      = "https://api.openai.com/v1/chat/completions"
 	defaultSystemPrompt   = "你是一个可爱的猫娘，说话亲切可爱，回答时适当使用猫娘语气词。"
 	defaultRequestTimeout = 30 * time.Second
+	summarySystemPrompt   = "你是对话摘要助手。请将以下对话压缩为简洁要点，保留关键信息、结论、用户偏好与待办事项。使用中文，不要加入无关内容，不超过200字。"
+	lightSummaryPrompt    = "你是对话压缩助手。请在不丢关键信息与意图的前提下，将以下对话做轻量压缩为要点，保持语气自然，使用中文，字数尽量短但不过度省略。"
 )
 
 const (
@@ -62,6 +64,7 @@ type llmManager struct {
 	defaultProv   string
 	client        *llmClient
 	historyMax    int
+	contextMax    int
 	history       map[string][]llmMessage
 	immersive     map[string]bool
 }
@@ -77,6 +80,10 @@ func newLLMManager(cfg *appConfig) *llmManager {
 	if historyMax <= 0 {
 		historyMax = 10
 	}
+	contextMax := cfg.LLM.ContextMax
+	if contextMax < 0 {
+		contextMax = 0
+	}
 	return &llmManager{
 		enabled:       cfg.LLM.Enabled,
 		provider:      provider,
@@ -88,6 +95,7 @@ func newLLMManager(cfg *appConfig) *llmManager {
 		defaultProv:   provider,
 		client:        newLLMClient(apiURL, cfg.LLM.Key),
 		historyMax:    historyMax,
+		contextMax:    contextMax,
 		history:       make(map[string][]llmMessage),
 	}
 }
@@ -185,6 +193,7 @@ func (m *llmManager) Reply(ctx context.Context, userInput, sessionKey string) (s
 	}
 	history := m.historySnapshot(sessionKey)
 	messages := append(history, llmMessage{Role: "user", Content: userInput})
+	messages = m.compressMessages(ctx, provider, model, systemPrompt, messages)
 	reqCtx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
 	defer cancel()
 	var reply string
@@ -253,6 +262,317 @@ func (m *llmManager) ClearHistory(sessionKey string) {
 		return
 	}
 	delete(m.history, sessionKey)
+}
+
+func (m *llmManager) compressMessages(ctx context.Context, provider, model, systemPrompt string, messages []llmMessage) []llmMessage {
+	if m.contextMax <= 0 || len(messages) == 0 {
+		return messages
+	}
+	if estimateContextTokens(systemPrompt, messages) <= m.contextMax {
+		return messages
+	}
+	keepLast := 6
+	if keepLast < 2 {
+		keepLast = 2
+	}
+	if len(messages) <= keepLast {
+		tailCount := 2
+		if len(messages) < tailCount {
+			tailCount = len(messages)
+		}
+		head := messages[:len(messages)-tailCount]
+		if len(head) == 0 {
+			return reduceMessagesToFit(messages, systemPrompt, m.contextMax)
+		}
+		summary := m.buildLightSummaryWithModel(ctx, provider, model, head)
+		if strings.TrimSpace(summary) == "" {
+			return reduceMessagesToFit(messages, systemPrompt, m.contextMax)
+		}
+		compressed := make([]llmMessage, 0, tailCount+1)
+		compressed = append(compressed, llmMessage{
+			Role:    "system",
+			Content: "对话摘要（轻量压缩）: " + summary,
+		})
+		compressed = append(compressed, messages[len(messages)-tailCount:]...)
+		if estimateContextTokens(systemPrompt, compressed) <= m.contextMax {
+			return compressed
+		}
+		return reduceMessagesToFit(compressed, systemPrompt, m.contextMax)
+	}
+	tailStart := len(messages) - keepLast
+	summarySrc := messages[:tailStart]
+	tail := messages[tailStart:]
+	summary := m.buildSummaryWithModel(ctx, provider, model, summarySrc)
+	if strings.TrimSpace(summary) == "" {
+		summary = buildSummary(summarySrc, 600)
+	}
+	compressed := make([]llmMessage, 0, len(tail)+1)
+	if strings.TrimSpace(summary) != "" {
+		compressed = append(compressed, llmMessage{
+			Role:    "system",
+			Content: "对话摘要（自动压缩）: " + summary,
+		})
+	}
+	compressed = append(compressed, tail...)
+	if estimateContextTokens(systemPrompt, compressed) <= m.contextMax {
+		return compressed
+	}
+	return reduceMessagesToFit(compressed, systemPrompt, m.contextMax)
+}
+
+func (m *llmManager) buildSummaryWithModel(ctx context.Context, provider, model string, messages []llmMessage) string {
+	if strings.TrimSpace(model) == "" || len(messages) == 0 {
+		return ""
+	}
+	conversation := formatConversation(messages, m.contextMax)
+	if strings.TrimSpace(conversation) == "" {
+		return ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
+	defer cancel()
+	input := []llmMessage{{Role: "user", Content: conversation}}
+	var summary string
+	var err error
+	switch provider {
+	case llmProviderOpenAI:
+		summary, err = m.client.GenerateOpenAI(reqCtx, model, summarySystemPrompt, input)
+	case llmProviderGemini:
+		return ""
+	default:
+		summary, err = m.client.GenerateResponses(reqCtx, model, summarySystemPrompt, input)
+	}
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(summary)
+}
+
+func (m *llmManager) buildLightSummaryWithModel(ctx context.Context, provider, model string, messages []llmMessage) string {
+	if strings.TrimSpace(model) == "" || len(messages) == 0 {
+		return ""
+	}
+	conversation := formatConversation(messages, m.contextMax)
+	if strings.TrimSpace(conversation) == "" {
+		return ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
+	defer cancel()
+	input := []llmMessage{{Role: "user", Content: conversation}}
+	var summary string
+	var err error
+	switch provider {
+	case llmProviderOpenAI:
+		summary, err = m.client.GenerateOpenAI(reqCtx, model, lightSummaryPrompt, input)
+	case llmProviderGemini:
+		return ""
+	default:
+		summary, err = m.client.GenerateResponses(reqCtx, model, lightSummaryPrompt, input)
+	}
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(summary)
+}
+
+func reduceMessagesToFit(messages []llmMessage, systemPrompt string, maxTokens int) []llmMessage {
+	if maxTokens <= 0 || len(messages) == 0 {
+		return messages
+	}
+	for len(messages) > 1 && estimateContextTokens(systemPrompt, messages) > maxTokens {
+		dropIndex := 0
+		if isSummaryMessage(messages[0]) && len(messages) > 1 {
+			dropIndex = 1
+		}
+		messages = append(messages[:dropIndex], messages[dropIndex+1:]...)
+	}
+	if estimateContextTokens(systemPrompt, messages) <= maxTokens {
+		return messages
+	}
+	if len(messages) > 0 && isSummaryMessage(messages[0]) {
+		budget := maxTokens - estimateContextTokens(systemPrompt, messages[1:])
+		if budget > 4 {
+			messages[0].Content = truncateToTokens(messages[0].Content, budget-4)
+		}
+	}
+	if estimateContextTokens(systemPrompt, messages) <= maxTokens {
+		return messages
+	}
+	for i := 0; i < len(messages) && estimateContextTokens(systemPrompt, messages) > maxTokens; i++ {
+		contentTokens := estimateTokens(messages[i].Content)
+		if contentTokens <= 20 {
+			continue
+		}
+		target := contentTokens / 2
+		if target < 20 {
+			target = 20
+		}
+		messages[i].Content = truncateToTokens(messages[i].Content, target)
+	}
+	for len(messages) > 1 && estimateContextTokens(systemPrompt, messages) > maxTokens {
+		messages = messages[1:]
+	}
+	return messages
+}
+
+func isSummaryMessage(msg llmMessage) bool {
+	return strings.TrimSpace(msg.Role) == "system" &&
+		strings.HasPrefix(strings.TrimSpace(msg.Content), "对话摘要（自动压缩）")
+}
+
+func estimateContextTokens(systemPrompt string, messages []llmMessage) int {
+	total := estimateTokens(systemPrompt) + 6
+	for _, msg := range messages {
+		total += estimateTokens(msg.Content) + 4
+	}
+	return total
+}
+
+func estimateTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	ascii := 0
+	nonASCII := 0
+	for _, r := range text {
+		if r <= 0x7f {
+			ascii++
+		} else {
+			nonASCII++
+		}
+	}
+	tokens := (ascii+3)/4 + nonASCII
+	if tokens < 0 {
+		return 0
+	}
+	return tokens
+}
+
+func buildSummary(messages []llmMessage, maxChars int) string {
+	if len(messages) == 0 || maxChars <= 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for _, msg := range messages {
+		content := compactText(msg.Content, 80)
+		if content == "" {
+			continue
+		}
+		role := "用户"
+		switch strings.TrimSpace(msg.Role) {
+		case "assistant":
+			role = "助手"
+		case "system":
+			role = "系统"
+		}
+		entry := role + ":" + content
+		if builder.Len() > 0 {
+			entry = "；" + entry
+		}
+		if builder.Len()+len([]rune(entry)) > maxChars {
+			remaining := maxChars - len([]rune(builder.String()))
+			if remaining > 0 {
+				builder.WriteString(limitRunes(entry, remaining))
+			}
+			break
+		}
+		builder.WriteString(entry)
+	}
+	return builder.String()
+}
+
+func formatConversation(messages []llmMessage, contextMax int) string {
+	var builder strings.Builder
+	for _, msg := range messages {
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		role := "用户"
+		switch strings.TrimSpace(msg.Role) {
+		case "assistant":
+			role = "助手"
+		case "system":
+			role = "系统"
+		}
+		builder.WriteString(role)
+		builder.WriteString(": ")
+		builder.WriteString(content)
+		builder.WriteString("\n")
+	}
+	result := strings.TrimSpace(builder.String())
+	if result == "" {
+		return ""
+	}
+	if contextMax > 0 {
+		limit := contextMax - 256
+		if limit < 256 {
+			limit = contextMax
+		}
+		if limit > 0 {
+			result = truncateToTokens(result, limit)
+		}
+	}
+	return result
+}
+
+func compactText(text string, maxRunes int) string {
+	clean := strings.TrimSpace(text)
+	if clean == "" {
+		return ""
+	}
+	clean = strings.ReplaceAll(clean, "\n", " ")
+	clean = strings.Join(strings.Fields(clean), " ")
+	return limitRunes(clean, maxRunes)
+}
+
+func limitRunes(text string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+func truncateToTokens(text string, maxTokens int) string {
+	if maxTokens <= 0 || text == "" {
+		return ""
+	}
+	if estimateTokens(text) <= maxTokens {
+		return text
+	}
+	target := maxTokens
+	if maxTokens > 4 {
+		target = maxTokens - 1
+	}
+	var builder strings.Builder
+	ascii := 0
+	nonASCII := 0
+	for _, r := range text {
+		if r <= 0x7f {
+			ascii++
+		} else {
+			nonASCII++
+		}
+		tokens := (ascii+3)/4 + nonASCII
+		if tokens > target {
+			break
+		}
+		builder.WriteRune(r)
+	}
+	result := strings.TrimSpace(builder.String())
+	if result == "" {
+		return ""
+	}
+	return result + "..."
 }
 
 type responsesRequest struct {

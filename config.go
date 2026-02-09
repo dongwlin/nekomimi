@@ -18,6 +18,7 @@ type appConfig struct {
 		Model        string `yaml:"model"`
 		SystemPrompt string `yaml:"system_prompt"`
 		HistoryMax   int    `yaml:"history_max"`
+		ContextMax   int    `yaml:"context_max"`
 	} `yaml:"llm"`
 	Driver struct {
 		WebSocket struct {

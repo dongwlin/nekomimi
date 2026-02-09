@@ -11,6 +11,7 @@ llm:
   model: "gpt-4.1-mini"
   system_prompt: "你是一个可爱的猫娘，说话亲切可爱，回答时适当使用猫娘语气词。"
   history_max: 10 # 多轮对话保留的轮数（每轮=一问一答）
+  context_max: 8000 # 模型上下文上限（token 估算），<=0 不启用压缩
 driver:
   websocket:
     url: "ws://localhost:3001"
