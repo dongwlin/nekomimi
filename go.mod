@@ -2,7 +2,10 @@ module github.com/dongwlin/nekomimi
 
 go 1.25.7
 
-require github.com/wdvxdr1123/ZeroBot v1.8.2
+require (
+	github.com/wdvxdr1123/ZeroBot v1.8.2
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/FloatTech/ttl v0.0.0-20250224045156-012b1463287d // indirect
@@ -15,5 +18,4 @@ require (
 	github.com/tidwall/pretty v1.2.0 // indirect
 	golang.org/x/net v0.26.0 // indirect
 	golang.org/x/sys v0.21.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
