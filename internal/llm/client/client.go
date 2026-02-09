@@ -56,10 +56,14 @@ func (c *Client) apiURLSnapshot() string {
 	return c.apiURL
 }
 
-func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
+func (c *Client) ensureAPIKey() error {
 	if strings.TrimSpace(c.apiKey) == "" {
-		return "", errors.New("未配置 API Key")
+		return errors.New("未配置 API Key")
 	}
+	return nil
+}
+
+func buildResponsesInput(systemPrompt string, messages []model.Message) []responsesInputMessage {
 	input := make([]responsesInputMessage, 0, len(messages)+1)
 	if strings.TrimSpace(systemPrompt) != "" {
 		input = append(input, responsesInputMessage{
@@ -85,40 +89,58 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 			},
 		})
 	}
-	reqBody := responsesRequest{
-		Model: modelName,
-		Input: input,
+	return input
+}
+
+func buildChatMessages(systemPrompt string, messages []model.Message) []chatMessage {
+	chatMessages := make([]chatMessage, 0, len(messages)+1)
+	if strings.TrimSpace(systemPrompt) != "" {
+		chatMessages = append(chatMessages, chatMessage{Role: "system", Content: systemPrompt})
 	}
+	for _, msg := range messages {
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		role := strings.TrimSpace(msg.Role)
+		if role == "" {
+			role = "user"
+		}
+		chatMessages = append(chatMessages, chatMessage{Role: role, Content: content})
+	}
+	return chatMessages
+}
+
+func (c *Client) postJSON(ctx context.Context, apiURL string, reqBody any) ([]byte, error) {
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURLSnapshot(), bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payload))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("请求失败: %s", strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("请求失败: %s", strings.TrimSpace(string(body)))
 	}
+	return body, nil
+}
 
-	var parsed responsesResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", err
-	}
+func parseResponsesText(parsed responsesResponse) (string, error) {
 	if parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
 		return "", errors.New(parsed.Error.Message)
 	}
@@ -138,59 +160,7 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 	return result, nil
 }
 
-func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
-	if strings.TrimSpace(c.apiKey) == "" {
-		return "", errors.New("未配置 API Key")
-	}
-	chatMessages := make([]chatMessage, 0, len(messages)+1)
-	if strings.TrimSpace(systemPrompt) != "" {
-		chatMessages = append(chatMessages, chatMessage{Role: "system", Content: systemPrompt})
-	}
-	for _, msg := range messages {
-		content := strings.TrimSpace(msg.Content)
-		if content == "" {
-			continue
-		}
-		role := strings.TrimSpace(msg.Role)
-		if role == "" {
-			role = "user"
-		}
-		chatMessages = append(chatMessages, chatMessage{Role: role, Content: content})
-	}
-	reqBody := chatCompletionsRequest{
-		Model:    modelName,
-		Messages: chatMessages,
-	}
-	payload, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURLSnapshot(), bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("请求失败: %s", strings.TrimSpace(string(body)))
-	}
-
-	var parsed chatCompletionsResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", err
-	}
+func parseChatCompletionText(parsed chatCompletionsResponse) (string, error) {
 	if parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
 		return "", errors.New(parsed.Error.Message)
 	}
@@ -202,4 +172,46 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 		return "", errors.New("模型未返回文本内容")
 	}
 	return result, nil
+}
+
+func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
+	if err := c.ensureAPIKey(); err != nil {
+		return "", err
+	}
+	input := buildResponsesInput(systemPrompt, messages)
+	reqBody := responsesRequest{
+		Model: modelName,
+		Input: input,
+	}
+	body, err := c.postJSON(ctx, c.apiURLSnapshot(), reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	var parsed responsesResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	return parseResponsesText(parsed)
+}
+
+func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
+	if err := c.ensureAPIKey(); err != nil {
+		return "", err
+	}
+	chatMessages := buildChatMessages(systemPrompt, messages)
+	reqBody := chatCompletionsRequest{
+		Model:    modelName,
+		Messages: chatMessages,
+	}
+	body, err := c.postJSON(ctx, c.apiURLSnapshot(), reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	var parsed chatCompletionsResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	return parseChatCompletionText(parsed)
 }
