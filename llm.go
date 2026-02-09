@@ -77,9 +77,6 @@ func newLLMManager(cfg *appConfig) *llmManager {
 	provider := normalizeProvider(cfg.LLM.Provider)
 	apiURL := normalizeAPIURL(provider, cfg.LLM.API)
 	historyMax := cfg.LLM.HistoryMax
-	if historyMax <= 0 {
-		historyMax = 10
-	}
 	contextMax := cfg.LLM.ContextMax
 	if contextMax < 0 {
 		contextMax = 0
@@ -191,6 +188,7 @@ func (m *llmManager) Reply(ctx context.Context, userInput, sessionKey string) (s
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	m.compressHistoryIfNeeded(ctx, provider, model, sessionKey)
 	history := m.historySnapshot(sessionKey)
 	messages := append(history, llmMessage{Role: "user", Content: userInput})
 	messages = m.compressMessages(ctx, provider, model, systemPrompt, messages)
@@ -229,7 +227,7 @@ func (m *llmManager) historySnapshot(sessionKey string) []llmMessage {
 }
 
 func (m *llmManager) appendHistory(sessionKey, userInput, assistantReply string) {
-	if strings.TrimSpace(sessionKey) == "" || m.historyMax <= 0 {
+	if strings.TrimSpace(sessionKey) == "" {
 		return
 	}
 	userInput = strings.TrimSpace(userInput)
@@ -246,10 +244,59 @@ func (m *llmManager) appendHistory(sessionKey, userInput, assistantReply string)
 	history = append(history, llmMessage{Role: "user", Content: userInput})
 	history = append(history, llmMessage{Role: "assistant", Content: assistantReply})
 	maxMessages := m.historyMax * 2
-	if maxMessages > 0 && len(history) > maxMessages {
+	if m.historyMax > 0 && len(history) > maxMessages {
 		history = history[len(history)-maxMessages:]
 	}
 	m.history[sessionKey] = history
+}
+
+func (m *llmManager) compressHistoryIfNeeded(ctx context.Context, provider, model, sessionKey string) {
+	if strings.TrimSpace(sessionKey) == "" || m.historyMax <= 0 {
+		return
+	}
+	m.mu.RLock()
+	history, ok := m.history[sessionKey]
+	if !ok || len(history) < m.historyMax*2 {
+		m.mu.RUnlock()
+		return
+	}
+	oldRounds := m.historyMax / 2
+	if oldRounds < 1 {
+		oldRounds = 1
+	}
+	oldMsgCount := oldRounds * 2
+	if len(history) <= oldMsgCount {
+		m.mu.RUnlock()
+		return
+	}
+	summarySrc := make([]llmMessage, oldMsgCount)
+	copy(summarySrc, history[:oldMsgCount])
+	m.mu.RUnlock()
+
+	summary := m.buildSummaryWithModel(ctx, provider, model, summarySrc)
+	if strings.TrimSpace(summary) == "" {
+		summary = buildSummary(summarySrc, 600)
+	}
+	if strings.TrimSpace(summary) == "" {
+		return
+	}
+	summaryMsg := llmMessage{
+		Role:    "system",
+		Content: "对话摘要（历史压缩）: " + summary,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	history, ok = m.history[sessionKey]
+	if !ok || len(history) < m.historyMax*2 || len(history) <= oldMsgCount {
+		return
+	}
+	tail := make([]llmMessage, len(history)-oldMsgCount)
+	copy(tail, history[oldMsgCount:])
+	compressed := make([]llmMessage, 0, len(tail)+1)
+	compressed = append(compressed, summaryMsg)
+	compressed = append(compressed, tail...)
+	m.history[sessionKey] = compressed
 }
 
 func (m *llmManager) ClearHistory(sessionKey string) {
@@ -422,7 +469,9 @@ func reduceMessagesToFit(messages []llmMessage, systemPrompt string, maxTokens i
 
 func isSummaryMessage(msg llmMessage) bool {
 	return strings.TrimSpace(msg.Role) == "system" &&
-		strings.HasPrefix(strings.TrimSpace(msg.Content), "对话摘要（自动压缩）")
+		(strings.HasPrefix(strings.TrimSpace(msg.Content), "对话摘要（自动压缩）") ||
+			strings.HasPrefix(strings.TrimSpace(msg.Content), "对话摘要（轻量压缩）") ||
+			strings.HasPrefix(strings.TrimSpace(msg.Content), "对话摘要（历史压缩）"))
 }
 
 func estimateContextTokens(systemPrompt string, messages []llmMessage) int {
