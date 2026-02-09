@@ -9,11 +9,13 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/dongwlin/nekomimi/internal/llm/model"
 )
 
 type Client struct {
+	mu         sync.RWMutex
 	apiURL     string
 	apiKey     string
 	httpClient *http.Client
@@ -33,6 +35,8 @@ func New(apiURL, apiKey string) *Client {
 }
 
 func (c *Client) SetAPIURL(apiURL string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if strings.TrimSpace(apiURL) == "" {
 		c.apiURL = DefaultLLMAPI
 		return
@@ -41,6 +45,14 @@ func (c *Client) SetAPIURL(apiURL string) {
 }
 
 func (c *Client) APIURL() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.apiURL
+}
+
+func (c *Client) apiURLSnapshot() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.apiURL
 }
 
@@ -82,7 +94,7 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURLSnapshot(), bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
@@ -154,7 +166,7 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURLSnapshot(), bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}

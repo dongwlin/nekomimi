@@ -5,14 +5,19 @@ import (
 	"strings"
 
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
-	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
+	"github.com/dongwlin/nekomimi/internal/llm/summarizer"
+	"github.com/dongwlin/nekomimi/internal/llm/token"
 )
 
 func (m *Manager) compressMessages(ctx context.Context, provider, model, systemPrompt string, messages []Message) []Message {
 	if m.contextMax <= 0 || len(messages) == 0 {
 		return messages
 	}
-	if estimateContextTokens(systemPrompt, messages) <= m.contextMax {
+	threshold := m.contextMax * 80 / 100
+	if threshold <= 0 {
+		threshold = m.contextMax
+	}
+	if token.EstimateContextTokens(systemPrompt, messages) <= threshold {
 		return messages
 	}
 	keepLast := 6
@@ -28,7 +33,7 @@ func (m *Manager) compressMessages(ctx context.Context, provider, model, systemP
 		if len(head) == 0 {
 			return reduceMessagesToFit(messages, systemPrompt, m.contextMax)
 		}
-		summary := m.buildLightSummaryWithModel(ctx, provider, model, head)
+		summary := m.summarizeWithProvider(ctx, provider, model, summarizer.ModeLight, head, 0)
 		if strings.TrimSpace(summary) == "" {
 			return reduceMessagesToFit(messages, systemPrompt, m.contextMax)
 		}
@@ -38,7 +43,7 @@ func (m *Manager) compressMessages(ctx context.Context, provider, model, systemP
 			Content: "对话摘要（轻量压缩）: " + summary,
 		})
 		compressed = append(compressed, messages[len(messages)-tailCount:]...)
-		if estimateContextTokens(systemPrompt, compressed) <= m.contextMax {
+		if token.EstimateContextTokens(systemPrompt, compressed) <= m.contextMax {
 			return compressed
 		}
 		return reduceMessagesToFit(compressed, systemPrompt, m.contextMax)
@@ -46,10 +51,7 @@ func (m *Manager) compressMessages(ctx context.Context, provider, model, systemP
 	tailStart := len(messages) - keepLast
 	summarySrc := messages[:tailStart]
 	tail := messages[tailStart:]
-	summary := m.buildSummaryWithModel(ctx, provider, model, summarySrc)
-	if strings.TrimSpace(summary) == "" {
-		summary = buildSummary(summarySrc, 600)
-	}
+	summary := m.summarizeWithProvider(ctx, provider, model, summarizer.ModeFull, summarySrc, 600)
 	compressed := make([]Message, 0, len(tail)+1)
 	if strings.TrimSpace(summary) != "" {
 		compressed = append(compressed, Message{
@@ -58,68 +60,28 @@ func (m *Manager) compressMessages(ctx context.Context, provider, model, systemP
 		})
 	}
 	compressed = append(compressed, tail...)
-	if estimateContextTokens(systemPrompt, compressed) <= m.contextMax {
+	if token.EstimateContextTokens(systemPrompt, compressed) <= m.contextMax {
 		return compressed
 	}
 	return reduceMessagesToFit(compressed, systemPrompt, m.contextMax)
 }
 
-func (m *Manager) buildSummaryWithModel(ctx context.Context, provider, model string, messages []Message) string {
+func (m *Manager) summarizeWithProvider(ctx context.Context, providerName, model string, mode summarizer.Mode, messages []Message, fallbackMaxChars int) string {
 	if strings.TrimSpace(model) == "" || len(messages) == 0 {
 		return ""
 	}
-	conversation := formatConversation(messages, m.contextMax)
-	if strings.TrimSpace(conversation) == "" {
-		return ""
+	providerClient := m.providers.From(providerName)
+	llmSummarizer := summarizer.NewLLM(providerClient, mode, m.contextMax)
+	var fallback summarizer.Summarizer
+	if fallbackMaxChars > 0 {
+		fallback = summarizer.NewFallback(fallbackMaxChars)
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	chain := summarizer.NewChain(llmSummarizer, fallback)
+	reqCtx := ctx
+	if reqCtx == nil {
+		reqCtx = context.Background()
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, llmclient.DefaultRequestTimeout)
+	reqCtx, cancel := context.WithTimeout(reqCtx, llmclient.DefaultRequestTimeout)
 	defer cancel()
-	input := []Message{{Role: "user", Content: conversation}}
-	var summary string
-	var err error
-	switch provider {
-	case llmProviderOpenAI:
-		summary, err = m.client.GenerateOpenAI(reqCtx, model, llmprompt.SummarySystemPrompt, input)
-	case llmProviderGemini:
-		return ""
-	default:
-		summary, err = m.client.GenerateResponses(reqCtx, model, llmprompt.SummarySystemPrompt, input)
-	}
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(summary)
-}
-
-func (m *Manager) buildLightSummaryWithModel(ctx context.Context, provider, model string, messages []Message) string {
-	if strings.TrimSpace(model) == "" || len(messages) == 0 {
-		return ""
-	}
-	conversation := formatConversation(messages, m.contextMax)
-	if strings.TrimSpace(conversation) == "" {
-		return ""
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, llmclient.DefaultRequestTimeout)
-	defer cancel()
-	input := []Message{{Role: "user", Content: conversation}}
-	var summary string
-	var err error
-	switch provider {
-	case llmProviderOpenAI:
-		summary, err = m.client.GenerateOpenAI(reqCtx, model, llmprompt.LightSummaryPrompt, input)
-	case llmProviderGemini:
-		return ""
-	default:
-		summary, err = m.client.GenerateResponses(reqCtx, model, llmprompt.LightSummaryPrompt, input)
-	}
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(summary)
+	return chain.Summarize(reqCtx, model, messages)
 }

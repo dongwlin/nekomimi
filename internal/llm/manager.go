@@ -8,6 +8,8 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
+	"github.com/dongwlin/nekomimi/internal/llm/history"
+	"github.com/dongwlin/nekomimi/internal/llm/provider"
 	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
 )
 
@@ -23,36 +25,39 @@ type Manager struct {
 	defaultAPI    string
 	defaultProv   string
 	client        *llmclient.Client
+	providers     *provider.Factory
+	historyStore  history.Store
 	historyMax    int
 	contextMax    int
-	history       map[string][]Message
 	immersive     map[string]bool
 }
 
 func NewManager(cfg config.LLMConfig) *Manager {
 	basePrompt := composeSystemPrompt(llmprompt.DefaultSystemPrompt, llmprompt.SpeakerSystemPrompt)
 	systemPrompt := composeSystemPrompt(basePrompt, cfg.SystemPrompt)
-	provider := normalizeProvider(cfg.Provider)
-	apiURL := normalizeAPIURL(provider, cfg.API)
+	providerName := normalizeProvider(cfg.Provider)
+	apiURL := normalizeAPIURL(providerName, cfg.API)
 	historyMax := cfg.HistoryMax
 	contextMax := cfg.ContextMax
 	if contextMax < 0 {
 		contextMax = 0
 	}
+	client := llmclient.New(apiURL, cfg.Key)
 	return &Manager{
 		enabled:       cfg.Enabled,
-		provider:      provider,
+		provider:      providerName,
 		model:         strings.TrimSpace(cfg.Model),
 		systemPrompt:  systemPrompt,
 		basePrompt:    basePrompt,
 		defaultModel:  strings.TrimSpace(cfg.Model),
 		defaultPrompt: systemPrompt,
 		defaultAPI:    apiURL,
-		defaultProv:   provider,
-		client:        llmclient.New(apiURL, cfg.Key),
+		defaultProv:   providerName,
+		client:        client,
+		providers:     provider.NewFactory(client),
+		historyStore:  history.NewMemoryStore(historyMax),
 		historyMax:    historyMax,
 		contextMax:    contextMax,
-		history:       make(map[string][]Message),
 	}
 }
 
@@ -152,21 +157,20 @@ func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker stri
 	userContent := formatUserContent(userInput, speaker)
 	messages := append(history, Message{Role: "user", Content: userContent})
 	messages = m.compressMessages(ctx, provider, model, systemPrompt, messages)
-	reqCtx, cancel := context.WithTimeout(ctx, llmclient.DefaultRequestTimeout)
-	defer cancel()
-	var reply string
-	var err error
-	switch provider {
-	case llmProviderOpenAI:
-		reply, err = m.client.GenerateOpenAI(reqCtx, model, systemPrompt, messages)
-	case llmProviderGemini:
-		return "", errors.New("gemini 尚未接入")
-	default:
-		reply, err = m.client.GenerateResponses(reqCtx, model, systemPrompt, messages)
-	}
+	reply, err := m.generateWithProvider(ctx, provider, model, systemPrompt, messages)
 	if err != nil {
 		return "", err
 	}
 	m.appendHistory(sessionKey, userContent, reply)
 	return reply, nil
+}
+
+func (m *Manager) generateWithProvider(ctx context.Context, providerName, model, systemPrompt string, messages []Message) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, llmclient.DefaultRequestTimeout)
+	defer cancel()
+	providerClient := m.providers.From(providerName)
+	return providerClient.Generate(reqCtx, model, systemPrompt, messages)
 }
