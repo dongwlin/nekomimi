@@ -183,14 +183,14 @@ func speakerLabel(ctx *zero.Ctx) string {
 	name, speakerID := speakerNameAndID(ctx)
 	if strings.TrimSpace(name) == "" {
 		if strings.TrimSpace(speakerID) == "" {
-			return "用户"
+			return "user"
 		}
-		return "ID=" + speakerID
+		return "id=" + speakerID
 	}
 	if strings.TrimSpace(speakerID) == "" {
-		return "昵称=" + name
+		return "name=" + name
 	}
-	return "昵称=" + name + ";ID=" + speakerID
+	return "name=" + name + ";id=" + speakerID
 }
 
 func speakerNameAndID(ctx *zero.Ctx) (string, string) {

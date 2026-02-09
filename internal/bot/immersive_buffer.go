@@ -381,12 +381,12 @@ func formatQueuedMessage(msg queuedMessage) string {
 		if timeLabel == "" {
 			return content
 		}
-		return "[时间=" + timeLabel + "]: " + content
+		return "[time=" + timeLabel + "]: " + content
 	}
 	if timeLabel == "" {
 		return "[" + label + "]: " + content
 	}
-	return "[" + label + ";时间=" + timeLabel + "]: " + content
+	return "[" + label + ";time=" + timeLabel + "]: " + content
 }
 
 func formatMessageTime(at time.Time) string {
