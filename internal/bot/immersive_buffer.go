@@ -360,20 +360,40 @@ func buildRecentPreview(queue []queuedMessage, keep int) string {
 func buildCombinedInput(queue []queuedMessage) string {
 	var builder strings.Builder
 	for _, msg := range queue {
-		content := strings.TrimSpace(msg.text)
-		if content == "" {
+		formatted := formatQueuedMessage(msg)
+		if formatted == "" {
 			continue
 		}
-		label := strings.TrimSpace(msg.speaker)
-		if label != "" {
-			builder.WriteString("[")
-			builder.WriteString(label)
-			builder.WriteString("]: ")
-		}
-		builder.WriteString(content)
+		builder.WriteString(formatted)
 		builder.WriteString("\n")
 	}
 	return strings.TrimSpace(builder.String())
+}
+
+func formatQueuedMessage(msg queuedMessage) string {
+	content := strings.TrimSpace(msg.text)
+	if content == "" {
+		return ""
+	}
+	label := strings.TrimSpace(msg.speaker)
+	timeLabel := formatMessageTime(msg.ts)
+	if label == "" {
+		if timeLabel == "" {
+			return content
+		}
+		return "[时间=" + timeLabel + "]: " + content
+	}
+	if timeLabel == "" {
+		return "[" + label + "]: " + content
+	}
+	return "[" + label + ";时间=" + timeLabel + "]: " + content
+}
+
+func formatMessageTime(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return at.Format("2006-01-02 15:04:05")
 }
 
 func looksLikeQuestion(text string) bool {

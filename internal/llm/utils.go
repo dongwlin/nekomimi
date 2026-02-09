@@ -2,6 +2,7 @@ package llm
 
 import (
 	"strings"
+	"time"
 
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	"github.com/dongwlin/nekomimi/internal/llm/token"
@@ -67,15 +68,33 @@ func composeSystemPrompt(basePrompt, extraPrompt string) string {
 }
 
 func formatUserContent(userInput, speaker string) string {
+	return formatUserContentAt(userInput, speaker, time.Now())
+}
+
+func formatUserContentAt(userInput, speaker string, at time.Time) string {
 	content := strings.TrimSpace(userInput)
 	if content == "" {
 		return ""
 	}
+	timeLabel := formatMessageTime(at)
 	label := strings.TrimSpace(speaker)
 	if label == "" {
-		return content
+		if timeLabel == "" {
+			return content
+		}
+		return "[时间=" + timeLabel + "]: " + content
 	}
-	return "[" + label + "]: " + content
+	if timeLabel == "" {
+		return "[" + label + "]: " + content
+	}
+	return "[" + label + ";时间=" + timeLabel + "]: " + content
+}
+
+func formatMessageTime(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return at.Format("2006-01-02 15:04:05")
 }
 
 func normalizeProvider(provider string) string {
