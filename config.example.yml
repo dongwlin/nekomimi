@@ -1,0 +1,9 @@
+nickname:
+  - "your_bot_nickname"
+command_prefix: "/"
+super_users:
+  - 123456789
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "your_access_token"
