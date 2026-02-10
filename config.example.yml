@@ -9,7 +9,7 @@ llm:
   api: "https://api.openai.com/v1/responses"
   key: "your_api_key"
   model: "gpt-4.1-mini"
-  system_prompt: "你的自定义提示词（会追加在内置系统提示词后）"
+  system_prompt: "你的自定义提示词（会追加在内置系统提示词后）" # 支持文件引用：{{file:相对路径}}，相对 config.yml 所在目录解析
   history_max: 10 # 多轮对话保留的轮数（每轮=一问一答），<=0 不限制
   context_max: 8000 # 模型上下文上限（token 估算），<=0 不启用压缩
   immersive:
@@ -25,12 +25,12 @@ llm:
     mention_judge:
       enabled: false # 被@时是否调用判定助手决定秒回
       model: "" # 判定模型名，空则复用主模型
-      prompt: "" # 判定提示词，空则使用内置默认
+      prompt: "" # 判定提示词，支持 {{file:prompts/mention_judge.txt}}；空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
     post_cooldown_judge:
       enabled: false # 冷静期结束后是否二次仲裁（回复/短续冷/长续冷）
       model: "" # 判定模型名，空则复用主模型
-      prompt: "" # 判定提示词，空则使用内置默认
+      prompt: "" # 判定提示词，支持 {{file:prompts/post_cooldown_judge.txt}}；空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
       short_wait_ms: 1200 # 短续冷时长（毫秒）
       long_wait_ms: 5000 # 长续冷时长（毫秒）
