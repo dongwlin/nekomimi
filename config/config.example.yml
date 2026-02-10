@@ -10,7 +10,7 @@ llm:
   key: "your_api_key"
   model: "gpt-4.1-mini"
   reasoning_effort: "medium" # 推理强度：low | medium | high；留空表示关闭
-  show_reasoning: false # 是否展示响应中返回的思考过程/思考摘要（仅当上游返回该字段时生效）
+  show_reasoning: false # 是否在日志中记录响应中返回的思考过程/思考摘要（仅当上游返回该字段时生效）
   system_prompt: "你的自定义提示词（会追加在内置系统提示词后）" # 支持文件引用：{{file:相对路径}}，相对 config.yml 所在目录解析
   history_max: 10 # 多轮对话保留的轮数（每轮=一问一答），<=0 不限制
   context_max: 8000 # 模型上下文上限（token 估算），<=0 不启用压缩

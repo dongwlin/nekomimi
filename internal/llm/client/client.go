@@ -234,15 +234,6 @@ func parseChatCompletionText(parsed chatCompletionsResponse) (string, string, er
 	return result, strings.TrimSpace(parsed.Choices[0].Message.ReasoningContent), nil
 }
 
-func mergeReasoningIntoReply(reply, reasoning string, show bool) string {
-	reply = strings.TrimSpace(reply)
-	reasoning = strings.TrimSpace(reasoning)
-	if !show || reasoning == "" {
-		return reply
-	}
-	return "【思考过程】\n" + reasoning + "\n\n【回答】\n" + reply
-}
-
 func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
 	if err := c.ensureAPIKey(); err != nil {
 		return "", err
@@ -284,7 +275,13 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 		Int("reply_chars", len([]rune(reply))).
 		Int("reasoning_chars", len([]rune(reasoning))).
 		Msg("llm response received")
-	return mergeReasoningIntoReply(reply, reasoning, c.showReasoningSnapshot()), nil
+	if c.showReasoningSnapshot() && strings.TrimSpace(reasoning) != "" {
+		log.Info().
+			Str("llm_api", "responses").
+			Str("reasoning_content", reasoning).
+			Msg("llm reasoning content")
+	}
+	return reply, nil
 }
 
 func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
@@ -326,5 +323,11 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 		Int("reply_chars", len([]rune(reply))).
 		Int("reasoning_chars", len([]rune(reasoning))).
 		Msg("llm response received")
-	return mergeReasoningIntoReply(reply, reasoning, c.showReasoningSnapshot()), nil
+	if c.showReasoningSnapshot() && strings.TrimSpace(reasoning) != "" {
+		log.Info().
+			Str("llm_api", "chat_completions").
+			Str("reasoning_content", reasoning).
+			Msg("llm reasoning content")
+	}
+	return reply, nil
 }
