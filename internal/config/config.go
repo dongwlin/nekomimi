@@ -32,8 +32,25 @@ type ImmersiveConfig struct {
 	MaxBatchMessages  int                     `yaml:"max_batch_messages"`
 	MaxBatchChars     int                     `yaml:"max_batch_chars"`
 	ImmediateDelayMS  int                     `yaml:"immediate_delay_ms"`
+	SpeakGate         SpeakGateConfig         `yaml:"speak_gate"`
 	MentionJudge      MentionJudgeConfig      `yaml:"mention_judge"`
 	PostCooldownJudge PostCooldownJudgeConfig `yaml:"post_cooldown_judge"`
+}
+
+type SpeakGateConfig struct {
+	Enabled                 bool                 `yaml:"enabled"`
+	Threshold               int                  `yaml:"threshold"`
+	SuppressAfterBotReplyMS int                  `yaml:"suppress_after_bot_reply_ms"`
+	MaxConsecutiveBotTurns  int                  `yaml:"max_consecutive_bot_turns"`
+	Judge                   SpeakGateJudgeConfig `yaml:"judge"`
+}
+
+type SpeakGateJudgeConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Model     string `yaml:"model"`
+	Prompt    string `yaml:"prompt"`
+	TimeoutMS int    `yaml:"timeout_ms"`
+	FailOpen  bool   `yaml:"fail_open"`
 }
 
 type MentionJudgeConfig struct {

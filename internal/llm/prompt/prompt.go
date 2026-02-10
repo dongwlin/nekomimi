@@ -16,6 +16,7 @@ var (
 	LightSummaryPrompt      = mustReadPrompt("light_summary.txt")
 	MentionJudgePrompt      = mustReadPrompt("mention_judge.txt")
 	PostCooldownJudgePrompt = mustReadPrompt("post_cooldown_judge.txt")
+	SpeakGateJudgePrompt    = mustReadPrompt("speak_gate_judge.txt")
 )
 
 func mustReadPrompt(name string) string {

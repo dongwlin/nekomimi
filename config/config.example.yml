@@ -22,6 +22,17 @@ llm:
     max_batch_messages: 10 # 单次合并最大消息数
     max_batch_chars: 1200 # 单次合并最大字数（按 rune 计）
     immediate_delay_ms: 120 # 被@或问题触发的最小延迟（毫秒）
+    speak_gate:
+      enabled: true # 是否启用“是否值得发言”门控
+      threshold: 3 # 发言评分阈值，分数达到后才进入后续仲裁
+      suppress_after_bot_reply_ms: 2500 # bot 刚回复后，在该窗口内更保守
+      max_consecutive_bot_turns: 1 # 连续回复轮次上限，超过后优先抑制
+      judge:
+        enabled: false # 是否启用“发言判定助手”（用于边界场景裁决）
+        model: "" # 判定模型名，空则复用主模型
+        prompt: "" # 判定提示词，支持 {{file:prompts/speak_gate_judge.txt}}；空则使用内置默认
+        timeout_ms: 1200 # 判定超时（毫秒）
+        fail_open: true # 判定失败时是否回退到规则结果（true=回退规则，false=保守不发言）
     mention_judge:
       enabled: false # 被@时是否调用判定助手决定秒回
       model: "" # 判定模型名，空则复用主模型

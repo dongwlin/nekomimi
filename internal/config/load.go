@@ -50,5 +50,11 @@ func resolvePromptFields(cfg *Config, rootDir string) error {
 		return fmt.Errorf("resolve llm.immersive.post_cooldown_judge.prompt failed: %w", err)
 	}
 	cfg.LLM.Immersive.PostCooldownJudge.Prompt = resolved
+
+	resolved, err = resolveSystemPromptFileRefs(cfg.LLM.Immersive.SpeakGate.Judge.Prompt, rootDir)
+	if err != nil {
+		return fmt.Errorf("resolve llm.immersive.speak_gate.judge.prompt failed: %w", err)
+	}
+	cfg.LLM.Immersive.SpeakGate.Judge.Prompt = resolved
 	return nil
 }

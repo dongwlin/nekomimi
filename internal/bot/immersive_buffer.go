@@ -2,7 +2,9 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,13 +33,18 @@ type immersiveSession struct {
 	inFlight   bool
 	lastCtx    *zero.Ctx
 	postRounds int
+	lastReply  time.Time
+	botTurns   int
 }
 
 type queuedMessage struct {
-	text    string
-	speaker string
-	ts      time.Time
-	chars   int
+	text             string
+	speaker          string
+	ts               time.Time
+	chars            int
+	isMentionBot     bool
+	isQuestion       bool
+	isAddressedToBot bool
 }
 
 type recentSample struct {
@@ -46,18 +53,22 @@ type recentSample struct {
 }
 
 const (
-	defaultCooldownMinMS    = 800
-	defaultCooldownMaxMS    = 3500
-	defaultCooldownBaseMS   = 1200
-	defaultPrivateBaseMS    = 200
-	defaultWindowMS         = 5000
-	defaultJitterMS         = 200
-	defaultMaxBatchMessages = 10
-	defaultMaxBatchChars    = 1200
-	defaultImmediateDelayMS = 120
-	defaultPostShortWaitMS  = 1200
-	defaultPostLongWaitMS   = 5000
-	defaultPostMaxRounds    = 3
+	defaultCooldownMinMS       = 800
+	defaultCooldownMaxMS       = 3500
+	defaultCooldownBaseMS      = 1200
+	defaultPrivateBaseMS       = 200
+	defaultWindowMS            = 5000
+	defaultJitterMS            = 200
+	defaultMaxBatchMessages    = 10
+	defaultMaxBatchChars       = 1200
+	defaultImmediateDelayMS    = 120
+	defaultPostShortWaitMS     = 1200
+	defaultPostLongWaitMS      = 5000
+	defaultPostMaxRounds       = 3
+	defaultSpeakThreshold      = 3
+	defaultSpeakSuppressMS     = 2500
+	defaultSpeakMaxTurns       = 1
+	defaultSpeakJudgeTimeoutMS = 1200
 
 	activeMsgPenaltyMS  = 150
 	activeCharPenaltyMS = 4
@@ -88,11 +99,15 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state := b.session(sessionKey)
 	now := time.Now()
 	charCount := len([]rune(trimmed))
+	mention, addressed, question := b.detectMessageSignals(ctx, trimmed)
 	msg := queuedMessage{
-		text:    trimmed,
-		speaker: strings.TrimSpace(speaker),
-		ts:      now,
-		chars:   charCount,
+		text:             trimmed,
+		speaker:          strings.TrimSpace(speaker),
+		ts:               now,
+		chars:            charCount,
+		isMentionBot:     mention,
+		isQuestion:       question,
+		isAddressedToBot: addressed,
 	}
 
 	state.mu.Lock()
@@ -103,20 +118,19 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.recent = trimRecent(state.recent, now, b.cfg.WindowMS)
 
 	recentCount, recentChars := summarizeRecent(state.recent)
-	mention := b.isMentioned(ctx, trimmed)
-	question := looksLikeQuestion(trimmed)
-	cooldown := b.calcCooldown(isPrivate, mention, question, recentCount, recentChars, charCount)
+	cooldown := b.calcCooldown(isPrivate, addressed, question, recentCount, recentChars, charCount)
 	queueSnapshot := make([]queuedMessage, len(state.queue))
 	copy(queueSnapshot, state.queue)
 
 	judgeEnabled := mention && !isPrivate && b.cfg.MentionJudge.Enabled
-	if (mention || question) && !judgeEnabled {
+	if (addressed || question) && !judgeEnabled {
 		cooldown = minDuration(cooldown, time.Duration(b.cfg.ImmediateDelayMS)*time.Millisecond)
 	}
 	log.Info().
 		Str("session", sessionKey).
 		Bool("is_private", isPrivate).
 		Bool("mention", mention).
+		Bool("addressed", addressed).
 		Bool("question", question).
 		Int("queue_len", len(queueSnapshot)).
 		Int("queue_chars", state.queueChars).
@@ -220,6 +234,41 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Msg("immersive flush started")
 
 	input := buildCombinedInput(queue)
+	gate := b.shouldSpeak(state, queue)
+	log.Info().
+		Str("session", sessionKey).
+		Bool("should_speak", gate.shouldSpeak).
+		Int("speak_score", gate.score).
+		Str("suppress_reason", gate.reason).
+		Msg("immersive speak gate evaluated")
+	if !gate.shouldSpeak {
+		cooldownDelay := time.Duration(b.cfg.PostCooldownJudge.ShortWaitMS) * time.Millisecond
+		if cooldownDelay <= 0 {
+			cooldownDelay = time.Duration(b.cfg.ImmediateDelayMS) * time.Millisecond
+		}
+		state.mu.Lock()
+		state.inFlight = false
+		state.postRounds = 0
+		pending := len(state.queue) > 0
+		if state.timer != nil {
+			state.timer.Stop()
+		}
+		if pending {
+			state.timer = time.AfterFunc(cooldownDelay, func() {
+				b.flush(sessionKey)
+			})
+		}
+		state.mu.Unlock()
+		log.Info().
+			Str("session", sessionKey).
+			Int64("next_cooldown_ms", cooldownDelay.Milliseconds()).
+			Bool("pending_messages", pending).
+			Bool("should_speak", false).
+			Int("speak_score", gate.score).
+			Str("suppress_reason", gate.reason).
+			Msg("immersive flush skipped by speak gate")
+		return
+	}
 	decision := llm.DecisionReplyNow
 	cooldownDelay := time.Duration(0)
 	if input != "" && b.cfg.PostCooldownJudge.Enabled && postRounds < b.cfg.PostCooldownJudge.MaxRounds {
@@ -231,6 +280,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			log.Info().
 				Str("session", sessionKey).
 				Str("decision", string(decision)).
+				Bool("should_speak", gate.shouldSpeak).
+				Int("speak_score", gate.score).
+				Str("suppress_reason", gate.reason).
 				Int("post_rounds", postRounds).
 				Msg("post-cooldown judge decided")
 		} else if !b.cfg.PostCooldownJudge.FailOpen {
@@ -273,10 +325,14 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		log.Info().
 			Str("session", sessionKey).
 			Str("decision", string(decision)).
+			Bool("should_speak", gate.shouldSpeak).
+			Int("speak_score", gate.score).
+			Str("suppress_reason", gate.reason).
 			Int64("next_cooldown_ms", cooldownDelay.Milliseconds()).
 			Msg("immersive flush deferred by post-cooldown judge")
 		return
 	}
+	replySent := false
 	if input != "" {
 		reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
 		if err != nil {
@@ -289,16 +345,29 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			}
 		} else if ctx != nil {
 			ctx.Send(reply)
+			replySent = true
 			log.Info().
 				Str("session", sessionKey).
 				Int("reply_chars", len([]rune(reply))).
 				Msg("immersive reply sent")
+		} else {
+			replySent = true
 		}
 	}
 
 	state.mu.Lock()
 	state.inFlight = false
 	state.postRounds = 0
+	if replySent {
+		now := time.Now()
+		window := time.Duration(b.cfg.SpeakGate.SuppressAfterBotReplyMS) * time.Millisecond
+		if window > 0 && !state.lastReply.IsZero() && now.Sub(state.lastReply) <= window {
+			state.botTurns++
+		} else {
+			state.botTurns = 1
+		}
+		state.lastReply = now
+	}
 	pending := len(state.queue) > 0
 	state.mu.Unlock()
 	if pending {
@@ -321,7 +390,14 @@ func (b *ImmersiveBuffer) session(sessionKey string) *immersiveSession {
 	return state
 }
 
-func (b *ImmersiveBuffer) isMentioned(ctx *zero.Ctx, text string) bool {
+func (b *ImmersiveBuffer) detectMessageSignals(ctx *zero.Ctx, text string) (bool, bool, bool) {
+	mention := b.isExplicitMention(ctx)
+	addressed := mention || b.containsNickname(text) || strings.Contains(text, "@")
+	question := looksLikeQuestion(text)
+	return mention, addressed, question
+}
+
+func (b *ImmersiveBuffer) isExplicitMention(ctx *zero.Ctx) bool {
 	if ctx != nil && ctx.Event != nil {
 		if ctx.Event.IsToMe {
 			return true
@@ -342,10 +418,11 @@ func (b *ImmersiveBuffer) isMentioned(ctx *zero.Ctx, text string) bool {
 			}
 		}
 	}
+	return false
+}
+
+func (b *ImmersiveBuffer) containsNickname(text string) bool {
 	lower := strings.ToLower(text)
-	if strings.Contains(lower, "@") {
-		return true
-	}
 	for _, name := range b.nicknames {
 		trimmed := strings.ToLower(strings.TrimSpace(name))
 		if trimmed == "" {
@@ -418,6 +495,18 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.ImmediateDelayMS <= 0 {
 		cfg.ImmediateDelayMS = defaultImmediateDelayMS
 	}
+	if cfg.SpeakGate.Threshold <= 0 {
+		cfg.SpeakGate.Threshold = defaultSpeakThreshold
+	}
+	if cfg.SpeakGate.SuppressAfterBotReplyMS <= 0 {
+		cfg.SpeakGate.SuppressAfterBotReplyMS = defaultSpeakSuppressMS
+	}
+	if cfg.SpeakGate.MaxConsecutiveBotTurns <= 0 {
+		cfg.SpeakGate.MaxConsecutiveBotTurns = defaultSpeakMaxTurns
+	}
+	if cfg.SpeakGate.Judge.TimeoutMS <= 0 {
+		cfg.SpeakGate.Judge.TimeoutMS = defaultSpeakJudgeTimeoutMS
+	}
 	if cfg.PostCooldownJudge.TimeoutMS <= 0 {
 		cfg.PostCooldownJudge.TimeoutMS = 1200
 	}
@@ -471,12 +560,43 @@ func buildRecentPreview(queue []queuedMessage, keep int) string {
 }
 
 func buildCombinedInput(queue []queuedMessage) string {
+	meta := summarizeQueueMeta(queue, time.Now())
 	var builder strings.Builder
+	builder.WriteString("batch_meta:\n")
+	builder.WriteString("  now_date: ")
+	builder.WriteString(meta.NowDate)
+	builder.WriteString("\n")
+	builder.WriteString("  now_time: ")
+	builder.WriteString(meta.NowTime)
+	builder.WriteString("\n")
+	builder.WriteString("  messages_count: ")
+	builder.WriteString(strconv.Itoa(meta.MessagesCount))
+	builder.WriteString("\n")
+	builder.WriteString("  participants: [")
+	builder.WriteString(strings.Join(meta.Participants, ","))
+	builder.WriteString("]\n")
+	builder.WriteString("  mentions_to_bot: ")
+	builder.WriteString(strconv.Itoa(meta.MentionsToBot))
+	builder.WriteString("\n")
+	builder.WriteString("  addressed_to_bot: ")
+	builder.WriteString(strconv.Itoa(meta.AddressedToBot))
+	builder.WriteString("\n")
+	builder.WriteString("  questions_count: ")
+	builder.WriteString(strconv.Itoa(meta.QuestionsCount))
+	builder.WriteString("\n")
+	builder.WriteString("  last_speaker: ")
+	builder.WriteString(meta.LastSpeaker)
+	builder.WriteString("\n")
+	builder.WriteString("  time_span_ms: ")
+	builder.WriteString(strconv.FormatInt(meta.TimeSpanMS, 10))
+	builder.WriteString("\n")
+	builder.WriteString("transcript:\n")
 	for _, msg := range queue {
 		formatted := formatQueuedMessage(msg)
 		if formatted == "" {
 			continue
 		}
+		builder.WriteString("  - ")
 		builder.WriteString(formatted)
 		builder.WriteString("\n")
 	}
@@ -488,6 +608,7 @@ func formatQueuedMessage(msg queuedMessage) string {
 	if content == "" {
 		return ""
 	}
+	content = sanitizeInline(content)
 	label := strings.TrimSpace(msg.speaker)
 	timeLabel := formatMessageTime(msg.ts)
 	if label == "" {
@@ -500,6 +621,11 @@ func formatQueuedMessage(msg queuedMessage) string {
 		return "[" + label + "]: " + content
 	}
 	return "[" + label + ";time=" + timeLabel + "]: " + content
+}
+
+func sanitizeInline(text string) string {
+	replacer := strings.NewReplacer("\r\n", "\\n", "\n", "\\n", "\r", "\\n")
+	return replacer.Replace(text)
 }
 
 func formatMessageTime(at time.Time) string {
@@ -545,4 +671,153 @@ func prependMessages(head, tail []queuedMessage) []queuedMessage {
 	next = append(next, head...)
 	next = append(next, tail...)
 	return next
+}
+
+type queueMeta struct {
+	NowDate        string
+	NowTime        string
+	MessagesCount  int
+	Participants   []string
+	MentionsToBot  int
+	AddressedToBot int
+	QuestionsCount int
+	LastSpeaker    string
+	TimeSpanMS     int64
+}
+
+type speakGateResult struct {
+	shouldSpeak bool
+	score       int
+	reason      string
+}
+
+func summarizeQueueMeta(queue []queuedMessage, now time.Time) queueMeta {
+	meta := queueMeta{
+		NowDate:       now.Format("2006-01-02"),
+		NowTime:       now.Format("15:04:05"),
+		MessagesCount: len(queue),
+		LastSpeaker:   "unknown",
+		Participants:  []string{"none"},
+	}
+	if len(queue) == 0 {
+		return meta
+	}
+	participants := make(map[string]struct{}, len(queue))
+	first := queue[0].ts
+	last := queue[len(queue)-1].ts
+	for _, msg := range queue {
+		label := strings.TrimSpace(msg.speaker)
+		if label == "" {
+			label = "unknown"
+		}
+		participants[label] = struct{}{}
+		if msg.isMentionBot {
+			meta.MentionsToBot++
+		}
+		if msg.isAddressedToBot {
+			meta.AddressedToBot++
+		}
+		if msg.isQuestion {
+			meta.QuestionsCount++
+		}
+		if !msg.ts.IsZero() {
+			if first.IsZero() || msg.ts.Before(first) {
+				first = msg.ts
+			}
+			if last.IsZero() || msg.ts.After(last) {
+				last = msg.ts
+			}
+		}
+	}
+	meta.Participants = make([]string, 0, len(participants))
+	for label := range participants {
+		meta.Participants = append(meta.Participants, sanitizeInline(label))
+	}
+	sort.Strings(meta.Participants)
+	lastSpeaker := strings.TrimSpace(queue[len(queue)-1].speaker)
+	if lastSpeaker != "" {
+		meta.LastSpeaker = sanitizeInline(lastSpeaker)
+	}
+	if !first.IsZero() && !last.IsZero() && !last.Before(first) {
+		meta.TimeSpanMS = last.Sub(first).Milliseconds()
+	}
+	return meta
+}
+
+func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMessage) speakGateResult {
+	if !b.cfg.SpeakGate.Enabled {
+		return speakGateResult{shouldSpeak: true, reason: "speak_gate_disabled"}
+	}
+	meta := summarizeQueueMeta(queue, time.Now())
+	score := 0
+	reasons := make([]string, 0, 4)
+	directedQuestions := 0
+	for _, msg := range queue {
+		if msg.isQuestion && msg.isAddressedToBot {
+			directedQuestions++
+		}
+	}
+	if meta.MentionsToBot > 0 {
+		score += 4
+		reasons = append(reasons, "mention_to_bot")
+	}
+	if directedQuestions > 0 {
+		score += 3
+		reasons = append(reasons, "direct_question")
+	} else if meta.QuestionsCount > 0 {
+		score += 2
+		reasons = append(reasons, "question_present")
+	}
+	if meta.MessagesCount >= 3 && len(meta.Participants) >= 2 && meta.MentionsToBot == 0 && directedQuestions == 0 {
+		score -= 2
+		reasons = append(reasons, "active_human_chat")
+	}
+	if b.cfg.SpeakGate.MaxConsecutiveBotTurns > 0 && state != nil {
+		state.mu.Lock()
+		botTurns := state.botTurns
+		lastReply := state.lastReply
+		state.mu.Unlock()
+		window := time.Duration(b.cfg.SpeakGate.SuppressAfterBotReplyMS) * time.Millisecond
+		if botTurns >= b.cfg.SpeakGate.MaxConsecutiveBotTurns &&
+			window > 0 &&
+			!lastReply.IsZero() &&
+			time.Since(lastReply) <= window {
+			score -= 3
+			reasons = append(reasons, "recent_bot_reply")
+		}
+	}
+	threshold := b.cfg.SpeakGate.Threshold
+	should := score >= threshold || meta.MentionsToBot > 0 || directedQuestions > 0
+	if b.llm != nil && b.cfg.SpeakGate.Judge.Enabled {
+		assistantDecision, judged, err := b.llm.JudgeSpeakGate(
+			context.Background(),
+			buildCombinedInput(queue),
+			score,
+			threshold,
+			strings.Join(reasons, ","),
+		)
+		if err != nil {
+			if b.cfg.SpeakGate.Judge.FailOpen {
+				reasons = append(reasons, "assistant_error_fallback_rules")
+			} else {
+				should = false
+				reasons = append(reasons, "assistant_error_block")
+			}
+		} else if judged {
+			should = assistantDecision
+			if assistantDecision {
+				reasons = append(reasons, "assistant_yes")
+			} else {
+				reasons = append(reasons, "assistant_no")
+			}
+		}
+	}
+	if !should {
+		reasons = append(reasons, fmt.Sprintf("score_below_threshold(%d<%d)", score, threshold))
+	}
+	return speakGateResult{
+		shouldSpeak: should,
+		score:       score,
+		reason:      strings.Join(reasons, ","),
+	}
 }

@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -124,6 +125,57 @@ func (m *Manager) JudgePostCooldown(ctx context.Context, message, speaker, recen
 	return decision, nil
 }
 
+func (m *Manager) JudgeSpeakGate(ctx context.Context, message string, score, threshold int, reasons string) (bool, bool, error) {
+	if m == nil {
+		return false, false, errors.New("LLM 未初始化")
+	}
+	m.mu.RLock()
+	enabled := m.speakJudgeEnabled
+	provider := m.provider
+	model := m.speakJudgeModel
+	if strings.TrimSpace(model) == "" {
+		model = m.model
+	}
+	prompt := m.speakJudgePrompt
+	timeout := m.speakJudgeTimeout
+	failOpen := m.speakJudgeFailOpen
+	m.mu.RUnlock()
+	if !enabled {
+		return false, false, nil
+	}
+	if strings.TrimSpace(model) == "" {
+		return false, failOpen, errors.New("未配置模型名")
+	}
+	input := buildSpeakGateJudgeInput(message, score, threshold, reasons)
+	if strings.TrimSpace(input) == "" {
+		return false, failOpen, errors.New("待判断内容为空")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	reply, err := m.generateWithProvider(ctx, provider, model, prompt, []Message{
+		{Role: "user", Content: input},
+	})
+	if err != nil {
+		log.Warn().Err(err).Msg("speak-gate judge request failed")
+		return false, failOpen, err
+	}
+	decision, ok := parseJudgeDecision(reply)
+	if !ok {
+		log.Warn().
+			Str("raw_reply", strings.TrimSpace(reply)).
+			Msg("speak-gate judge returned unparsable output")
+		return false, failOpen, errors.New("判定结果不可解析")
+	}
+	log.Info().Bool("should_speak", decision).Msg("speak-gate judge completed")
+	return decision, true, nil
+}
+
 func buildJudgeInput(message, speaker, recent string) string {
 	var builder strings.Builder
 	builder.WriteString("请判断以下消息是否需要机器人立刻回复。")
@@ -146,6 +198,8 @@ func buildPostCooldownJudgeInput(message, speaker, recent string) string {
 	builder.WriteString("请基于以下对话上下文进行仲裁。")
 	builder.WriteString("\n请严格只输出：REPLY_NOW、COOLDOWN_SHORT 或 COOLDOWN_LONG。")
 	builder.WriteString("\n若难以判断，请倾向 COOLDOWN_SHORT。")
+	builder.WriteString("\n上下文采用 YAML 风格结构：batch_meta(含 now_date/now_time 等) + transcript。")
+	builder.WriteString("\n请优先依据 batch_meta 判断是否轮到机器人发言。")
 	builder.WriteString("\n\n待回复内容:\n")
 	builder.WriteString(strings.TrimSpace(message))
 	if strings.TrimSpace(speaker) != "" {
@@ -155,6 +209,24 @@ func buildPostCooldownJudgeInput(message, speaker, recent string) string {
 	if strings.TrimSpace(recent) != "" {
 		builder.WriteString("\n\n近期消息:\n")
 		builder.WriteString(strings.TrimSpace(recent))
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func buildSpeakGateJudgeInput(message string, score, threshold int, reasons string) string {
+	var builder strings.Builder
+	builder.WriteString("请判断机器人是否应该在当前批次发言。")
+	builder.WriteString("\n请严格只输出 YES 或 NO。")
+	builder.WriteString("\n\n批次上下文:\n")
+	builder.WriteString(strings.TrimSpace(message))
+	builder.WriteString("\n\n规则门控信息:\n")
+	builder.WriteString("score=")
+	builder.WriteString(strconv.Itoa(score))
+	builder.WriteString(", threshold=")
+	builder.WriteString(strconv.Itoa(threshold))
+	if strings.TrimSpace(reasons) != "" {
+		builder.WriteString(", reasons=")
+		builder.WriteString(strings.TrimSpace(reasons))
 	}
 	return strings.TrimSpace(builder.String())
 }
