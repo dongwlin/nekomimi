@@ -35,6 +35,8 @@ func TestBuildCombinedInput_ContainsStructuredMeta(t *testing.T) {
 		"batch_meta:",
 		"now_date:",
 		"now_time:",
+		"bot_names:",
+		"bot_primary_name:",
 		"messages_count: 2",
 		"participants: [name=alice,name=bob]",
 		"mentions_to_bot: 1",

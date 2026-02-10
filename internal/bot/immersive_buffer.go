@@ -578,7 +578,7 @@ func buildRecentPreview(queue []queuedMessage, keep int) string {
 }
 
 func buildCombinedInput(queue []queuedMessage) string {
-	meta := summarizeQueueMeta(queue, time.Now())
+	meta := summarizeQueueMeta(queue, time.Now(), nil)
 	var builder strings.Builder
 	builder.WriteString("batch_meta:\n")
 	builder.WriteString("  now_date: ")
@@ -586,6 +586,12 @@ func buildCombinedInput(queue []queuedMessage) string {
 	builder.WriteString("\n")
 	builder.WriteString("  now_time: ")
 	builder.WriteString(meta.NowTime)
+	builder.WriteString("\n")
+	builder.WriteString("  bot_names: [")
+	builder.WriteString(strings.Join(meta.BotNames, ","))
+	builder.WriteString("]\n")
+	builder.WriteString("  bot_primary_name: ")
+	builder.WriteString(meta.BotPrimaryName)
 	builder.WriteString("\n")
 	builder.WriteString("  messages_count: ")
 	builder.WriteString(strconv.Itoa(meta.MessagesCount))
@@ -646,6 +652,27 @@ func sanitizeInline(text string) string {
 	return replacer.Replace(text)
 }
 
+func normalizedBotNames(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(names))
+	result := make([]string, 0, len(names))
+	for _, name := range names {
+		trimmed := sanitizeInline(strings.TrimSpace(name))
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	sort.Strings(result)
+	return result
+}
+
 func formatMessageTime(at time.Time) string {
 	if at.IsZero() {
 		return ""
@@ -694,6 +721,8 @@ func prependMessages(head, tail []queuedMessage) []queuedMessage {
 type queueMeta struct {
 	NowDate        string
 	NowTime        string
+	BotNames       []string
+	BotPrimaryName string
 	MessagesCount  int
 	Participants   []string
 	MentionsToBot  int
@@ -718,13 +747,20 @@ type speakGateResult struct {
 	participantsCount int
 }
 
-func summarizeQueueMeta(queue []queuedMessage, now time.Time) queueMeta {
+func summarizeQueueMeta(queue []queuedMessage, now time.Time, botNames []string) queueMeta {
 	meta := queueMeta{
-		NowDate:       now.Format("2006-01-02"),
-		NowTime:       now.Format("15:04:05"),
-		MessagesCount: len(queue),
-		LastSpeaker:   "unknown",
-		Participants:  []string{"none"},
+		NowDate:        now.Format("2006-01-02"),
+		NowTime:        now.Format("15:04:05"),
+		BotNames:       []string{"bot"},
+		BotPrimaryName: "bot",
+		MessagesCount:  len(queue),
+		LastSpeaker:    "unknown",
+		Participants:   []string{"none"},
+	}
+	normalizedNames := normalizedBotNames(botNames)
+	if len(normalizedNames) > 0 {
+		meta.BotNames = normalizedNames
+		meta.BotPrimaryName = normalizedNames[0]
 	}
 	if len(queue) == 0 {
 		return meta
@@ -775,7 +811,7 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 	if !b.cfg.SpeakGate.Enabled {
 		return speakGateResult{shouldSpeak: true, reason: "speak_gate_disabled", assistantStatus: "disabled"}
 	}
-	meta := summarizeQueueMeta(queue, time.Now())
+	meta := summarizeQueueMeta(queue, time.Now(), b.nicknames)
 	score := 0
 	reasons := make([]string, 0, 8)
 	directedQuestions := 0
