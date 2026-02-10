@@ -65,7 +65,7 @@ const (
 	defaultPostShortWaitMS     = 1200
 	defaultPostLongWaitMS      = 5000
 	defaultPostMaxRounds       = 3
-	defaultSpeakThreshold      = 3
+	defaultSpeakThreshold      = 2
 	defaultSpeakSuppressMS     = 2500
 	defaultSpeakMaxTurns       = 1
 	defaultSpeakJudgeTimeoutMS = 1200
@@ -239,6 +239,15 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Str("session", sessionKey).
 		Bool("should_speak", gate.shouldSpeak).
 		Int("speak_score", gate.score).
+		Int("speak_threshold", gate.threshold).
+		Bool("rule_decision", gate.baseDecision).
+		Str("assistant_status", gate.assistantStatus).
+		Int("mentions_to_bot", gate.mentionsToBot).
+		Int("addressed_to_bot", gate.addressedToBot).
+		Int("questions_count", gate.questionsCount).
+		Int("directed_questions", gate.directedQuestions).
+		Int("messages_count", gate.messagesCount).
+		Int("participants_count", gate.participantsCount).
 		Str("suppress_reason", gate.reason).
 		Msg("immersive speak gate evaluated")
 	if !gate.shouldSpeak {
@@ -265,6 +274,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Bool("pending_messages", pending).
 			Bool("should_speak", false).
 			Int("speak_score", gate.score).
+			Int("speak_threshold", gate.threshold).
+			Bool("rule_decision", gate.baseDecision).
+			Str("assistant_status", gate.assistantStatus).
 			Str("suppress_reason", gate.reason).
 			Msg("immersive flush skipped by speak gate")
 		return
@@ -282,6 +294,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				Str("decision", string(decision)).
 				Bool("should_speak", gate.shouldSpeak).
 				Int("speak_score", gate.score).
+				Int("speak_threshold", gate.threshold).
+				Bool("rule_decision", gate.baseDecision).
+				Str("assistant_status", gate.assistantStatus).
 				Str("suppress_reason", gate.reason).
 				Int("post_rounds", postRounds).
 				Msg("post-cooldown judge decided")
@@ -327,6 +342,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Str("decision", string(decision)).
 			Bool("should_speak", gate.shouldSpeak).
 			Int("speak_score", gate.score).
+			Int("speak_threshold", gate.threshold).
+			Bool("rule_decision", gate.baseDecision).
+			Str("assistant_status", gate.assistantStatus).
 			Str("suppress_reason", gate.reason).
 			Int64("next_cooldown_ms", cooldownDelay.Milliseconds()).
 			Msg("immersive flush deferred by post-cooldown judge")
@@ -686,9 +704,18 @@ type queueMeta struct {
 }
 
 type speakGateResult struct {
-	shouldSpeak bool
-	score       int
-	reason      string
+	shouldSpeak       bool
+	score             int
+	threshold         int
+	reason            string
+	baseDecision      bool
+	assistantStatus   string
+	mentionsToBot     int
+	addressedToBot    int
+	questionsCount    int
+	directedQuestions int
+	messagesCount     int
+	participantsCount int
 }
 
 func summarizeQueueMeta(queue []queuedMessage, now time.Time) queueMeta {
@@ -746,11 +773,11 @@ func summarizeQueueMeta(queue []queuedMessage, now time.Time) queueMeta {
 
 func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMessage) speakGateResult {
 	if !b.cfg.SpeakGate.Enabled {
-		return speakGateResult{shouldSpeak: true, reason: "speak_gate_disabled"}
+		return speakGateResult{shouldSpeak: true, reason: "speak_gate_disabled", assistantStatus: "disabled"}
 	}
 	meta := summarizeQueueMeta(queue, time.Now())
 	score := 0
-	reasons := make([]string, 0, 4)
+	reasons := make([]string, 0, 8)
 	directedQuestions := 0
 	for _, msg := range queue {
 		if msg.isQuestion && msg.isAddressedToBot {
@@ -759,18 +786,22 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 	}
 	if meta.MentionsToBot > 0 {
 		score += 4
-		reasons = append(reasons, "mention_to_bot")
+		reasons = append(reasons, "mention_to_bot(+4)")
+	}
+	if meta.AddressedToBot > 0 {
+		score += 1
+		reasons = append(reasons, "addressed_to_bot(+1)")
 	}
 	if directedQuestions > 0 {
 		score += 3
-		reasons = append(reasons, "direct_question")
+		reasons = append(reasons, "direct_question(+3)")
 	} else if meta.QuestionsCount > 0 {
 		score += 2
-		reasons = append(reasons, "question_present")
+		reasons = append(reasons, "question_present(+2)")
 	}
 	if meta.MessagesCount >= 3 && len(meta.Participants) >= 2 && meta.MentionsToBot == 0 && directedQuestions == 0 {
 		score -= 2
-		reasons = append(reasons, "active_human_chat")
+		reasons = append(reasons, "active_human_chat(-2)")
 	}
 	if b.cfg.SpeakGate.MaxConsecutiveBotTurns > 0 && state != nil {
 		state.mu.Lock()
@@ -783,12 +814,19 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 			!lastReply.IsZero() &&
 			time.Since(lastReply) <= window {
 			score -= 3
-			reasons = append(reasons, "recent_bot_reply")
+			reasons = append(reasons, "recent_bot_reply(-3)")
 		}
+	}
+	if meta.MessagesCount <= 2 && len(meta.Participants) <= 2 {
+		score += 1
+		reasons = append(reasons, "low_traffic_window(+1)")
 	}
 	threshold := b.cfg.SpeakGate.Threshold
 	should := score >= threshold || meta.MentionsToBot > 0 || directedQuestions > 0
+	baseDecision := should
+	assistantStatus := "not_enabled"
 	if b.llm != nil && b.cfg.SpeakGate.Judge.Enabled {
+		assistantStatus = "enabled"
 		assistantDecision, judged, err := b.llm.JudgeSpeakGate(
 			context.Background(),
 			buildCombinedInput(queue),
@@ -798,17 +836,21 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 		)
 		if err != nil {
 			if b.cfg.SpeakGate.Judge.FailOpen {
-				reasons = append(reasons, "assistant_error_fallback_rules")
+				reasons = append(reasons, "assistant_error_fallback_rules(0)")
+				assistantStatus = "error_fallback_rules"
 			} else {
 				should = false
-				reasons = append(reasons, "assistant_error_block")
+				reasons = append(reasons, "assistant_error_block(override_no)")
+				assistantStatus = "error_block"
 			}
 		} else if judged {
 			should = assistantDecision
 			if assistantDecision {
-				reasons = append(reasons, "assistant_yes")
+				reasons = append(reasons, "assistant_yes(override)")
+				assistantStatus = "yes"
 			} else {
-				reasons = append(reasons, "assistant_no")
+				reasons = append(reasons, "assistant_no(override)")
+				assistantStatus = "no"
 			}
 		}
 	}
@@ -816,8 +858,17 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 		reasons = append(reasons, fmt.Sprintf("score_below_threshold(%d<%d)", score, threshold))
 	}
 	return speakGateResult{
-		shouldSpeak: should,
-		score:       score,
-		reason:      strings.Join(reasons, ","),
+		shouldSpeak:       should,
+		score:             score,
+		threshold:         threshold,
+		reason:            strings.Join(reasons, ","),
+		baseDecision:      baseDecision,
+		assistantStatus:   assistantStatus,
+		mentionsToBot:     meta.MentionsToBot,
+		addressedToBot:    meta.AddressedToBot,
+		questionsCount:    meta.QuestionsCount,
+		directedQuestions: directedQuestions,
+		messagesCount:     meta.MessagesCount,
+		participantsCount: len(meta.Participants),
 	}
 }

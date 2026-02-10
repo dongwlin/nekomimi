@@ -24,7 +24,7 @@ llm:
     immediate_delay_ms: 120 # 被@或问题触发的最小延迟（毫秒）
     speak_gate:
       enabled: true # 是否启用“是否值得发言”门控
-      threshold: 3 # 发言评分阈值，分数达到后才进入后续仲裁
+      threshold: 2 # 发言评分阈值，建议先用 2（3 在群聊里可能偏保守）
       suppress_after_bot_reply_ms: 2500 # bot 刚回复后，在该窗口内更保守
       max_consecutive_bot_turns: 1 # 连续回复轮次上限，超过后优先抑制
       judge:
