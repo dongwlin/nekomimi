@@ -31,7 +31,7 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 		ctx.Send(reply)
 	})
 
-	zero.OnCommand("chat").Handle(func(ctx *zero.Ctx) {
+	zero.OnCommand("chat", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		if args == "" {
 			ctx.Send("用法: /chat on|off|status")
