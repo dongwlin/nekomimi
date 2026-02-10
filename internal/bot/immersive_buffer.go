@@ -29,6 +29,7 @@ type immersiveSession struct {
 	timer      *time.Timer
 	inFlight   bool
 	lastCtx    *zero.Ctx
+	postRounds int
 }
 
 type queuedMessage struct {
@@ -53,6 +54,9 @@ const (
 	defaultMaxBatchMessages = 10
 	defaultMaxBatchChars    = 1200
 	defaultImmediateDelayMS = 120
+	defaultPostShortWaitMS  = 1200
+	defaultPostLongWaitMS   = 5000
+	defaultPostMaxRounds    = 3
 
 	activeMsgPenaltyMS  = 150
 	activeCharPenaltyMS = 4
@@ -141,6 +145,7 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	state.queue = nil
 	state.queueChars = 0
 	state.recent = nil
+	state.postRounds = 0
 	if state.timer != nil {
 		state.timer.Stop()
 		state.timer = nil
@@ -182,10 +187,47 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state.queue = nil
 	state.queueChars = 0
 	state.inFlight = true
+	postRounds := state.postRounds
 	ctx := state.lastCtx
 	state.mu.Unlock()
 
 	input := buildCombinedInput(queue)
+	decision := llm.DecisionReplyNow
+	cooldownDelay := time.Duration(0)
+	if input != "" && b.cfg.PostCooldownJudge.Enabled && postRounds < b.cfg.PostCooldownJudge.MaxRounds {
+		lastSpeaker := queue[len(queue)-1].speaker
+		recent := buildRecentPreview(queue, 6)
+		judgeDecision, err := b.llm.JudgePostCooldown(context.Background(), input, lastSpeaker, recent)
+		if err == nil {
+			decision = judgeDecision
+		} else if !b.cfg.PostCooldownJudge.FailOpen {
+			decision = llm.DecisionCooldownShort
+		}
+		if decision == llm.DecisionCooldownShort {
+			cooldownDelay = time.Duration(b.cfg.PostCooldownJudge.ShortWaitMS) * time.Millisecond
+		}
+		if decision == llm.DecisionCooldownLong {
+			cooldownDelay = time.Duration(b.cfg.PostCooldownJudge.LongWaitMS) * time.Millisecond
+		}
+	}
+	if decision != llm.DecisionReplyNow {
+		state.mu.Lock()
+		state.queue = prependMessages(queue, state.queue)
+		state.queueChars += sumQueueChars(queue)
+		state.inFlight = false
+		state.postRounds++
+		if state.timer != nil {
+			state.timer.Stop()
+		}
+		if cooldownDelay <= 0 {
+			cooldownDelay = time.Duration(b.cfg.PostCooldownJudge.ShortWaitMS) * time.Millisecond
+		}
+		state.timer = time.AfterFunc(cooldownDelay, func() {
+			b.flush(sessionKey)
+		})
+		state.mu.Unlock()
+		return
+	}
 	if input != "" {
 		reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
 		if err != nil {
@@ -199,6 +241,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 	state.mu.Lock()
 	state.inFlight = false
+	state.postRounds = 0
 	pending := len(state.queue) > 0
 	state.mu.Unlock()
 	if pending {
@@ -317,6 +360,18 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.ImmediateDelayMS <= 0 {
 		cfg.ImmediateDelayMS = defaultImmediateDelayMS
 	}
+	if cfg.PostCooldownJudge.TimeoutMS <= 0 {
+		cfg.PostCooldownJudge.TimeoutMS = 1200
+	}
+	if cfg.PostCooldownJudge.ShortWaitMS <= 0 {
+		cfg.PostCooldownJudge.ShortWaitMS = defaultPostShortWaitMS
+	}
+	if cfg.PostCooldownJudge.LongWaitMS <= 0 {
+		cfg.PostCooldownJudge.LongWaitMS = defaultPostLongWaitMS
+	}
+	if cfg.PostCooldownJudge.MaxRounds <= 0 {
+		cfg.PostCooldownJudge.MaxRounds = defaultPostMaxRounds
+	}
 	return cfg
 }
 
@@ -409,4 +464,27 @@ func minDuration(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+func sumQueueChars(queue []queuedMessage) int {
+	total := 0
+	for _, msg := range queue {
+		total += msg.chars
+	}
+	return total
+}
+
+func prependMessages(head, tail []queuedMessage) []queuedMessage {
+	if len(head) == 0 {
+		return tail
+	}
+	if len(tail) == 0 {
+		next := make([]queuedMessage, len(head))
+		copy(next, head)
+		return next
+	}
+	next := make([]queuedMessage, 0, len(head)+len(tail))
+	next = append(next, head...)
+	next = append(next, tail...)
+	return next
 }

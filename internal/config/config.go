@@ -29,16 +29,17 @@ type LLMConfig struct {
 }
 
 type ImmersiveConfig struct {
-	CooldownMinMS    int                `yaml:"cooldown_min_ms"`
-	CooldownMaxMS    int                `yaml:"cooldown_max_ms"`
-	CooldownBaseMS   int                `yaml:"cooldown_base_ms"`
-	PrivateBaseMS    int                `yaml:"private_base_ms"`
-	WindowMS         int                `yaml:"window_ms"`
-	JitterMS         int                `yaml:"jitter_ms"`
-	MaxBatchMessages int                `yaml:"max_batch_messages"`
-	MaxBatchChars    int                `yaml:"max_batch_chars"`
-	ImmediateDelayMS int                `yaml:"immediate_delay_ms"`
-	MentionJudge     MentionJudgeConfig `yaml:"mention_judge"`
+	CooldownMinMS     int                     `yaml:"cooldown_min_ms"`
+	CooldownMaxMS     int                     `yaml:"cooldown_max_ms"`
+	CooldownBaseMS    int                     `yaml:"cooldown_base_ms"`
+	PrivateBaseMS     int                     `yaml:"private_base_ms"`
+	WindowMS          int                     `yaml:"window_ms"`
+	JitterMS          int                     `yaml:"jitter_ms"`
+	MaxBatchMessages  int                     `yaml:"max_batch_messages"`
+	MaxBatchChars     int                     `yaml:"max_batch_chars"`
+	ImmediateDelayMS  int                     `yaml:"immediate_delay_ms"`
+	MentionJudge      MentionJudgeConfig      `yaml:"mention_judge"`
+	PostCooldownJudge PostCooldownJudgeConfig `yaml:"post_cooldown_judge"`
 }
 
 type MentionJudgeConfig struct {
@@ -46,6 +47,17 @@ type MentionJudgeConfig struct {
 	Model     string `yaml:"model"`
 	Prompt    string `yaml:"prompt"`
 	TimeoutMS int    `yaml:"timeout_ms"`
+}
+
+type PostCooldownJudgeConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Model       string `yaml:"model"`
+	Prompt      string `yaml:"prompt"`
+	TimeoutMS   int    `yaml:"timeout_ms"`
+	ShortWaitMS int    `yaml:"short_wait_ms"`
+	LongWaitMS  int    `yaml:"long_wait_ms"`
+	MaxRounds   int    `yaml:"max_rounds"`
+	FailOpen    bool   `yaml:"fail_open"`
 }
 
 type DriverConfig struct {

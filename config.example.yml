@@ -27,6 +27,15 @@ llm:
       model: "" # 判定模型名，空则复用主模型
       prompt: "" # 判定提示词，空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
+    post_cooldown_judge:
+      enabled: false # 冷静期结束后是否二次仲裁（回复/短续冷/长续冷）
+      model: "" # 判定模型名，空则复用主模型
+      prompt: "" # 判定提示词，空则使用内置默认
+      timeout_ms: 1200 # 判定超时（毫秒）
+      short_wait_ms: 1200 # 短续冷时长（毫秒）
+      long_wait_ms: 5000 # 长续冷时长（毫秒）
+      max_rounds: 3 # 最大连续续冷轮次，超过后强制回复
+      fail_open: true # 判定失败时是否直接放行回复
 driver:
   websocket:
     url: "ws://localhost:3001"
