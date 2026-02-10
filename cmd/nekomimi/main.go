@@ -1,17 +1,24 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/bot"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/version"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
 func main() {
+	if shouldPrintVersion(os.Args[1:]) {
+		fmt.Println(version.String())
+		return
+	}
+
 	initLogger()
 	cfg, err := config.Load(config.DefaultPath)
 	if err != nil {
@@ -32,6 +39,18 @@ func main() {
 	log.Info().
 		Msg("handlers registered")
 	bot.Run(cfg)
+}
+
+func shouldPrintVersion(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "version", "--version", "-v":
+		return true
+	default:
+		return false
+	}
 }
 
 func initLogger() {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/version"
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
@@ -142,6 +143,9 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 
 	zero.OnFullMatch("ping").Handle(func(ctx *zero.Ctx) {
 		ctx.Send("pong")
+	})
+	zero.OnCommand("version").Handle(func(ctx *zero.Ctx) {
+		ctx.Send("当前版本: " + version.String())
 	})
 }
 
