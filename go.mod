@@ -3,6 +3,7 @@ module github.com/dongwlin/nekomimi
 go 1.25.7
 
 require (
+	github.com/rs/zerolog v1.34.0
 	github.com/wdvxdr1123/ZeroBot v1.8.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -12,6 +13,8 @@ require (
 	github.com/RomiChan/syncx v0.0.0-20240418144900-b7402ffdebc7 // indirect
 	github.com/RomiChan/websocket v1.4.3-0.20251002072000-d3eb41798438 // indirect
 	github.com/fumiama/orbyte v0.0.0-20251002065953-3bb358367eb5 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

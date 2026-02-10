@@ -10,6 +10,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/rs/zerolog/log"
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
@@ -112,6 +113,17 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	if (mention || question) && !judgeEnabled {
 		cooldown = minDuration(cooldown, time.Duration(b.cfg.ImmediateDelayMS)*time.Millisecond)
 	}
+	log.Info().
+		Str("session", sessionKey).
+		Bool("is_private", isPrivate).
+		Bool("mention", mention).
+		Bool("question", question).
+		Int("queue_len", len(queueSnapshot)).
+		Int("queue_chars", state.queueChars).
+		Int("recent_count", recentCount).
+		Int("recent_chars", recentChars).
+		Int64("cooldown_ms", cooldown.Milliseconds()).
+		Msg("immersive enqueue scheduled")
 	state.mu.Unlock()
 
 	if judgeEnabled {
@@ -119,6 +131,15 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		immediate, err := b.llm.JudgeMentionImmediate(context.Background(), trimmed, speaker, preview)
 		if err == nil && immediate {
 			cooldown = minDuration(cooldown, time.Duration(b.cfg.ImmediateDelayMS)*time.Millisecond)
+			log.Info().
+				Str("session", sessionKey).
+				Int64("cooldown_ms", cooldown.Milliseconds()).
+				Msg("mention judge requested immediate reply")
+		} else if err != nil {
+			log.Warn().
+				Err(err).
+				Str("session", sessionKey).
+				Msg("mention judge failed")
 		}
 	}
 
@@ -150,6 +171,7 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 		state.timer.Stop()
 		state.timer = nil
 	}
+	log.Info().Str("session", sessionKey).Msg("immersive session buffer cleared")
 }
 
 func (b *ImmersiveBuffer) flush(sessionKey string) {
@@ -190,6 +212,12 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	postRounds := state.postRounds
 	ctx := state.lastCtx
 	state.mu.Unlock()
+	log.Info().
+		Str("session", sessionKey).
+		Int("batch_messages", len(queue)).
+		Int("batch_chars", sumQueueChars(queue)).
+		Int("post_rounds", postRounds).
+		Msg("immersive flush started")
 
 	input := buildCombinedInput(queue)
 	decision := llm.DecisionReplyNow
@@ -200,8 +228,24 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		judgeDecision, err := b.llm.JudgePostCooldown(context.Background(), input, lastSpeaker, recent)
 		if err == nil {
 			decision = judgeDecision
+			log.Info().
+				Str("session", sessionKey).
+				Str("decision", string(decision)).
+				Int("post_rounds", postRounds).
+				Msg("post-cooldown judge decided")
 		} else if !b.cfg.PostCooldownJudge.FailOpen {
 			decision = llm.DecisionCooldownShort
+			log.Warn().
+				Err(err).
+				Str("session", sessionKey).
+				Bool("fail_open", false).
+				Msg("post-cooldown judge failed, fallback to short cooldown")
+		} else {
+			log.Warn().
+				Err(err).
+				Str("session", sessionKey).
+				Bool("fail_open", true).
+				Msg("post-cooldown judge failed, continue reply")
 		}
 		if decision == llm.DecisionCooldownShort {
 			cooldownDelay = time.Duration(b.cfg.PostCooldownJudge.ShortWaitMS) * time.Millisecond
@@ -226,16 +270,29 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			b.flush(sessionKey)
 		})
 		state.mu.Unlock()
+		log.Info().
+			Str("session", sessionKey).
+			Str("decision", string(decision)).
+			Int64("next_cooldown_ms", cooldownDelay.Milliseconds()).
+			Msg("immersive flush deferred by post-cooldown judge")
 		return
 	}
 	if input != "" {
 		reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
 		if err != nil {
+			log.Error().
+				Err(err).
+				Str("session", sessionKey).
+				Msg("immersive reply failed")
 			if ctx != nil {
 				ctx.Send("LLM调用失败: " + err.Error())
 			}
 		} else if ctx != nil {
 			ctx.Send(reply)
+			log.Info().
+				Str("session", sessionKey).
+				Int("reply_chars", len([]rune(reply))).
+				Msg("immersive reply sent")
 		}
 	}
 
@@ -245,6 +302,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	pending := len(state.queue) > 0
 	state.mu.Unlock()
 	if pending {
+		log.Info().Str("session", sessionKey).Msg("pending messages detected, flushing again")
 		b.flush(sessionKey)
 	}
 }

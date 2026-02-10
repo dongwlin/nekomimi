@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 type PostCooldownDecision string
@@ -50,12 +52,21 @@ func (m *Manager) JudgeMentionImmediate(ctx context.Context, message, speaker, r
 		{Role: "user", Content: input},
 	})
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Msg("mention judge request failed")
 		return false, err
 	}
 	decision, ok := parseJudgeDecision(reply)
 	if !ok {
+		log.Warn().
+			Str("raw_reply", strings.TrimSpace(reply)).
+			Msg("mention judge returned unparsable output")
 		return false, errors.New("判定结果不可解析")
 	}
+	log.Info().
+		Bool("immediate", decision).
+		Msg("mention judge completed")
 	return decision, nil
 }
 
@@ -95,12 +106,21 @@ func (m *Manager) JudgePostCooldown(ctx context.Context, message, speaker, recen
 		{Role: "user", Content: input},
 	})
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Msg("post-cooldown judge request failed")
 		return DecisionReplyNow, err
 	}
 	decision, ok := parsePostCooldownDecision(reply)
 	if !ok {
+		log.Warn().
+			Str("raw_reply", strings.TrimSpace(reply)).
+			Msg("post-cooldown judge returned unparsable output")
 		return DecisionReplyNow, errors.New("判定结果不可解析")
 	}
+	log.Info().
+		Str("decision", string(decision)).
+		Msg("post-cooldown judge completed")
 	return decision, nil
 }
 
