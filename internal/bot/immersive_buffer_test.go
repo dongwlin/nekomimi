@@ -52,12 +52,7 @@ func TestBuildCombinedInput_ContainsStructuredMeta(t *testing.T) {
 
 func TestShouldSpeak_ExplicitMentionAlwaysPasses(t *testing.T) {
 	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{
-		SpeakGate: config.SpeakGateConfig{
-			Enabled:                 true,
-			Threshold:               5,
-			SuppressAfterBotReplyMS: 2500,
-			MaxConsecutiveBotTurns:  1,
-		},
+		SpeakGate: config.SpeakGateConfig{},
 	})
 	buffer := &ImmersiveBuffer{cfg: cfg}
 	result := buffer.shouldSpeak(&immersiveSession{}, []queuedMessage{
@@ -73,20 +68,12 @@ func TestShouldSpeak_ExplicitMentionAlwaysPasses(t *testing.T) {
 	}
 }
 
-func TestShouldSpeak_RecentBotReplyIsSuppressed(t *testing.T) {
+func TestShouldSpeak_RuleSuppressionRemoved_DefaultAllow(t *testing.T) {
 	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{
-		SpeakGate: config.SpeakGateConfig{
-			Enabled:                 true,
-			Threshold:               3,
-			SuppressAfterBotReplyMS: 3000,
-			MaxConsecutiveBotTurns:  1,
-		},
+		SpeakGate: config.SpeakGateConfig{},
 	})
 	buffer := &ImmersiveBuffer{cfg: cfg}
-	state := &immersiveSession{
-		lastReply: time.Now().Add(-500 * time.Millisecond),
-		botTurns:  1,
-	}
+	state := &immersiveSession{}
 	result := buffer.shouldSpeak(state, []queuedMessage{
 		{
 			text:             "我们继续聊",
@@ -107,10 +94,10 @@ func TestShouldSpeak_RecentBotReplyIsSuppressed(t *testing.T) {
 			isQuestion:       false,
 		},
 	})
-	if result.shouldSpeak {
-		t.Fatalf("expected recent bot reply to suppress speaking, got %+v", result)
+	if !result.shouldSpeak {
+		t.Fatalf("expected assistant-only mode to allow speaking when assistant is disabled, got %+v", result)
 	}
-	if !strings.Contains(result.reason, "recent_bot_reply") {
-		t.Fatalf("expected suppression reason to include recent_bot_reply, got %q", result.reason)
+	if !strings.Contains(result.reason, "assistant_not_enabled_allow") {
+		t.Fatalf("expected default-allow reason in assistant-only mode, got %q", result.reason)
 	}
 }

@@ -38,14 +38,6 @@ type ImmersiveConfig struct {
 }
 
 type SpeakGateConfig struct {
-	Enabled                 bool                 `yaml:"enabled"`
-	Threshold               int                  `yaml:"threshold"`
-	SuppressAfterBotReplyMS int                  `yaml:"suppress_after_bot_reply_ms"`
-	MaxConsecutiveBotTurns  int                  `yaml:"max_consecutive_bot_turns"`
-	Judge                   SpeakGateJudgeConfig `yaml:"judge"`
-}
-
-type SpeakGateJudgeConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Model     string `yaml:"model"`
 	Prompt    string `yaml:"prompt"`

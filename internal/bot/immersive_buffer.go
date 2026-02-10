@@ -2,7 +2,6 @@ package bot
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -33,8 +32,6 @@ type immersiveSession struct {
 	inFlight   bool
 	lastCtx    *zero.Ctx
 	postRounds int
-	lastReply  time.Time
-	botTurns   int
 }
 
 type queuedMessage struct {
@@ -65,9 +62,6 @@ const (
 	defaultPostShortWaitMS     = 1200
 	defaultPostLongWaitMS      = 5000
 	defaultPostMaxRounds       = 3
-	defaultSpeakThreshold      = 2
-	defaultSpeakSuppressMS     = 2500
-	defaultSpeakMaxTurns       = 1
 	defaultSpeakJudgeTimeoutMS = 1200
 
 	activeMsgPenaltyMS  = 150
@@ -238,9 +232,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	log.Info().
 		Str("session", sessionKey).
 		Bool("should_speak", gate.shouldSpeak).
-		Int("speak_score", gate.score).
-		Int("speak_threshold", gate.threshold).
-		Bool("rule_decision", gate.baseDecision).
 		Str("assistant_status", gate.assistantStatus).
 		Int("mentions_to_bot", gate.mentionsToBot).
 		Int("addressed_to_bot", gate.addressedToBot).
@@ -273,9 +264,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Int64("next_cooldown_ms", cooldownDelay.Milliseconds()).
 			Bool("pending_messages", pending).
 			Bool("should_speak", false).
-			Int("speak_score", gate.score).
-			Int("speak_threshold", gate.threshold).
-			Bool("rule_decision", gate.baseDecision).
 			Str("assistant_status", gate.assistantStatus).
 			Str("suppress_reason", gate.reason).
 			Msg("immersive flush skipped by speak gate")
@@ -293,9 +281,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				Str("session", sessionKey).
 				Str("decision", string(decision)).
 				Bool("should_speak", gate.shouldSpeak).
-				Int("speak_score", gate.score).
-				Int("speak_threshold", gate.threshold).
-				Bool("rule_decision", gate.baseDecision).
 				Str("assistant_status", gate.assistantStatus).
 				Str("suppress_reason", gate.reason).
 				Int("post_rounds", postRounds).
@@ -341,16 +326,12 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Str("session", sessionKey).
 			Str("decision", string(decision)).
 			Bool("should_speak", gate.shouldSpeak).
-			Int("speak_score", gate.score).
-			Int("speak_threshold", gate.threshold).
-			Bool("rule_decision", gate.baseDecision).
 			Str("assistant_status", gate.assistantStatus).
 			Str("suppress_reason", gate.reason).
 			Int64("next_cooldown_ms", cooldownDelay.Milliseconds()).
 			Msg("immersive flush deferred by post-cooldown judge")
 		return
 	}
-	replySent := false
 	if input != "" {
 		reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
 		if err != nil {
@@ -363,29 +344,16 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			}
 		} else if ctx != nil {
 			ctx.Send(reply)
-			replySent = true
 			log.Info().
 				Str("session", sessionKey).
 				Int("reply_chars", len([]rune(reply))).
 				Msg("immersive reply sent")
-		} else {
-			replySent = true
 		}
 	}
 
 	state.mu.Lock()
 	state.inFlight = false
 	state.postRounds = 0
-	if replySent {
-		now := time.Now()
-		window := time.Duration(b.cfg.SpeakGate.SuppressAfterBotReplyMS) * time.Millisecond
-		if window > 0 && !state.lastReply.IsZero() && now.Sub(state.lastReply) <= window {
-			state.botTurns++
-		} else {
-			state.botTurns = 1
-		}
-		state.lastReply = now
-	}
 	pending := len(state.queue) > 0
 	state.mu.Unlock()
 	if pending {
@@ -513,17 +481,8 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.ImmediateDelayMS <= 0 {
 		cfg.ImmediateDelayMS = defaultImmediateDelayMS
 	}
-	if cfg.SpeakGate.Threshold <= 0 {
-		cfg.SpeakGate.Threshold = defaultSpeakThreshold
-	}
-	if cfg.SpeakGate.SuppressAfterBotReplyMS <= 0 {
-		cfg.SpeakGate.SuppressAfterBotReplyMS = defaultSpeakSuppressMS
-	}
-	if cfg.SpeakGate.MaxConsecutiveBotTurns <= 0 {
-		cfg.SpeakGate.MaxConsecutiveBotTurns = defaultSpeakMaxTurns
-	}
-	if cfg.SpeakGate.Judge.TimeoutMS <= 0 {
-		cfg.SpeakGate.Judge.TimeoutMS = defaultSpeakJudgeTimeoutMS
+	if cfg.SpeakGate.TimeoutMS <= 0 {
+		cfg.SpeakGate.TimeoutMS = defaultSpeakJudgeTimeoutMS
 	}
 	if cfg.PostCooldownJudge.TimeoutMS <= 0 {
 		cfg.PostCooldownJudge.TimeoutMS = 1200
@@ -734,10 +693,7 @@ type queueMeta struct {
 
 type speakGateResult struct {
 	shouldSpeak       bool
-	score             int
-	threshold         int
 	reason            string
-	baseDecision      bool
 	assistantStatus   string
 	mentionsToBot     int
 	addressedToBot    int
@@ -808,72 +764,28 @@ func summarizeQueueMeta(queue []queuedMessage, now time.Time, botNames []string)
 }
 
 func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMessage) speakGateResult {
-	if !b.cfg.SpeakGate.Enabled {
-		return speakGateResult{shouldSpeak: true, reason: "speak_gate_disabled", assistantStatus: "disabled"}
-	}
+	_ = state
 	meta := summarizeQueueMeta(queue, time.Now(), b.nicknames)
-	score := 0
-	reasons := make([]string, 0, 8)
+	reasons := make([]string, 0, 4)
 	directedQuestions := 0
 	for _, msg := range queue {
 		if msg.isQuestion && msg.isAddressedToBot {
 			directedQuestions++
 		}
 	}
-	if meta.MentionsToBot > 0 {
-		score += 4
-		reasons = append(reasons, "mention_to_bot(+4)")
-	}
-	if meta.AddressedToBot > 0 {
-		score += 1
-		reasons = append(reasons, "addressed_to_bot(+1)")
-	}
-	if directedQuestions > 0 {
-		score += 3
-		reasons = append(reasons, "direct_question(+3)")
-	} else if meta.QuestionsCount > 0 {
-		score += 2
-		reasons = append(reasons, "question_present(+2)")
-	}
-	if meta.MessagesCount >= 3 && len(meta.Participants) >= 2 && meta.MentionsToBot == 0 && directedQuestions == 0 {
-		score -= 2
-		reasons = append(reasons, "active_human_chat(-2)")
-	}
-	if b.cfg.SpeakGate.MaxConsecutiveBotTurns > 0 && state != nil {
-		state.mu.Lock()
-		botTurns := state.botTurns
-		lastReply := state.lastReply
-		state.mu.Unlock()
-		window := time.Duration(b.cfg.SpeakGate.SuppressAfterBotReplyMS) * time.Millisecond
-		if botTurns >= b.cfg.SpeakGate.MaxConsecutiveBotTurns &&
-			window > 0 &&
-			!lastReply.IsZero() &&
-			time.Since(lastReply) <= window {
-			score -= 3
-			reasons = append(reasons, "recent_bot_reply(-3)")
-		}
-	}
-	if meta.MessagesCount <= 2 && len(meta.Participants) <= 2 {
-		score += 1
-		reasons = append(reasons, "low_traffic_window(+1)")
-	}
-	threshold := b.cfg.SpeakGate.Threshold
-	should := score >= threshold || meta.MentionsToBot > 0 || directedQuestions > 0
-	baseDecision := should
+	should := true
 	assistantStatus := "not_enabled"
-	if b.llm != nil && b.cfg.SpeakGate.Judge.Enabled {
+	if b.llm != nil && b.cfg.SpeakGate.Enabled {
 		assistantStatus = "enabled"
 		assistantDecision, judged, err := b.llm.JudgeSpeakGate(
 			context.Background(),
 			buildCombinedInput(queue),
-			score,
-			threshold,
-			strings.Join(reasons, ","),
 		)
 		if err != nil {
-			if b.cfg.SpeakGate.Judge.FailOpen {
-				reasons = append(reasons, "assistant_error_fallback_rules(0)")
-				assistantStatus = "error_fallback_rules"
+			if b.cfg.SpeakGate.FailOpen {
+				should = true
+				reasons = append(reasons, "assistant_error_fail_open_allow(override_yes)")
+				assistantStatus = "error_allow"
 			} else {
 				should = false
 				reasons = append(reasons, "assistant_error_block(override_no)")
@@ -888,17 +800,21 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 				reasons = append(reasons, "assistant_no(override)")
 				assistantStatus = "no"
 			}
+		} else if b.cfg.SpeakGate.FailOpen {
+			should = true
+			reasons = append(reasons, "assistant_unjudged_fail_open_allow(override_yes)")
+			assistantStatus = "unjudged_allow"
+		} else {
+			should = false
+			reasons = append(reasons, "assistant_unjudged_block(override_no)")
+			assistantStatus = "unjudged_block"
 		}
-	}
-	if !should {
-		reasons = append(reasons, fmt.Sprintf("score_below_threshold(%d<%d)", score, threshold))
+	} else {
+		reasons = append(reasons, "assistant_not_enabled_allow(default_yes)")
 	}
 	return speakGateResult{
 		shouldSpeak:       should,
-		score:             score,
-		threshold:         threshold,
 		reason:            strings.Join(reasons, ","),
-		baseDecision:      baseDecision,
 		assistantStatus:   assistantStatus,
 		mentionsToBot:     meta.MentionsToBot,
 		addressedToBot:    meta.AddressedToBot,

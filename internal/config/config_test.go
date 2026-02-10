@@ -43,16 +43,11 @@ llm:
     max_batch_chars: 1000
     immediate_delay_ms: 100
     speak_gate:
-      enabled: true
-      threshold: 3
-      suppress_after_bot_reply_ms: 2500
-      max_consecutive_bot_turns: 1
-      judge:
-        enabled: false
-        model: ""
-        prompt: ""
-        timeout_ms: 1000
-        fail_open: true
+      enabled: false
+      model: ""
+      prompt: ""
+      timeout_ms: 1000
+      fail_open: true
     mention_judge:
       enabled: false
       model: ""
@@ -137,15 +132,10 @@ llm:
     immediate_delay_ms: 100
     speak_gate:
       enabled: true
-      threshold: 3
-      suppress_after_bot_reply_ms: 2500
-      max_consecutive_bot_turns: 1
-      judge:
-        enabled: true
-        model: ""
-        prompt: "{{file:prompts/speak_gate_judge.txt}}"
-        timeout_ms: 1000
-        fail_open: true
+      model: ""
+      prompt: "{{file:prompts/speak_gate_judge.txt}}"
+      timeout_ms: 1000
+      fail_open: true
     mention_judge:
       enabled: true
       model: ""
@@ -182,8 +172,8 @@ driver:
 	if cfg.LLM.Immersive.PostCooldownJudge.Prompt != "冷静期后判定提示词" {
 		t.Fatalf("unexpected post cooldown judge prompt: %q", cfg.LLM.Immersive.PostCooldownJudge.Prompt)
 	}
-	if cfg.LLM.Immersive.SpeakGate.Judge.Prompt != "发言门控判定提示词" {
-		t.Fatalf("unexpected speak gate judge prompt: %q", cfg.LLM.Immersive.SpeakGate.Judge.Prompt)
+	if cfg.LLM.Immersive.SpeakGate.Prompt != "发言门控判定提示词" {
+		t.Fatalf("unexpected speak gate judge prompt: %q", cfg.LLM.Immersive.SpeakGate.Prompt)
 	}
 }
 
@@ -221,16 +211,11 @@ llm:
     max_batch_chars: 1000
     immediate_delay_ms: 100
     speak_gate:
-      enabled: true
-      threshold: 3
-      suppress_after_bot_reply_ms: 2500
-      max_consecutive_bot_turns: 1
-      judge:
-        enabled: false
-        model: ""
-        prompt: ""
-        timeout_ms: 1000
-        fail_open: true
+      enabled: false
+      model: ""
+      prompt: ""
+      timeout_ms: 1000
+      fail_open: true
     mention_judge:
       enabled: false
       model: ""

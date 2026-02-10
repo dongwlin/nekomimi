@@ -65,12 +65,12 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	if judgeTimeout <= 0 {
 		judgeTimeout = 1200 * time.Millisecond
 	}
-	speakJudgePrompt := strings.TrimSpace(cfg.Immersive.SpeakGate.Judge.Prompt)
+	speakJudgePrompt := strings.TrimSpace(cfg.Immersive.SpeakGate.Prompt)
 	if speakJudgePrompt == "" {
 		speakJudgePrompt = llmprompt.SpeakGateJudgePrompt
 	}
-	speakJudgeModel := strings.TrimSpace(cfg.Immersive.SpeakGate.Judge.Model)
-	speakJudgeTimeout := time.Duration(cfg.Immersive.SpeakGate.Judge.TimeoutMS) * time.Millisecond
+	speakJudgeModel := strings.TrimSpace(cfg.Immersive.SpeakGate.Model)
+	speakJudgeTimeout := time.Duration(cfg.Immersive.SpeakGate.TimeoutMS) * time.Millisecond
 	if speakJudgeTimeout <= 0 {
 		speakJudgeTimeout = 1200 * time.Millisecond
 	}
@@ -103,11 +103,11 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		judgeModel:         judgeModel,
 		judgePrompt:        judgePrompt,
 		judgeTimeout:       judgeTimeout,
-		speakJudgeEnabled:  cfg.Immersive.SpeakGate.Judge.Enabled,
+		speakJudgeEnabled:  cfg.Immersive.SpeakGate.Enabled,
 		speakJudgeModel:    speakJudgeModel,
 		speakJudgePrompt:   speakJudgePrompt,
 		speakJudgeTimeout:  speakJudgeTimeout,
-		speakJudgeFailOpen: cfg.Immersive.SpeakGate.Judge.FailOpen,
+		speakJudgeFailOpen: cfg.Immersive.SpeakGate.FailOpen,
 		postJudgeEnabled:   cfg.Immersive.PostCooldownJudge.Enabled,
 		postJudgeModel:     postJudgeModel,
 		postJudgePrompt:    postJudgePrompt,

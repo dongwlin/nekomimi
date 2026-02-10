@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -125,7 +124,7 @@ func (m *Manager) JudgePostCooldown(ctx context.Context, message, speaker, recen
 	return decision, nil
 }
 
-func (m *Manager) JudgeSpeakGate(ctx context.Context, message string, score, threshold int, reasons string) (bool, bool, error) {
+func (m *Manager) JudgeSpeakGate(ctx context.Context, message string) (bool, bool, error) {
 	if m == nil {
 		return false, false, errors.New("LLM 未初始化")
 	}
@@ -146,7 +145,7 @@ func (m *Manager) JudgeSpeakGate(ctx context.Context, message string, score, thr
 	if strings.TrimSpace(model) == "" {
 		return false, failOpen, errors.New("未配置模型名")
 	}
-	input := buildSpeakGateJudgeInput(message, score, threshold, reasons)
+	input := buildSpeakGateJudgeInput(message)
 	if strings.TrimSpace(input) == "" {
 		return false, failOpen, errors.New("待判断内容为空")
 	}
@@ -213,21 +212,12 @@ func buildPostCooldownJudgeInput(message, speaker, recent string) string {
 	return strings.TrimSpace(builder.String())
 }
 
-func buildSpeakGateJudgeInput(message string, score, threshold int, reasons string) string {
+func buildSpeakGateJudgeInput(message string) string {
 	var builder strings.Builder
 	builder.WriteString("请判断机器人是否应该在当前批次发言。")
 	builder.WriteString("\n请严格只输出 YES 或 NO。")
 	builder.WriteString("\n\n批次上下文:\n")
 	builder.WriteString(strings.TrimSpace(message))
-	builder.WriteString("\n\n规则门控信息:\n")
-	builder.WriteString("score=")
-	builder.WriteString(strconv.Itoa(score))
-	builder.WriteString(", threshold=")
-	builder.WriteString(strconv.Itoa(threshold))
-	if strings.TrimSpace(reasons) != "" {
-		builder.WriteString(", reasons=")
-		builder.WriteString(strings.TrimSpace(reasons))
-	}
 	return strings.TrimSpace(builder.String())
 }
 
