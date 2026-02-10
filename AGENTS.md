@@ -23,4 +23,5 @@
 ## Notes
 - `config/config.yml` must exist before startup (it is not auto-generated)
 - When `config/config.yml` structure changes, update `config/config.example.yml` in sync
-- ZeroBot GoDoc: https://pkg.go.dev/github.com/wdvxdr1123/ZeroBot
+- ZeroBot API reference: https://pkg.go.dev/github.com/wdvxdr1123/ZeroBot
+- Prefer behavior matching the version pinned in `go.mod`; if docs differ from local code, trust local dependency version first
