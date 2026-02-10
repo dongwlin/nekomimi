@@ -12,13 +12,16 @@ import (
 	"sync"
 
 	"github.com/dongwlin/nekomimi/internal/llm/model"
+	"github.com/rs/zerolog/log"
 )
 
 type Client struct {
-	mu         sync.RWMutex
-	apiURL     string
-	apiKey     string
-	httpClient *http.Client
+	mu              sync.RWMutex
+	apiURL          string
+	apiKey          string
+	reasoningEffort string
+	showReasoning   bool
+	httpClient      *http.Client
 }
 
 func New(apiURL, apiKey string) *Client {
@@ -48,6 +51,46 @@ func (c *Client) APIURL() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.apiURL
+}
+
+func normalizeReasoningEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(effort))
+	default:
+		return ""
+	}
+}
+
+func (c *Client) SetReasoningEffort(effort string) {
+	raw := strings.TrimSpace(effort)
+	normalized := normalizeReasoningEffort(raw)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reasoningEffort = normalized
+	if raw != "" && normalized == "" {
+		log.Warn().
+			Str("reasoning_effort", raw).
+			Msg("invalid reasoning_effort, reasoning disabled")
+	}
+}
+
+func (c *Client) reasoningEffortSnapshot() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.reasoningEffort
+}
+
+func (c *Client) SetShowReasoning(show bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.showReasoning = show
+}
+
+func (c *Client) showReasoningSnapshot() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.showReasoning
 }
 
 func (c *Client) apiURLSnapshot() string {
@@ -140,38 +183,64 @@ func (c *Client) postJSON(ctx context.Context, apiURL string, reqBody any) ([]by
 	return body, nil
 }
 
-func parseResponsesText(parsed responsesResponse) (string, error) {
+func parseResponsesText(parsed responsesResponse) (string, string, error) {
 	if parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
-		return "", errors.New(parsed.Error.Message)
+		return "", "", errors.New(parsed.Error.Message)
 	}
 
 	var builder strings.Builder
+	var reasoningBuilder strings.Builder
 	for _, item := range parsed.Output {
+		if strings.EqualFold(strings.TrimSpace(item.Type), "reasoning") {
+			for _, summary := range item.Summary {
+				if strings.TrimSpace(summary.Text) != "" {
+					if reasoningBuilder.Len() > 0 {
+						reasoningBuilder.WriteString("\n")
+					}
+					reasoningBuilder.WriteString(strings.TrimSpace(summary.Text))
+				}
+			}
+		}
 		for _, content := range item.Content {
 			if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
 				builder.WriteString(content.Text)
+			}
+			if strings.Contains(strings.ToLower(strings.TrimSpace(content.Type)), "reasoning") && strings.TrimSpace(content.Text) != "" {
+				if reasoningBuilder.Len() > 0 {
+					reasoningBuilder.WriteString("\n")
+				}
+				reasoningBuilder.WriteString(strings.TrimSpace(content.Text))
 			}
 		}
 	}
 	result := strings.TrimSpace(builder.String())
 	if result == "" {
-		return "", errors.New("模型未返回文本内容")
+		return "", "", errors.New("模型未返回文本内容")
 	}
-	return result, nil
+	return result, strings.TrimSpace(reasoningBuilder.String()), nil
 }
 
-func parseChatCompletionText(parsed chatCompletionsResponse) (string, error) {
+func parseChatCompletionText(parsed chatCompletionsResponse) (string, string, error) {
 	if parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
-		return "", errors.New(parsed.Error.Message)
+		return "", "", errors.New(parsed.Error.Message)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", errors.New("模型未返回文本内容")
+		return "", "", errors.New("模型未返回文本内容")
 	}
 	result := strings.TrimSpace(parsed.Choices[0].Message.Content)
 	if result == "" {
-		return "", errors.New("模型未返回文本内容")
+		return "", "", errors.New("模型未返回文本内容")
 	}
-	return result, nil
+	return result, strings.TrimSpace(parsed.Choices[0].Message.ReasoningContent), nil
+}
+
+func mergeReasoningIntoReply(reply, reasoning string, show bool) string {
+	reply = strings.TrimSpace(reply)
+	reasoning = strings.TrimSpace(reasoning)
+	if !show || reasoning == "" {
+		return reply
+	}
+	return "【思考过程】\n" + reasoning + "\n\n【回答】\n" + reply
 }
 
 func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
@@ -183,7 +252,21 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 		Model: modelName,
 		Input: input,
 	}
-	body, err := c.postJSON(ctx, c.apiURLSnapshot(), reqBody)
+	if effort := c.reasoningEffortSnapshot(); effort != "" {
+		reqBody.Reasoning = &responsesReasoning{Effort: effort}
+	}
+	apiURL := c.apiURLSnapshot()
+	log.Info().
+		Str("llm_api", "responses").
+		Str("api_url", apiURL).
+		Str("model", strings.TrimSpace(modelName)).
+		Int("message_count", len(input)).
+		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
+		Bool("reasoning_enabled", reqBody.Reasoning != nil).
+		Bool("show_reasoning", c.showReasoningSnapshot()).
+		Str("reasoning_effort", c.reasoningEffortSnapshot()).
+		Msg("sending llm request")
+	body, err := c.postJSON(ctx, apiURL, reqBody)
 	if err != nil {
 		return "", err
 	}
@@ -192,7 +275,16 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return "", err
 	}
-	return parseResponsesText(parsed)
+	reply, reasoning, err := parseResponsesText(parsed)
+	if err != nil {
+		return "", err
+	}
+	log.Info().
+		Str("llm_api", "responses").
+		Int("reply_chars", len([]rune(reply))).
+		Int("reasoning_chars", len([]rune(reasoning))).
+		Msg("llm response received")
+	return mergeReasoningIntoReply(reply, reasoning, c.showReasoningSnapshot()), nil
 }
 
 func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
@@ -201,10 +293,22 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 	}
 	chatMessages := buildChatMessages(systemPrompt, messages)
 	reqBody := chatCompletionsRequest{
-		Model:    modelName,
-		Messages: chatMessages,
+		Model:           modelName,
+		Messages:        chatMessages,
+		ReasoningEffort: c.reasoningEffortSnapshot(),
 	}
-	body, err := c.postJSON(ctx, c.apiURLSnapshot(), reqBody)
+	apiURL := c.apiURLSnapshot()
+	log.Info().
+		Str("llm_api", "chat_completions").
+		Str("api_url", apiURL).
+		Str("model", strings.TrimSpace(modelName)).
+		Int("message_count", len(chatMessages)).
+		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
+		Bool("reasoning_enabled", strings.TrimSpace(reqBody.ReasoningEffort) != "").
+		Bool("show_reasoning", c.showReasoningSnapshot()).
+		Str("reasoning_effort", reqBody.ReasoningEffort).
+		Msg("sending llm request")
+	body, err := c.postJSON(ctx, apiURL, reqBody)
 	if err != nil {
 		return "", err
 	}
@@ -213,5 +317,14 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return "", err
 	}
-	return parseChatCompletionText(parsed)
+	reply, reasoning, err := parseChatCompletionText(parsed)
+	if err != nil {
+		return "", err
+	}
+	log.Info().
+		Str("llm_api", "chat_completions").
+		Int("reply_chars", len([]rune(reply))).
+		Int("reasoning_chars", len([]rune(reasoning))).
+		Msg("llm response received")
+	return mergeReasoningIntoReply(reply, reasoning, c.showReasoningSnapshot()), nil
 }

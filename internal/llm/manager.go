@@ -84,6 +84,8 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		postJudgeTimeout = 1200 * time.Millisecond
 	}
 	client := llmclient.New(apiURL, cfg.Key)
+	client.SetReasoningEffort(cfg.ReasoningEffort)
+	client.SetShowReasoning(cfg.ShowReasoning)
 	return &Manager{
 		enabled:            cfg.Enabled,
 		provider:           providerName,

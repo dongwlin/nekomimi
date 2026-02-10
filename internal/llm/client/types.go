@@ -1,8 +1,9 @@
 package client
 
 type responsesRequest struct {
-	Model string                  `json:"model"`
-	Input []responsesInputMessage `json:"input"`
+	Model     string                  `json:"model"`
+	Input     []responsesInputMessage `json:"input"`
+	Reasoning *responsesReasoning     `json:"reasoning,omitempty"`
 }
 
 type responsesInputMessage struct {
@@ -15,8 +16,17 @@ type responsesContent struct {
 	Text string `json:"text"`
 }
 
+type responsesReasoning struct {
+	Effort string `json:"effort"`
+}
+
 type responsesResponse struct {
 	Output []struct {
+		Type    string `json:"type"`
+		Summary []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"summary"`
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -28,8 +38,9 @@ type responsesResponse struct {
 }
 
 type chatCompletionsRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
+	Model           string        `json:"model"`
+	Messages        []chatMessage `json:"messages"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
 }
 
 type chatMessage struct {
@@ -40,7 +51,8 @@ type chatMessage struct {
 type chatCompletionsResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"message"`
 	} `json:"choices"`
 	Error *struct {

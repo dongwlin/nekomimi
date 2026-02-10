@@ -11,15 +11,17 @@ type Config struct {
 }
 
 type LLMConfig struct {
-	Enabled      bool            `yaml:"enabled"`
-	Provider     string          `yaml:"provider"`
-	API          string          `yaml:"api"`
-	Key          string          `yaml:"key"`
-	Model        string          `yaml:"model"`
-	SystemPrompt string          `yaml:"system_prompt"`
-	HistoryMax   int             `yaml:"history_max"`
-	ContextMax   int             `yaml:"context_max"`
-	Immersive    ImmersiveConfig `yaml:"immersive"`
+	Enabled         bool            `yaml:"enabled"`
+	Provider        string          `yaml:"provider"`
+	API             string          `yaml:"api"`
+	Key             string          `yaml:"key"`
+	Model           string          `yaml:"model"`
+	ReasoningEffort string          `yaml:"reasoning_effort"`
+	ShowReasoning   bool            `yaml:"show_reasoning"`
+	SystemPrompt    string          `yaml:"system_prompt"`
+	HistoryMax      int             `yaml:"history_max"`
+	ContextMax      int             `yaml:"context_max"`
+	Immersive       ImmersiveConfig `yaml:"immersive"`
 }
 
 type ImmersiveConfig struct {
