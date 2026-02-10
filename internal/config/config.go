@@ -1,6 +1,6 @@
 package config
 
-const DefaultPath = "config.yml"
+const DefaultPath = "config/config.yml"
 
 type Config struct {
 	NickName      []string     `yaml:"nickname"`
