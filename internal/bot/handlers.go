@@ -36,21 +36,33 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 			ctx.Send("LLM未开启，可使用 /llm on 开启")
 			return
 		}
-		used, max, percent, messageCount := llmManager.SessionContextUsage(sessionKey(ctx))
-		if max <= 0 {
+		usage := llmManager.SessionContextUsage(sessionKey(ctx))
+		sessionStart := "未开始"
+		if !usage.SessionStartedAt.IsZero() {
+			sessionStart = usage.SessionStartedAt.Format("2006-01-02 15:04:05")
+		}
+		if usage.MaxTokens <= 0 {
 			ctx.Send(fmt.Sprintf(
-				"当前会话上下文估算:\n已使用: %d tokens\n上限: 未设置（context_max <= 0）\n占比: 未启用\n历史消息: %d 条",
-				used,
-				messageCount,
+				"当前会话上下文估算:\n会话开始: %s\n已使用: %d tokens\n上限: 未设置（context_max <= 0）\n占比: 未启用\n历史消息: %d 条\n压缩次数: %d（历史: %d, 上下文: %d）",
+				sessionStart,
+				usage.UsedTokens,
+				usage.MessageCount,
+				usage.TotalCompressCount,
+				usage.HistoryCompressCount,
+				usage.ContextCompressCount,
 			))
 			return
 		}
 		ctx.Send(fmt.Sprintf(
-			"当前会话上下文估算:\n已使用: %d/%d tokens\n占比: %.1f%%\n历史消息: %d 条",
-			used,
-			max,
-			percent,
-			messageCount,
+			"当前会话上下文估算:\n会话开始: %s\n已使用: %d/%d tokens\n占比: %.1f%%\n历史消息: %d 条\n压缩次数: %d（历史: %d, 上下文: %d）",
+			sessionStart,
+			usage.UsedTokens,
+			usage.MaxTokens,
+			usage.UsagePercent,
+			usage.MessageCount,
+			usage.TotalCompressCount,
+			usage.HistoryCompressCount,
+			usage.ContextCompressCount,
 		))
 	}
 	zero.OnCommand("ctx", zero.SuperUserPermission).Handle(sendContextUsage)

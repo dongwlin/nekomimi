@@ -3,10 +3,22 @@ package llm
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/dongwlin/nekomimi/internal/llm/summarizer"
 	"github.com/dongwlin/nekomimi/internal/llm/token"
 )
+
+type SessionContextUsage struct {
+	UsedTokens            int
+	MaxTokens             int
+	UsagePercent          float64
+	MessageCount          int
+	SessionStartedAt      time.Time
+	HistoryCompressCount  int
+	ContextCompressCount  int
+	TotalCompressCount    int
+}
 
 func (m *Manager) historySnapshot(sessionKey string) []Message {
 	if strings.TrimSpace(sessionKey) == "" {
@@ -24,6 +36,7 @@ func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) 
 	if userContent == "" || assistantReply == "" {
 		return
 	}
+	m.ensureSessionStarted(sessionKey)
 	m.historyStore.Append(
 		sessionKey,
 		Message{Role: "user", Content: userContent},
@@ -69,6 +82,7 @@ func (m *Manager) compressHistoryIfNeeded(ctx context.Context, provider, model, 
 	compressed = append(compressed, summaryMsg)
 	compressed = append(compressed, tail...)
 	m.historyStore.Replace(sessionKey, compressed)
+	m.incrementHistoryCompressCount(sessionKey)
 }
 
 func (m *Manager) ClearHistory(sessionKey string) {
@@ -76,22 +90,114 @@ func (m *Manager) ClearHistory(sessionKey string) {
 		return
 	}
 	m.historyStore.Clear(sessionKey)
+	m.clearSessionStats(sessionKey)
 }
 
-func (m *Manager) SessionContextUsage(sessionKey string) (usedTokens int, maxTokens int, usagePercent float64, messageCount int) {
+func (m *Manager) SessionContextUsage(sessionKey string) SessionContextUsage {
 	if strings.TrimSpace(sessionKey) == "" {
-		return 0, 0, 0, 0
+		return SessionContextUsage{}
 	}
 	history := m.historySnapshot(sessionKey)
 	m.mu.RLock()
 	systemPrompt := m.systemPrompt
 	contextMax := m.contextMax
+	stats := m.sessionStats[sessionKey]
 	m.mu.RUnlock()
 
 	used := token.EstimateContextTokens(systemPrompt, history)
 	percent := 0.0
+	startedAt := time.Time{}
+	historyCompressCount := 0
+	contextCompressCount := 0
+	if stats != nil {
+		startedAt = stats.startedAt
+		historyCompressCount = stats.historyCompressCount
+		contextCompressCount = stats.contextCompressCount
+	}
 	if contextMax > 0 {
 		percent = float64(used) * 100 / float64(contextMax)
 	}
-	return used, contextMax, percent, len(history)
+	return SessionContextUsage{
+		UsedTokens:           used,
+		MaxTokens:            contextMax,
+		UsagePercent:         percent,
+		MessageCount:         len(history),
+		SessionStartedAt:     startedAt,
+		HistoryCompressCount: historyCompressCount,
+		ContextCompressCount: contextCompressCount,
+		TotalCompressCount:   historyCompressCount + contextCompressCount,
+	}
+}
+
+func (m *Manager) ensureSessionStarted(sessionKey string) {
+	if strings.TrimSpace(sessionKey) == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessionStats == nil {
+		m.sessionStats = make(map[string]*sessionUsageStats)
+	}
+	stats, ok := m.sessionStats[sessionKey]
+	if !ok {
+		m.sessionStats[sessionKey] = &sessionUsageStats{
+			startedAt: time.Now(),
+		}
+		return
+	}
+	if stats.startedAt.IsZero() {
+		stats.startedAt = time.Now()
+	}
+}
+
+func (m *Manager) incrementHistoryCompressCount(sessionKey string) {
+	if strings.TrimSpace(sessionKey) == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessionStats == nil {
+		m.sessionStats = make(map[string]*sessionUsageStats)
+	}
+	stats, ok := m.sessionStats[sessionKey]
+	if !ok {
+		stats = &sessionUsageStats{startedAt: time.Now()}
+		m.sessionStats[sessionKey] = stats
+	}
+	if stats.startedAt.IsZero() {
+		stats.startedAt = time.Now()
+	}
+	stats.historyCompressCount++
+}
+
+func (m *Manager) incrementContextCompressCount(sessionKey string) {
+	if strings.TrimSpace(sessionKey) == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessionStats == nil {
+		m.sessionStats = make(map[string]*sessionUsageStats)
+	}
+	stats, ok := m.sessionStats[sessionKey]
+	if !ok {
+		stats = &sessionUsageStats{startedAt: time.Now()}
+		m.sessionStats[sessionKey] = stats
+	}
+	if stats.startedAt.IsZero() {
+		stats.startedAt = time.Now()
+	}
+	stats.contextCompressCount++
+}
+
+func (m *Manager) clearSessionStats(sessionKey string) {
+	if strings.TrimSpace(sessionKey) == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessionStats == nil {
+		return
+	}
+	delete(m.sessionStats, sessionKey)
 }

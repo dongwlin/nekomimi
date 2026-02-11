@@ -9,7 +9,7 @@ import (
 	"github.com/dongwlin/nekomimi/internal/llm/token"
 )
 
-func (m *Manager) compressMessages(ctx context.Context, provider, model, systemPrompt string, messages []Message) []Message {
+func (m *Manager) compressMessages(ctx context.Context, provider, model, systemPrompt, sessionKey string, messages []Message) []Message {
 	if m.contextMax <= 0 || len(messages) == 0 {
 		return messages
 	}
@@ -24,6 +24,14 @@ func (m *Manager) compressMessages(ctx context.Context, provider, model, systemP
 	if keepLast < 2 {
 		keepLast = 2
 	}
+	compressedCounted := false
+	markCompressed := func(result []Message) []Message {
+		if !compressedCounted && !messagesEqual(messages, result) {
+			m.incrementContextCompressCount(sessionKey)
+			compressedCounted = true
+		}
+		return result
+	}
 	if len(messages) <= keepLast {
 		tailCount := 2
 		if len(messages) < tailCount {
@@ -31,11 +39,11 @@ func (m *Manager) compressMessages(ctx context.Context, provider, model, systemP
 		}
 		head := messages[:len(messages)-tailCount]
 		if len(head) == 0 {
-			return reduceMessagesToFit(messages, systemPrompt, m.contextMax)
+			return markCompressed(reduceMessagesToFit(messages, systemPrompt, m.contextMax))
 		}
 		summary := m.summarizeWithProvider(ctx, provider, model, summarizer.ModeLight, head, 0)
 		if strings.TrimSpace(summary) == "" {
-			return reduceMessagesToFit(messages, systemPrompt, m.contextMax)
+			return markCompressed(reduceMessagesToFit(messages, systemPrompt, m.contextMax))
 		}
 		compressed := make([]Message, 0, tailCount+1)
 		compressed = append(compressed, Message{
@@ -44,9 +52,9 @@ func (m *Manager) compressMessages(ctx context.Context, provider, model, systemP
 		})
 		compressed = append(compressed, messages[len(messages)-tailCount:]...)
 		if token.EstimateContextTokens(systemPrompt, compressed) <= m.contextMax {
-			return compressed
+			return markCompressed(compressed)
 		}
-		return reduceMessagesToFit(compressed, systemPrompt, m.contextMax)
+		return markCompressed(reduceMessagesToFit(compressed, systemPrompt, m.contextMax))
 	}
 	tailStart := len(messages) - keepLast
 	summarySrc := messages[:tailStart]
@@ -61,9 +69,21 @@ func (m *Manager) compressMessages(ctx context.Context, provider, model, systemP
 	}
 	compressed = append(compressed, tail...)
 	if token.EstimateContextTokens(systemPrompt, compressed) <= m.contextMax {
-		return compressed
+		return markCompressed(compressed)
 	}
-	return reduceMessagesToFit(compressed, systemPrompt, m.contextMax)
+	return markCompressed(reduceMessagesToFit(compressed, systemPrompt, m.contextMax))
+}
+
+func messagesEqual(a, b []Message) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Role != b[i].Role || a[i].Content != b[i].Content {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) summarizeWithProvider(ctx context.Context, providerName, model string, mode summarizer.Mode, messages []Message, fallbackMaxChars int) string {

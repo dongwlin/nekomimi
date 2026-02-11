@@ -48,6 +48,13 @@ type Manager struct {
 	postJudgePrompt     string
 	postJudgeTimeout    time.Duration
 	postJudgeReasoning  string
+	sessionStats        map[string]*sessionUsageStats
+}
+
+type sessionUsageStats struct {
+	startedAt             time.Time
+	historyCompressCount  int
+	contextCompressCount  int
 }
 
 func normalizeAssistantReasoningEffort(effort string) string {
@@ -139,6 +146,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		postJudgePrompt:     postJudgePrompt,
 		postJudgeTimeout:    postJudgeTimeout,
 		postJudgeReasoning:  postJudgeReasoning,
+		sessionStats:        make(map[string]*sessionUsageStats),
 	}
 }
 
@@ -237,7 +245,7 @@ func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker stri
 	history := m.historySnapshot(sessionKey)
 	userContent := formatUserContent(userInput, speaker)
 	messages := append(history, Message{Role: "user", Content: userContent})
-	messages = m.compressMessages(ctx, provider, model, systemPrompt, messages)
+	messages = m.compressMessages(ctx, provider, model, systemPrompt, sessionKey, messages)
 	reply, err := m.generateWithProvider(ctx, provider, model, systemPrompt, messages, llmclient.RequestOptions{
 		Source: "main_reply",
 	})
