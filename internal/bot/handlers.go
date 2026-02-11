@@ -1,8 +1,8 @@
 package bot
 
 import (
-	"github.com/dongwlin/nekomimi/internal/config"
 	bothandlers "github.com/dongwlin/nekomimi/internal/bot/handlers"
+	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
 )
 
