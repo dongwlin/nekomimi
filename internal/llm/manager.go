@@ -19,6 +19,7 @@ type Manager struct {
 	enabled             bool
 	provider            string
 	model               string
+	requestTimeout      time.Duration
 	systemPrompt        string
 	basePrompt          string
 	defaultModel        string
@@ -99,6 +100,10 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	if postJudgeTimeout <= 0 {
 		postJudgeTimeout = 1200 * time.Millisecond
 	}
+	requestTimeout := time.Duration(cfg.TimeoutMS) * time.Millisecond
+	if requestTimeout <= 0 {
+		requestTimeout = llmclient.DefaultRequestTimeout
+	}
 	client := llmclient.New(apiURL, cfg.Key)
 	client.SetReasoningEffort(cfg.ReasoningEffort)
 	client.SetShowReasoning(cfg.ShowReasoning)
@@ -106,6 +111,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		enabled:             cfg.Enabled,
 		provider:            providerName,
 		model:               strings.TrimSpace(cfg.Model),
+		requestTimeout:      requestTimeout,
 		systemPrompt:        systemPrompt,
 		basePrompt:          basePrompt,
 		defaultModel:        strings.TrimSpace(cfg.Model),
@@ -247,7 +253,11 @@ func (m *Manager) generateWithProvider(ctx context.Context, providerName, model,
 		ctx = context.Background()
 	}
 	ctx = llmclient.WithRequestOptions(ctx, options)
-	reqCtx, cancel := context.WithTimeout(ctx, llmclient.DefaultRequestTimeout)
+	timeout := m.requestTimeout
+	if timeout <= 0 {
+		timeout = llmclient.DefaultRequestTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	providerClient := m.providers.From(providerName)
 	return providerClient.Generate(reqCtx, model, systemPrompt, messages)

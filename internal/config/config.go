@@ -16,6 +16,7 @@ type LLMConfig struct {
 	API             string          `yaml:"api"`
 	Key             string          `yaml:"key"`
 	Model           string          `yaml:"model"`
+	TimeoutMS       int             `yaml:"timeout_ms"`
 	ReasoningEffort string          `yaml:"reasoning_effort"`
 	ShowReasoning   bool            `yaml:"show_reasoning"`
 	SystemPrompt    string          `yaml:"system_prompt"`

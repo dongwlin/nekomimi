@@ -81,7 +81,11 @@ func (m *Manager) summarizeWithProvider(ctx context.Context, providerName, model
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
-	reqCtx, cancel := context.WithTimeout(reqCtx, llmclient.DefaultRequestTimeout)
+	timeout := m.requestTimeout
+	if timeout <= 0 {
+		timeout = llmclient.DefaultRequestTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(reqCtx, timeout)
 	defer cancel()
 	return chain.Summarize(reqCtx, model, messages)
 }
