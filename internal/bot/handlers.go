@@ -54,7 +54,6 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 		))
 	}
 	zero.OnCommand("ctx", zero.SuperUserPermission).Handle(sendContextUsage)
-	zero.OnCommand("context", zero.SuperUserPermission).Handle(sendContextUsage)
 
 	zero.OnCommand("chat", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
 		args := strings.TrimSpace(ctx.State["args"].(string))
