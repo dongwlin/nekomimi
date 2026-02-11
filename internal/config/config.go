@@ -40,29 +40,32 @@ type ImmersiveConfig struct {
 }
 
 type SpeakGateConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Model     string `yaml:"model"`
-	Prompt    string `yaml:"prompt"`
-	TimeoutMS int    `yaml:"timeout_ms"`
-	FailOpen  bool   `yaml:"fail_open"`
+	Enabled         bool   `yaml:"enabled"`
+	Model           string `yaml:"model"`
+	Prompt          string `yaml:"prompt"`
+	TimeoutMS       int    `yaml:"timeout_ms"`
+	ReasoningEffort string `yaml:"reasoning_effort"`
+	FailOpen        bool   `yaml:"fail_open"`
 }
 
 type MentionJudgeConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Model     string `yaml:"model"`
-	Prompt    string `yaml:"prompt"`
-	TimeoutMS int    `yaml:"timeout_ms"`
+	Enabled         bool   `yaml:"enabled"`
+	Model           string `yaml:"model"`
+	Prompt          string `yaml:"prompt"`
+	TimeoutMS       int    `yaml:"timeout_ms"`
+	ReasoningEffort string `yaml:"reasoning_effort"`
 }
 
 type PostCooldownJudgeConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	Model       string `yaml:"model"`
-	Prompt      string `yaml:"prompt"`
-	TimeoutMS   int    `yaml:"timeout_ms"`
-	ShortWaitMS int    `yaml:"short_wait_ms"`
-	LongWaitMS  int    `yaml:"long_wait_ms"`
-	MaxRounds   int    `yaml:"max_rounds"`
-	FailOpen    bool   `yaml:"fail_open"`
+	Enabled         bool   `yaml:"enabled"`
+	Model           string `yaml:"model"`
+	Prompt          string `yaml:"prompt"`
+	TimeoutMS       int    `yaml:"timeout_ms"`
+	ReasoningEffort string `yaml:"reasoning_effort"`
+	ShortWaitMS     int    `yaml:"short_wait_ms"`
+	LongWaitMS      int    `yaml:"long_wait_ms"`
+	MaxRounds       int    `yaml:"max_rounds"`
+	FailOpen        bool   `yaml:"fail_open"`
 }
 
 type DriverConfig struct {

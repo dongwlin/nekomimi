@@ -15,35 +15,48 @@ import (
 )
 
 type Manager struct {
-	mu                 sync.RWMutex
-	enabled            bool
-	provider           string
-	model              string
-	systemPrompt       string
-	basePrompt         string
-	defaultModel       string
-	defaultPrompt      string
-	defaultAPI         string
-	defaultProv        string
-	client             *llmclient.Client
-	providers          *provider.Factory
-	historyStore       history.Store
-	historyMax         int
-	contextMax         int
-	immersive          map[string]bool
-	judgeEnabled       bool
-	judgeModel         string
-	judgePrompt        string
-	judgeTimeout       time.Duration
-	speakJudgeEnabled  bool
-	speakJudgeModel    string
-	speakJudgePrompt   string
-	speakJudgeTimeout  time.Duration
-	speakJudgeFailOpen bool
-	postJudgeEnabled   bool
-	postJudgeModel     string
-	postJudgePrompt    string
-	postJudgeTimeout   time.Duration
+	mu                  sync.RWMutex
+	enabled             bool
+	provider            string
+	model               string
+	systemPrompt        string
+	basePrompt          string
+	defaultModel        string
+	defaultPrompt       string
+	defaultAPI          string
+	defaultProv         string
+	client              *llmclient.Client
+	providers           *provider.Factory
+	historyStore        history.Store
+	historyMax          int
+	contextMax          int
+	immersive           map[string]bool
+	judgeEnabled        bool
+	judgeModel          string
+	judgePrompt         string
+	judgeTimeout        time.Duration
+	judgeReasoning      string
+	speakJudgeEnabled   bool
+	speakJudgeModel     string
+	speakJudgePrompt    string
+	speakJudgeTimeout   time.Duration
+	speakJudgeReasoning string
+	speakJudgeFailOpen  bool
+	postJudgeEnabled    bool
+	postJudgeModel      string
+	postJudgePrompt     string
+	postJudgeTimeout    time.Duration
+	postJudgeReasoning  string
+}
+
+func normalizeAssistantReasoningEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "low", "medium", "high", "none":
+		return strings.ToLower(strings.TrimSpace(effort))
+	default:
+		// 助手默认不继承全局推理强度，未配置或无效时按 none 处理。
+		return "none"
+	}
 }
 
 func NewManager(cfg config.LLMConfig) *Manager {
@@ -61,6 +74,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		judgePrompt = llmprompt.MentionJudgePrompt
 	}
 	judgeModel := strings.TrimSpace(cfg.Immersive.MentionJudge.Model)
+	judgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.MentionJudge.ReasoningEffort)
 	judgeTimeout := time.Duration(cfg.Immersive.MentionJudge.TimeoutMS) * time.Millisecond
 	if judgeTimeout <= 0 {
 		judgeTimeout = 1200 * time.Millisecond
@@ -70,6 +84,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		speakJudgePrompt = llmprompt.SpeakGateJudgePrompt
 	}
 	speakJudgeModel := strings.TrimSpace(cfg.Immersive.SpeakGate.Model)
+	speakJudgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.SpeakGate.ReasoningEffort)
 	speakJudgeTimeout := time.Duration(cfg.Immersive.SpeakGate.TimeoutMS) * time.Millisecond
 	if speakJudgeTimeout <= 0 {
 		speakJudgeTimeout = 1200 * time.Millisecond
@@ -79,6 +94,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		postJudgePrompt = llmprompt.PostCooldownJudgePrompt
 	}
 	postJudgeModel := strings.TrimSpace(cfg.Immersive.PostCooldownJudge.Model)
+	postJudgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.PostCooldownJudge.ReasoningEffort)
 	postJudgeTimeout := time.Duration(cfg.Immersive.PostCooldownJudge.TimeoutMS) * time.Millisecond
 	if postJudgeTimeout <= 0 {
 		postJudgeTimeout = 1200 * time.Millisecond
@@ -87,33 +103,36 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	client.SetReasoningEffort(cfg.ReasoningEffort)
 	client.SetShowReasoning(cfg.ShowReasoning)
 	return &Manager{
-		enabled:            cfg.Enabled,
-		provider:           providerName,
-		model:              strings.TrimSpace(cfg.Model),
-		systemPrompt:       systemPrompt,
-		basePrompt:         basePrompt,
-		defaultModel:       strings.TrimSpace(cfg.Model),
-		defaultPrompt:      systemPrompt,
-		defaultAPI:         apiURL,
-		defaultProv:        providerName,
-		client:             client,
-		providers:          provider.NewFactory(client),
-		historyStore:       history.NewMemoryStore(historyMax),
-		historyMax:         historyMax,
-		contextMax:         contextMax,
-		judgeEnabled:       cfg.Immersive.MentionJudge.Enabled,
-		judgeModel:         judgeModel,
-		judgePrompt:        judgePrompt,
-		judgeTimeout:       judgeTimeout,
-		speakJudgeEnabled:  cfg.Immersive.SpeakGate.Enabled,
-		speakJudgeModel:    speakJudgeModel,
-		speakJudgePrompt:   speakJudgePrompt,
-		speakJudgeTimeout:  speakJudgeTimeout,
-		speakJudgeFailOpen: cfg.Immersive.SpeakGate.FailOpen,
-		postJudgeEnabled:   cfg.Immersive.PostCooldownJudge.Enabled,
-		postJudgeModel:     postJudgeModel,
-		postJudgePrompt:    postJudgePrompt,
-		postJudgeTimeout:   postJudgeTimeout,
+		enabled:             cfg.Enabled,
+		provider:            providerName,
+		model:               strings.TrimSpace(cfg.Model),
+		systemPrompt:        systemPrompt,
+		basePrompt:          basePrompt,
+		defaultModel:        strings.TrimSpace(cfg.Model),
+		defaultPrompt:       systemPrompt,
+		defaultAPI:          apiURL,
+		defaultProv:         providerName,
+		client:              client,
+		providers:           provider.NewFactory(client),
+		historyStore:        history.NewMemoryStore(historyMax),
+		historyMax:          historyMax,
+		contextMax:          contextMax,
+		judgeEnabled:        cfg.Immersive.MentionJudge.Enabled,
+		judgeModel:          judgeModel,
+		judgePrompt:         judgePrompt,
+		judgeTimeout:        judgeTimeout,
+		judgeReasoning:      judgeReasoning,
+		speakJudgeEnabled:   cfg.Immersive.SpeakGate.Enabled,
+		speakJudgeModel:     speakJudgeModel,
+		speakJudgePrompt:    speakJudgePrompt,
+		speakJudgeTimeout:   speakJudgeTimeout,
+		speakJudgeReasoning: speakJudgeReasoning,
+		speakJudgeFailOpen:  cfg.Immersive.SpeakGate.FailOpen,
+		postJudgeEnabled:    cfg.Immersive.PostCooldownJudge.Enabled,
+		postJudgeModel:      postJudgeModel,
+		postJudgePrompt:     postJudgePrompt,
+		postJudgeTimeout:    postJudgeTimeout,
+		postJudgeReasoning:  postJudgeReasoning,
 	}
 }
 
@@ -213,7 +232,9 @@ func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker stri
 	userContent := formatUserContent(userInput, speaker)
 	messages := append(history, Message{Role: "user", Content: userContent})
 	messages = m.compressMessages(ctx, provider, model, systemPrompt, messages)
-	reply, err := m.generateWithProvider(ctx, provider, model, systemPrompt, messages)
+	reply, err := m.generateWithProvider(ctx, provider, model, systemPrompt, messages, llmclient.RequestOptions{
+		Source: "main_reply",
+	})
 	if err != nil {
 		return "", err
 	}
@@ -221,10 +242,11 @@ func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker stri
 	return reply, nil
 }
 
-func (m *Manager) generateWithProvider(ctx context.Context, providerName, model, systemPrompt string, messages []Message) (string, error) {
+func (m *Manager) generateWithProvider(ctx context.Context, providerName, model, systemPrompt string, messages []Message, options llmclient.RequestOptions) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = llmclient.WithRequestOptions(ctx, options)
 	reqCtx, cancel := context.WithTimeout(ctx, llmclient.DefaultRequestTimeout)
 	defer cancel()
 	providerClient := m.providers.From(providerName)

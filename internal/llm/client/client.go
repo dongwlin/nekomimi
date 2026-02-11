@@ -55,7 +55,7 @@ func (c *Client) APIURL() string {
 
 func normalizeReasoningEffort(effort string) string {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "low", "medium", "high":
+	case "low", "medium", "high", "none":
 		return strings.ToLower(strings.TrimSpace(effort))
 	default:
 		return ""
@@ -67,6 +67,10 @@ func (c *Client) SetReasoningEffort(effort string) {
 	normalized := normalizeReasoningEffort(raw)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if normalized == "none" {
+		c.reasoningEffort = ""
+		return
+	}
 	c.reasoningEffort = normalized
 	if raw != "" && normalized == "" {
 		log.Warn().
@@ -238,24 +242,41 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 	if err := c.ensureAPIKey(); err != nil {
 		return "", err
 	}
+	requestOptions, _ := requestOptionsFromContext(ctx)
+	reasoningEffort := c.reasoningEffortSnapshot()
+	logReasoningEffort := reasoningEffort
+	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
+		if override == "none" {
+			reasoningEffort = ""
+			logReasoningEffort = "none"
+		} else {
+			reasoningEffort = override
+			logReasoningEffort = override
+		}
+	}
+	requestSource := strings.TrimSpace(requestOptions.Source)
+	if requestSource == "" {
+		requestSource = "default"
+	}
 	input := buildResponsesInput(systemPrompt, messages)
 	reqBody := responsesRequest{
 		Model: modelName,
 		Input: input,
 	}
-	if effort := c.reasoningEffortSnapshot(); effort != "" {
-		reqBody.Reasoning = &responsesReasoning{Effort: effort}
+	if reasoningEffort != "" {
+		reqBody.Reasoning = &responsesReasoning{Effort: reasoningEffort}
 	}
 	apiURL := c.apiURLSnapshot()
 	log.Info().
 		Str("llm_api", "responses").
+		Str("request_source", requestSource).
 		Str("api_url", apiURL).
 		Str("model", strings.TrimSpace(modelName)).
 		Int("message_count", len(input)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
 		Bool("reasoning_enabled", reqBody.Reasoning != nil).
 		Bool("show_reasoning", c.showReasoningSnapshot()).
-		Str("reasoning_effort", c.reasoningEffortSnapshot()).
+		Str("reasoning_effort", logReasoningEffort).
 		Msg("sending llm request")
 	body, err := c.postJSON(ctx, apiURL, reqBody)
 	if err != nil {
@@ -272,12 +293,14 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 	}
 	log.Info().
 		Str("llm_api", "responses").
+		Str("request_source", requestSource).
 		Int("reply_chars", len([]rune(reply))).
 		Int("reasoning_chars", len([]rune(reasoning))).
 		Msg("llm response received")
 	if c.showReasoningSnapshot() && strings.TrimSpace(reasoning) != "" {
 		log.Info().
 			Str("llm_api", "responses").
+			Str("request_source", requestSource).
 			Str("reasoning_content", reasoning).
 			Msg("llm reasoning content")
 	}
@@ -288,22 +311,39 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 	if err := c.ensureAPIKey(); err != nil {
 		return "", err
 	}
+	requestOptions, _ := requestOptionsFromContext(ctx)
+	reasoningEffort := c.reasoningEffortSnapshot()
+	logReasoningEffort := reasoningEffort
+	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
+		if override == "none" {
+			reasoningEffort = ""
+			logReasoningEffort = "none"
+		} else {
+			reasoningEffort = override
+			logReasoningEffort = override
+		}
+	}
+	requestSource := strings.TrimSpace(requestOptions.Source)
+	if requestSource == "" {
+		requestSource = "default"
+	}
 	chatMessages := buildChatMessages(systemPrompt, messages)
 	reqBody := chatCompletionsRequest{
 		Model:           modelName,
 		Messages:        chatMessages,
-		ReasoningEffort: c.reasoningEffortSnapshot(),
+		ReasoningEffort: reasoningEffort,
 	}
 	apiURL := c.apiURLSnapshot()
 	log.Info().
 		Str("llm_api", "chat_completions").
+		Str("request_source", requestSource).
 		Str("api_url", apiURL).
 		Str("model", strings.TrimSpace(modelName)).
 		Int("message_count", len(chatMessages)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
 		Bool("reasoning_enabled", strings.TrimSpace(reqBody.ReasoningEffort) != "").
 		Bool("show_reasoning", c.showReasoningSnapshot()).
-		Str("reasoning_effort", reqBody.ReasoningEffort).
+		Str("reasoning_effort", logReasoningEffort).
 		Msg("sending llm request")
 	body, err := c.postJSON(ctx, apiURL, reqBody)
 	if err != nil {
@@ -320,12 +360,14 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 	}
 	log.Info().
 		Str("llm_api", "chat_completions").
+		Str("request_source", requestSource).
 		Int("reply_chars", len([]rune(reply))).
 		Int("reasoning_chars", len([]rune(reasoning))).
 		Msg("llm response received")
 	if c.showReasoningSnapshot() && strings.TrimSpace(reasoning) != "" {
 		log.Info().
 			Str("llm_api", "chat_completions").
+			Str("request_source", requestSource).
 			Str("reasoning_content", reasoning).
 			Msg("llm reasoning content")
 	}

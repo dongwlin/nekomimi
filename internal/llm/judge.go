@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	"github.com/rs/zerolog/log"
 )
 
@@ -29,6 +30,7 @@ func (m *Manager) JudgeMentionImmediate(ctx context.Context, message, speaker, r
 	}
 	prompt := m.judgePrompt
 	timeout := m.judgeTimeout
+	reasoning := m.judgeReasoning
 	m.mu.RUnlock()
 	if !enabled {
 		return false, nil
@@ -50,6 +52,9 @@ func (m *Manager) JudgeMentionImmediate(ctx context.Context, message, speaker, r
 	}
 	reply, err := m.generateWithProvider(ctx, provider, model, prompt, []Message{
 		{Role: "user", Content: input},
+	}, llmclient.RequestOptions{
+		Source:          "mention_judge",
+		ReasoningEffort: reasoning,
 	})
 	if err != nil {
 		log.Warn().
@@ -83,6 +88,7 @@ func (m *Manager) JudgePostCooldown(ctx context.Context, message, speaker, recen
 	}
 	prompt := m.postJudgePrompt
 	timeout := m.postJudgeTimeout
+	reasoning := m.postJudgeReasoning
 	m.mu.RUnlock()
 	if !enabled {
 		return DecisionReplyNow, nil
@@ -104,6 +110,9 @@ func (m *Manager) JudgePostCooldown(ctx context.Context, message, speaker, recen
 	}
 	reply, err := m.generateWithProvider(ctx, provider, model, prompt, []Message{
 		{Role: "user", Content: input},
+	}, llmclient.RequestOptions{
+		Source:          "post_cooldown_judge",
+		ReasoningEffort: reasoning,
 	})
 	if err != nil {
 		log.Warn().
@@ -138,6 +147,7 @@ func (m *Manager) JudgeSpeakGate(ctx context.Context, message string) (bool, boo
 	prompt := m.speakJudgePrompt
 	timeout := m.speakJudgeTimeout
 	failOpen := m.speakJudgeFailOpen
+	reasoning := m.speakJudgeReasoning
 	m.mu.RUnlock()
 	if !enabled {
 		return false, false, nil
@@ -159,6 +169,9 @@ func (m *Manager) JudgeSpeakGate(ctx context.Context, message string) (bool, boo
 	}
 	reply, err := m.generateWithProvider(ctx, provider, model, prompt, []Message{
 		{Role: "user", Content: input},
+	}, llmclient.RequestOptions{
+		Source:          "speak_gate_judge",
+		ReasoningEffort: reasoning,
 	})
 	if err != nil {
 		log.Warn().Err(err).Msg("speak-gate judge request failed")
