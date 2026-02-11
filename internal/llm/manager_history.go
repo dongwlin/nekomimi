@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/dongwlin/nekomimi/internal/llm/summarizer"
+	"github.com/dongwlin/nekomimi/internal/llm/token"
 )
 
 func (m *Manager) historySnapshot(sessionKey string) []Message {
@@ -75,4 +76,22 @@ func (m *Manager) ClearHistory(sessionKey string) {
 		return
 	}
 	m.historyStore.Clear(sessionKey)
+}
+
+func (m *Manager) SessionContextUsage(sessionKey string) (usedTokens int, maxTokens int, usagePercent float64, messageCount int) {
+	if strings.TrimSpace(sessionKey) == "" {
+		return 0, 0, 0, 0
+	}
+	history := m.historySnapshot(sessionKey)
+	m.mu.RLock()
+	systemPrompt := m.systemPrompt
+	contextMax := m.contextMax
+	m.mu.RUnlock()
+
+	used := token.EstimateContextTokens(systemPrompt, history)
+	percent := 0.0
+	if contextMax > 0 {
+		percent = float64(used) * 100 / float64(contextMax)
+	}
+	return used, contextMax, percent, len(history)
 }

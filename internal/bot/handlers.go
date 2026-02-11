@@ -31,6 +31,31 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 		ctx.Send(reply)
 	})
 
+	sendContextUsage := func(ctx *zero.Ctx) {
+		if !llmManager.IsEnabled() {
+			ctx.Send("LLM未开启，可使用 /llm on 开启")
+			return
+		}
+		used, max, percent, messageCount := llmManager.SessionContextUsage(sessionKey(ctx))
+		if max <= 0 {
+			ctx.Send(fmt.Sprintf(
+				"当前会话上下文估算:\n已使用: %d tokens\n上限: 未设置（context_max <= 0）\n占比: 未启用\n历史消息: %d 条",
+				used,
+				messageCount,
+			))
+			return
+		}
+		ctx.Send(fmt.Sprintf(
+			"当前会话上下文估算:\n已使用: %d/%d tokens\n占比: %.1f%%\n历史消息: %d 条",
+			used,
+			max,
+			percent,
+			messageCount,
+		))
+	}
+	zero.OnCommand("ctx", zero.SuperUserPermission).Handle(sendContextUsage)
+	zero.OnCommand("context", zero.SuperUserPermission).Handle(sendContextUsage)
+
 	zero.OnCommand("chat", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		if args == "" {
