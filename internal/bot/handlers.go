@@ -25,7 +25,7 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 		}
 		reply, err := llmManager.Reply(context.Background(), prompt, sessionKey(ctx), speakerLabel(ctx))
 		if err != nil {
-			ctx.Send("LLM调用失败: " + err.Error())
+			ctx.Send("LLM调用失败: " + llm.UserVisibleError(err))
 			return
 		}
 		ctx.Send(reply)
@@ -112,7 +112,7 @@ func RegisterHandlers(cfg *config.Config, llmManager *llm.Manager) {
 				return
 			}
 			if err := llmManager.SetProvider(rest); err != nil {
-				ctx.Send("更新提供方失败: " + err.Error())
+				ctx.Send("更新提供方失败: " + llm.UserVisibleError(err))
 				return
 			}
 			ctx.Send("已更新提供方: " + rest)

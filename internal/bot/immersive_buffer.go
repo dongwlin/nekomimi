@@ -340,7 +340,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				Str("session", sessionKey).
 				Msg("immersive reply failed")
 			if ctx != nil {
-				ctx.Send("LLM调用失败: " + err.Error())
+				ctx.Send("LLM调用失败: " + llm.UserVisibleError(err))
 			}
 		} else if ctx != nil {
 			ctx.Send(reply)

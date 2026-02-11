@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -22,6 +23,23 @@ type Client struct {
 	reasoningEffort string
 	showReasoning   bool
 	httpClient      *http.Client
+}
+
+var urlInTextPattern = regexp.MustCompile(`https?://[^\s"]+`)
+
+func redactURLs(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return trimmed
+	}
+	return urlInTextPattern.ReplaceAllString(trimmed, "[redacted-url]")
+}
+
+func sanitizeRequestError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(redactURLs(err.Error()))
 }
 
 func New(apiURL, apiKey string) *Client {
@@ -173,7 +191,7 @@ func (c *Client) postJSON(ctx context.Context, apiURL string, reqBody any) ([]by
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, sanitizeRequestError(err)
 	}
 	defer resp.Body.Close()
 
@@ -270,7 +288,7 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 	log.Info().
 		Str("llm_api", "responses").
 		Str("request_source", requestSource).
-		Str("api_url", apiURL).
+		Bool("api_url_configured", strings.TrimSpace(apiURL) != "").
 		Str("model", strings.TrimSpace(modelName)).
 		Int("message_count", len(input)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
@@ -337,7 +355,7 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 	log.Info().
 		Str("llm_api", "chat_completions").
 		Str("request_source", requestSource).
-		Str("api_url", apiURL).
+		Bool("api_url_configured", strings.TrimSpace(apiURL) != "").
 		Str("model", strings.TrimSpace(modelName)).
 		Int("message_count", len(chatMessages)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
