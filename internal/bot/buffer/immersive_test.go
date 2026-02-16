@@ -1,4 +1,4 @@
-package bot
+package buffer
 
 import (
 	"strings"
