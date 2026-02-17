@@ -4,6 +4,7 @@
 package immersive
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -42,6 +43,19 @@ type immersiveSession struct {
 	inFlight        bool
 	lastCtx         *zero.Ctx
 	waitRounds      int
+	pregen          preGenerateState
+}
+
+// preGenerateState tracks the lifecycle of a session pre-generated reply.
+type preGenerateState struct {
+	version     uint64
+	input       string
+	reply       string
+	err         error
+	done        chan struct{}
+	cancel      context.CancelFunc
+	running     bool
+	regenCount  int
 }
 
 // queuedMessage represents a single message in the buffer queue.

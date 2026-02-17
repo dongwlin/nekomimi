@@ -26,6 +26,7 @@ llm:
     max_batch_messages: 10 # 单次合并最大消息数
     max_batch_chars: 1200 # 单次合并最大字数（按 rune 计）
     immediate_delay_ms: 120 # 被@或问题触发的最小延迟（毫秒）
+    # 预生成重生上限固定为 3 次/轮（收到新消息会取消并重生，超过上限后不再重生）
     timeline:
       max_messages: 200 # 会话时间线上限（达到后开始压缩旧消息）
       overflow_messages: 50 # 允许额外超限缓存（避免频繁压缩）

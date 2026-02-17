@@ -2,6 +2,7 @@ package immersive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -34,6 +35,8 @@ const (
 	defaultContinuousMaxChars       = 80
 	defaultContinuousMinMS          = 300
 	defaultContinuousMaxMS          = 900
+	maxPreGenerateRegensPerRound    = 3
+	preGenerateWaitTimeout          = 35 * time.Second
 
 	activeMsgPenaltyMS  = 150
 	activeCharPenaltyMS = 4
@@ -138,7 +141,6 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	}
 
 	state.mu.Lock()
-	defer state.mu.Unlock()
 	if state.queueChars >= b.cfg.MaxBatchChars || len(state.queue) >= b.cfg.MaxBatchMessages {
 		cooldown = minDuration(cooldown, 200*time.Millisecond)
 	}
@@ -148,6 +150,9 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.timer = time.AfterFunc(cooldown, func() {
 		b.flush(sessionKey)
 	})
+	state.mu.Unlock()
+
+	b.startOrRestartPreGenerate(sessionKey, false)
 }
 
 // Clear removes all queued messages and resets the session state for the given session key.
@@ -157,7 +162,6 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	}
 	state := b.session(sessionKey)
 	state.mu.Lock()
-	defer state.mu.Unlock()
 	state.queue = nil
 	state.queueChars = 0
 	state.timeline = nil
@@ -167,6 +171,11 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	if state.timer != nil {
 		state.timer.Stop()
 		state.timer = nil
+	}
+	cancel := b.resetPreGenerateLocked(state)
+	state.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 	log.Info().Str("session", sessionKey).Msg("immersive session buffer cleared")
 }
@@ -201,7 +210,11 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			state.timer.Stop()
 			state.timer = nil
 		}
+		cancel := b.resetPreGenerateLocked(state)
 		state.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		return
 	}
 	queue := make([]queuedMessage, len(state.queue))
@@ -252,10 +265,14 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Int("repeat_participants", repeatParticipants).
 			Msg("immersive repeat triggered")
 		state.mu.Lock()
+		cancel := b.resetPreGenerateLocked(state)
 		state.inFlight = false
 		state.waitRounds = 0
 		pending := len(state.queue) > 0
 		state.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		if pending {
 			log.Info().Str("session", sessionKey).Msg("pending messages detected, flushing again")
 			b.flush(sessionKey)
@@ -280,6 +297,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	if gate.waitMS > 0 {
 		waitDelay := time.Duration(gate.waitMS) * time.Millisecond
 		state.mu.Lock()
+		cancel := b.resetPreGenerateLocked(state)
 		state.queue = prependMessages(queue, state.queue)
 		state.queueChars += sumQueueChars(queue)
 		state.inFlight = false
@@ -291,6 +309,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			b.flush(sessionKey)
 		})
 		state.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		log.Info().
 			Str("session", sessionKey).
 			Int64("next_wait_ms", waitDelay.Milliseconds()).
@@ -303,6 +324,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	if !gate.shouldSpeak {
 		delay := time.Duration(b.cfg.ImmediateDelayMS) * time.Millisecond
 		state.mu.Lock()
+		cancel := b.resetPreGenerateLocked(state)
 		state.inFlight = false
 		state.waitRounds = 0
 		pending := len(state.queue) > 0
@@ -315,6 +337,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			})
 		}
 		state.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		log.Info().
 			Str("session", sessionKey).
 			Int64("next_delay_ms", delay.Milliseconds()).
@@ -327,43 +352,30 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		return
 	}
 	if input != "" {
-		if ctx == nil {
-			reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
-			if err != nil {
-				log.Error().
-					Err(err).
-					Str("session", sessionKey).
-					Msg("immersive reply failed")
-			} else {
-				log.Info().
-					Str("session", sessionKey).
-					Int("reply_chars", len([]rune(reply))).
-					Msg("immersive reply generated without ctx")
-			}
+		reply, err := b.awaitPreGeneratedReply(sessionKey, input)
+		if err != nil {
+			log.Error().
+				Err(err).
+				Str("session", sessionKey).
+				Msg("immersive pre-generated reply unavailable")
+		} else if strings.TrimSpace(reply) == "" {
+			log.Warn().
+				Str("session", sessionKey).
+				Msg("immersive pre-generated reply is empty")
+		} else if ctx == nil {
+			log.Info().
+				Str("session", sessionKey).
+				Int("reply_chars", len([]rune(reply))).
+				Msg("immersive reply prepared without ctx")
 		} else if b.cfg.ContinuousSpeech.Enabled {
-			if err := b.sendContinuousReply(ctx, sessionKey, input); err != nil {
-				log.Error().
-					Err(err).
-					Str("session", sessionKey).
-					Msg("immersive continuous reply failed")
-				ctx.Send("LLM调用失败: " + llm.UserVisibleError(err))
-			}
+			b.sendBufferedContinuousReply(ctx, sessionKey, reply)
 		} else {
-			reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
-			if err != nil {
-				log.Error().
-					Err(err).
-					Str("session", sessionKey).
-					Msg("immersive reply failed")
-				ctx.Send("LLM调用失败: " + llm.UserVisibleError(err))
-			} else {
-				ctx.Send(reply)
-				b.recordAssistantUtterance(sessionKey, reply)
-				log.Info().
-					Str("session", sessionKey).
-					Int("reply_chars", len([]rune(reply))).
-					Msg("immersive reply sent")
-			}
+			ctx.Send(reply)
+			b.recordAssistantUtterance(sessionKey, reply)
+			log.Info().
+				Str("session", sessionKey).
+				Int("reply_chars", len([]rune(reply))).
+				Msg("immersive reply sent")
 		}
 	}
 
@@ -378,37 +390,18 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 }
 
-func (b *ImmersiveBuffer) sendContinuousReply(ctx *zero.Ctx, sessionKey, input string) error {
+func (b *ImmersiveBuffer) sendBufferedContinuousReply(ctx *zero.Ctx, sessionKey, reply string) {
 	acc := newStreamChunkAccumulator(b.cfg.ContinuousSpeech)
 	sentMessages := 0
 	sentChars := 0
-	reply, err := b.llm.ReplyStream(context.Background(), input, sessionKey, "", func(delta string) error {
-		chunks := acc.Append(delta)
-		for _, chunk := range chunks {
-			if sentMessages > 0 {
-				time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
-			}
-			ctx.Send(chunk)
-			sentMessages++
-			sentChars += len([]rune(chunk))
+	chunks := acc.Append(reply)
+	for _, chunk := range chunks {
+		if sentMessages > 0 {
+			time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
 		}
-		return nil
-	})
-	if err != nil {
-		if !b.cfg.ContinuousSpeech.RequireStream {
-			fallbackReply, fallbackErr := b.llm.Reply(context.Background(), input, sessionKey, "")
-			if fallbackErr != nil {
-				return fallbackErr
-			}
-			ctx.Send(fallbackReply)
-			b.recordAssistantUtterance(sessionKey, fallbackReply)
-			log.Info().
-				Str("session", sessionKey).
-				Int("reply_chars", len([]rune(fallbackReply))).
-				Msg("immersive continuous reply fallback sent")
-			return nil
-		}
-		return err
+		ctx.Send(chunk)
+		sentMessages++
+		sentChars += len([]rune(chunk))
 	}
 	for _, chunk := range acc.FlushTail() {
 		if sentMessages > 0 {
@@ -425,7 +418,163 @@ func (b *ImmersiveBuffer) sendContinuousReply(ctx *zero.Ctx, sessionKey, input s
 		Int("sent_chars", sentChars).
 		Msg("immersive continuous reply sent")
 	b.recordAssistantUtterance(sessionKey, reply)
-	return nil
+}
+
+func (b *ImmersiveBuffer) startOrRestartPreGenerate(sessionKey string, force bool) {
+	state := b.session(sessionKey)
+	state.mu.Lock()
+	input := b.buildPreGenerateInputLocked(state)
+	state.mu.Unlock()
+	b.startOrRestartPreGenerateWithInput(sessionKey, input, force)
+}
+
+func (b *ImmersiveBuffer) startOrRestartPreGenerateWithInput(sessionKey, input string, force bool) {
+	trimmedInput := strings.TrimSpace(input)
+	state := b.session(sessionKey)
+	state.mu.Lock()
+	if trimmedInput == "" {
+		cancel := b.resetPreGenerateLocked(state)
+		state.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return
+	}
+	if !b.llm.IsEnabled() || !b.llm.IsImmersive(sessionKey) {
+		cancel := b.resetPreGenerateLocked(state)
+		state.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return
+	}
+	if state.pregen.running && !force && state.pregen.regenCount >= maxPreGenerateRegensPerRound {
+		regenCount := state.pregen.regenCount
+		state.mu.Unlock()
+		log.Info().
+			Str("session", sessionKey).
+			Int("regen_count", regenCount).
+			Int("regen_limit", maxPreGenerateRegensPerRound).
+			Msg("immersive pre-generate restart skipped due to limit")
+		return
+	}
+	var cancelPrev context.CancelFunc
+	regenCount := 0
+	if state.pregen.running {
+		cancelPrev = state.pregen.cancel
+		regenCount = state.pregen.regenCount
+		if !force {
+			regenCount++
+		}
+	}
+	state.pregen.version++
+	version := state.pregen.version
+	done := make(chan struct{})
+	taskCtx, cancelTask := context.WithCancel(context.Background())
+	state.pregen.input = trimmedInput
+	state.pregen.reply = ""
+	state.pregen.err = nil
+	state.pregen.done = done
+	state.pregen.cancel = cancelTask
+	state.pregen.running = true
+	state.pregen.regenCount = regenCount
+	state.mu.Unlock()
+
+	if cancelPrev != nil {
+		cancelPrev()
+	}
+	go b.runPreGenerate(sessionKey, version, trimmedInput, taskCtx, done)
+}
+
+func (b *ImmersiveBuffer) runPreGenerate(sessionKey string, version uint64, input string, taskCtx context.Context, done chan struct{}) {
+	defer close(done)
+	reply, err := b.llm.Reply(taskCtx, input, sessionKey, "")
+	state := b.session(sessionKey)
+	state.mu.Lock()
+	if state.pregen.version == version {
+		state.pregen.running = false
+		state.pregen.cancel = nil
+		state.pregen.reply = reply
+		state.pregen.err = err
+	}
+	state.mu.Unlock()
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Info().Str("session", sessionKey).Msg("immersive pre-generate canceled")
+			return
+		}
+		log.Warn().Err(err).Str("session", sessionKey).Msg("immersive pre-generate failed")
+		return
+	}
+	log.Info().
+		Str("session", sessionKey).
+		Int("reply_chars", len([]rune(reply))).
+		Msg("immersive pre-generate completed")
+}
+
+func (b *ImmersiveBuffer) awaitPreGeneratedReply(sessionKey, input string) (string, error) {
+	startedAt := time.Now()
+	trimmedInput := strings.TrimSpace(input)
+	for {
+		state := b.session(sessionKey)
+		state.mu.Lock()
+		if strings.TrimSpace(state.pregen.input) != trimmedInput || state.pregen.done == nil {
+			state.mu.Unlock()
+			b.startOrRestartPreGenerateWithInput(sessionKey, trimmedInput, true)
+			continue
+		}
+		if state.pregen.running {
+			done := state.pregen.done
+			state.mu.Unlock()
+			remaining := preGenerateWaitTimeout - time.Since(startedAt)
+			if remaining <= 0 {
+				b.cancelPreGenerate(sessionKey)
+				return "", fmt.Errorf("wait pre-generated reply timeout after %s", preGenerateWaitTimeout)
+			}
+			timer := time.NewTimer(remaining)
+			select {
+			case <-done:
+				timer.Stop()
+				continue
+			case <-timer.C:
+				b.cancelPreGenerate(sessionKey)
+				return "", fmt.Errorf("wait pre-generated reply timeout after %s", preGenerateWaitTimeout)
+			}
+		}
+		reply := state.pregen.reply
+		err := state.pregen.err
+		state.mu.Unlock()
+		return reply, err
+	}
+}
+
+func (b *ImmersiveBuffer) cancelPreGenerate(sessionKey string) {
+	state := b.session(sessionKey)
+	state.mu.Lock()
+	cancel := b.resetPreGenerateLocked(state)
+	state.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (b *ImmersiveBuffer) resetPreGenerateLocked(state *immersiveSession) context.CancelFunc {
+	cancel := state.pregen.cancel
+	state.pregen = preGenerateState{}
+	return cancel
+}
+
+func (b *ImmersiveBuffer) buildPreGenerateInputLocked(state *immersiveSession) string {
+	timeline := make([]queuedMessage, len(state.timeline))
+	copy(timeline, state.timeline)
+	queue := make([]queuedMessage, len(state.queue))
+	copy(queue, state.queue)
+	summary := strings.TrimSpace(state.timelineSummary)
+	input := buildCombinedInputWithSummary(timeline, summary, b.currentIdentity())
+	if strings.TrimSpace(input) == "" {
+		input = buildCombinedInput(queue, b.currentIdentity())
+	}
+	return strings.TrimSpace(input)
 }
 
 // session retrieves or creates the session state for the given session key.
