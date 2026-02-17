@@ -3,8 +3,6 @@ package buffer
 import (
 	"context"
 	"math/rand"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +12,7 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
+// Default configuration values for the immersive buffer.
 const (
 	defaultCooldownMinMS       = 800
 	defaultCooldownMaxMS       = 3500
@@ -36,6 +35,8 @@ const (
 	mentionBonusMS      = 400
 )
 
+// NewImmersiveBuffer creates a new ImmersiveBuffer with the given configuration,
+// LLM manager, and bot nicknames.
 func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager *llm.Manager, nicknames []string) *ImmersiveBuffer {
 	normalized := normalizeImmersiveConfig(cfg)
 	rand.Seed(time.Now().UnixNano())
@@ -47,6 +48,9 @@ func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager *llm.Manager, nic
 	}
 }
 
+// Enqueue adds a new message to the session buffer and schedules a flush
+// based on the calculated cooldown. It detects message signals (mentions,
+// addressed to bot, questions) to determine response urgency.
 func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool) {
 	if b == nil || b.llm == nil {
 		return
@@ -129,6 +133,7 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	})
 }
 
+// Clear removes all queued messages and resets the session state for the given session key.
 func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	if b == nil || strings.TrimSpace(sessionKey) == "" {
 		return
@@ -147,6 +152,9 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	log.Info().Str("session", sessionKey).Msg("immersive session buffer cleared")
 }
 
+// flush processes the queued messages for a session. It evaluates the speak gate,
+// optionally calls the LLM to judge if a response should be made, and sends a reply
+// if appropriate. If the decision is to wait, it re-queues the messages for later.
 func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state := b.session(sessionKey)
 	state.mu.Lock()
@@ -327,6 +335,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 }
 
+// session retrieves or creates the session state for the given session key.
 func (b *ImmersiveBuffer) session(sessionKey string) *immersiveSession {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -341,367 +350,8 @@ func (b *ImmersiveBuffer) session(sessionKey string) *immersiveSession {
 	return state
 }
 
-func (b *ImmersiveBuffer) detectMessageSignals(ctx *zero.Ctx, text string) (bool, bool, bool) {
-	mention := b.isExplicitMention(ctx)
-	addressed := mention || b.containsNickname(text) || strings.Contains(text, "@")
-	question := looksLikeQuestion(text)
-	return mention, addressed, question
-}
-
-func (b *ImmersiveBuffer) isExplicitMention(ctx *zero.Ctx) bool {
-	if ctx != nil && ctx.Event != nil {
-		if ctx.Event.IsToMe {
-			return true
-		}
-		for _, seg := range ctx.Event.Message {
-			if seg.Type != "at" {
-				continue
-			}
-			qq := strings.TrimSpace(seg.Data["qq"])
-			if qq == "" || qq == "all" {
-				continue
-			}
-			if ctx.Event.SelfID != 0 && qq == strconv.FormatInt(ctx.Event.SelfID, 10) {
-				return true
-			}
-			if ctx.Event.SelfTinyID != "" && qq == ctx.Event.SelfTinyID {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (b *ImmersiveBuffer) containsNickname(text string) bool {
-	lower := strings.ToLower(text)
-	for _, name := range b.nicknames {
-		trimmed := strings.ToLower(strings.TrimSpace(name))
-		if trimmed == "" {
-			continue
-		}
-		if strings.Contains(lower, trimmed) {
-			return true
-		}
-	}
-	return false
-}
-
-func (b *ImmersiveBuffer) calcCooldown(isPrivate, mention, question bool, recentCount, recentChars, msgChars int) time.Duration {
-	base := b.cfg.CooldownBaseMS
-	if isPrivate {
-		base = b.cfg.PrivateBaseMS
-	}
-	cooldown := base
-	cooldown += recentCount * activeMsgPenaltyMS
-	cooldown += (recentChars / 10) * activeCharPenaltyMS
-	if msgChars <= shortMsgLen {
-		cooldown += shortMsgPenaltyMS
-	}
-	if mention || question {
-		cooldown -= mentionBonusMS
-	}
-	if b.cfg.JitterMS > 0 {
-		jitter := rand.Intn(b.cfg.JitterMS*2+1) - b.cfg.JitterMS
-		cooldown += jitter
-	}
-	if cooldown < b.cfg.CooldownMinMS {
-		cooldown = b.cfg.CooldownMinMS
-	}
-	if cooldown > b.cfg.CooldownMaxMS {
-		cooldown = b.cfg.CooldownMaxMS
-	}
-	if mention || question {
-		if cooldown < b.cfg.ImmediateDelayMS {
-			cooldown = b.cfg.ImmediateDelayMS
-		}
-	}
-	return time.Duration(cooldown) * time.Millisecond
-}
-
-func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig {
-	if cfg.CooldownMinMS <= 0 {
-		cfg.CooldownMinMS = defaultCooldownMinMS
-	}
-	if cfg.CooldownMaxMS <= 0 {
-		cfg.CooldownMaxMS = defaultCooldownMaxMS
-	}
-	if cfg.CooldownBaseMS <= 0 {
-		cfg.CooldownBaseMS = defaultCooldownBaseMS
-	}
-	if cfg.PrivateBaseMS <= 0 {
-		cfg.PrivateBaseMS = defaultPrivateBaseMS
-	}
-	if cfg.WindowMS <= 0 {
-		cfg.WindowMS = defaultWindowMS
-	}
-	if cfg.JitterMS <= 0 {
-		cfg.JitterMS = defaultJitterMS
-	}
-	if cfg.MaxBatchMessages <= 0 {
-		cfg.MaxBatchMessages = defaultMaxBatchMessages
-	}
-	if cfg.MaxBatchChars <= 0 {
-		cfg.MaxBatchChars = defaultMaxBatchChars
-	}
-	if cfg.ImmediateDelayMS <= 0 {
-		cfg.ImmediateDelayMS = defaultImmediateDelayMS
-	}
-	if cfg.SpeakGate.TimeoutMS <= 0 {
-		cfg.SpeakGate.TimeoutMS = defaultSpeakJudgeTimeoutMS
-	}
-	if cfg.PostCooldownJudge.TimeoutMS <= 0 {
-		cfg.PostCooldownJudge.TimeoutMS = 1200
-	}
-	if cfg.PostCooldownJudge.ShortWaitMS <= 0 {
-		cfg.PostCooldownJudge.ShortWaitMS = defaultPostShortWaitMS
-	}
-	if cfg.PostCooldownJudge.LongWaitMS <= 0 {
-		cfg.PostCooldownJudge.LongWaitMS = defaultPostLongWaitMS
-	}
-	if cfg.PostCooldownJudge.MaxRounds <= 0 {
-		cfg.PostCooldownJudge.MaxRounds = defaultPostMaxRounds
-	}
-	return cfg
-}
-
-func trimRecent(recent []recentSample, now time.Time, windowMS int) []recentSample {
-	if len(recent) == 0 {
-		return recent
-	}
-	cutoff := now.Add(-time.Duration(windowMS) * time.Millisecond)
-	start := 0
-	for start < len(recent) && recent[start].ts.Before(cutoff) {
-		start++
-	}
-	if start == 0 {
-		return recent
-	}
-	trimmed := make([]recentSample, len(recent)-start)
-	copy(trimmed, recent[start:])
-	return trimmed
-}
-
-func summarizeRecent(recent []recentSample) (int, int) {
-	count := len(recent)
-	totalChars := 0
-	for _, sample := range recent {
-		totalChars += sample.chars
-	}
-	return count, totalChars
-}
-
-func buildRecentPreview(queue []queuedMessage, keep int) string {
-	if len(queue) == 0 || keep <= 0 {
-		return ""
-	}
-	start := len(queue) - keep
-	if start < 0 {
-		start = 0
-	}
-	return buildCombinedInput(queue[start:])
-}
-
-func buildCombinedInput(queue []queuedMessage) string {
-	meta := summarizeQueueMeta(queue, time.Now(), nil)
-	var builder strings.Builder
-	builder.WriteString("batch_meta:\n")
-	builder.WriteString("  now_date: ")
-	builder.WriteString(meta.NowDate)
-	builder.WriteString("\n")
-	builder.WriteString("  now_time: ")
-	builder.WriteString(meta.NowTime)
-	builder.WriteString("\n")
-	builder.WriteString("  bot_names: [")
-	builder.WriteString(strings.Join(meta.BotNames, ","))
-	builder.WriteString("]\n")
-	builder.WriteString("  bot_primary_name: ")
-	builder.WriteString(meta.BotPrimaryName)
-	builder.WriteString("\n")
-	builder.WriteString("  messages_count: ")
-	builder.WriteString(strconv.Itoa(meta.MessagesCount))
-	builder.WriteString("\n")
-	builder.WriteString("  participants: [")
-	builder.WriteString(strings.Join(meta.Participants, ","))
-	builder.WriteString("]\n")
-	builder.WriteString("  mentions_to_bot: ")
-	builder.WriteString(strconv.Itoa(meta.MentionsToBot))
-	builder.WriteString("\n")
-	builder.WriteString("  addressed_to_bot: ")
-	builder.WriteString(strconv.Itoa(meta.AddressedToBot))
-	builder.WriteString("\n")
-	builder.WriteString("  questions_count: ")
-	builder.WriteString(strconv.Itoa(meta.QuestionsCount))
-	builder.WriteString("\n")
-	builder.WriteString("  last_speaker: ")
-	builder.WriteString(meta.LastSpeaker)
-	builder.WriteString("\n")
-	builder.WriteString("  time_span_ms: ")
-	builder.WriteString(strconv.FormatInt(meta.TimeSpanMS, 10))
-	builder.WriteString("\n")
-	builder.WriteString("transcript:\n")
-	for _, msg := range queue {
-		formatted := formatQueuedMessage(msg)
-		if formatted == "" {
-			continue
-		}
-		builder.WriteString("  - ")
-		builder.WriteString(formatted)
-		builder.WriteString("\n")
-	}
-	return strings.TrimSpace(builder.String())
-}
-
-func formatQueuedMessage(msg queuedMessage) string {
-	content := strings.TrimSpace(msg.text)
-	if content == "" {
-		return ""
-	}
-	content = sanitizeInline(content)
-	label := strings.TrimSpace(msg.speaker)
-	timeLabel := formatMessageTime(msg.ts)
-	if label == "" {
-		if timeLabel == "" {
-			return content
-		}
-		return "[time=" + timeLabel + "]: " + content
-	}
-	if timeLabel == "" {
-		return "[" + label + "]: " + content
-	}
-	return "[" + label + ";time=" + timeLabel + "]: " + content
-}
-
-func sanitizeInline(text string) string {
-	replacer := strings.NewReplacer("\r\n", "\\n", "\n", "\\n", "\r", "\\n")
-	return replacer.Replace(text)
-}
-
-func normalizedBotNames(names []string) []string {
-	if len(names) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(names))
-	result := make([]string, 0, len(names))
-	for _, name := range names {
-		trimmed := sanitizeInline(strings.TrimSpace(name))
-		if trimmed == "" {
-			continue
-		}
-		if _, ok := seen[trimmed]; ok {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		result = append(result, trimmed)
-	}
-	sort.Strings(result)
-	return result
-}
-
-func formatMessageTime(at time.Time) string {
-	if at.IsZero() {
-		return ""
-	}
-	return at.Format("2006-01-02 15:04:05")
-}
-
-func looksLikeQuestion(text string) bool {
-	if strings.Contains(text, "?") || strings.Contains(text, "？") {
-		return true
-	}
-	lower := strings.ToLower(text)
-	return strings.Contains(lower, "吗") || strings.Contains(lower, "能否")
-}
-
-func minDuration(a, b time.Duration) time.Duration {
-	if a <= b {
-		return a
-	}
-	return b
-}
-
-func sumQueueChars(queue []queuedMessage) int {
-	total := 0
-	for _, msg := range queue {
-		total += msg.chars
-	}
-	return total
-}
-
-func prependMessages(head, tail []queuedMessage) []queuedMessage {
-	if len(head) == 0 {
-		return tail
-	}
-	if len(tail) == 0 {
-		next := make([]queuedMessage, len(head))
-		copy(next, head)
-		return next
-	}
-	next := make([]queuedMessage, 0, len(head)+len(tail))
-	next = append(next, head...)
-	next = append(next, tail...)
-	return next
-}
-
-func summarizeQueueMeta(queue []queuedMessage, now time.Time, botNames []string) queueMeta {
-	meta := queueMeta{
-		NowDate:        now.Format("2006-01-02"),
-		NowTime:        now.Format("15:04:05"),
-		BotNames:       []string{"bot"},
-		BotPrimaryName: "bot",
-		MessagesCount:  len(queue),
-		LastSpeaker:    "unknown",
-		Participants:   []string{"none"},
-	}
-	normalizedNames := normalizedBotNames(botNames)
-	if len(normalizedNames) > 0 {
-		meta.BotNames = normalizedNames
-		meta.BotPrimaryName = normalizedNames[0]
-	}
-	if len(queue) == 0 {
-		return meta
-	}
-	participants := make(map[string]struct{}, len(queue))
-	first := queue[0].ts
-	last := queue[len(queue)-1].ts
-	for _, msg := range queue {
-		label := strings.TrimSpace(msg.speaker)
-		if label == "" {
-			label = "unknown"
-		}
-		participants[label] = struct{}{}
-		if msg.isMentionBot {
-			meta.MentionsToBot++
-		}
-		if msg.isAddressedToBot {
-			meta.AddressedToBot++
-		}
-		if msg.isQuestion {
-			meta.QuestionsCount++
-		}
-		if !msg.ts.IsZero() {
-			if first.IsZero() || msg.ts.Before(first) {
-				first = msg.ts
-			}
-			if last.IsZero() || msg.ts.After(last) {
-				last = msg.ts
-			}
-		}
-	}
-	meta.Participants = make([]string, 0, len(participants))
-	for label := range participants {
-		meta.Participants = append(meta.Participants, sanitizeInline(label))
-	}
-	sort.Strings(meta.Participants)
-	lastSpeaker := strings.TrimSpace(queue[len(queue)-1].speaker)
-	if lastSpeaker != "" {
-		meta.LastSpeaker = sanitizeInline(lastSpeaker)
-	}
-	if !first.IsZero() && !last.IsZero() && !last.Before(first) {
-		meta.TimeSpanMS = last.Sub(first).Milliseconds()
-	}
-	return meta
-}
-
+// shouldSpeak evaluates whether the bot should speak based on the queued messages
+// and the configured speak gate. It may call the LLM to make the decision.
 func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMessage) speakGateResult {
 	_ = state
 	meta := summarizeQueueMeta(queue, time.Now(), b.nicknames)
