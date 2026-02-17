@@ -46,7 +46,7 @@ llm:
       reasoning_effort: "none" # 判定助手推理强度：none | low | medium | high（none=不推理，不继承全局）
       short_wait_ms: 1200 # 短续冷时长（毫秒）
       long_wait_ms: 5000 # 长续冷时长（毫秒）
-      max_rounds: 3 # 最大连续续冷轮次，超过后强制回复
+      max_rounds: 3 # 最大连续续冷轮次；0 表示无上限续冷（由判定助手持续决定）
       fail_open: true # 判定失败时是否直接放行回复
 driver:
   websocket:

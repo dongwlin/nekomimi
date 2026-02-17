@@ -205,3 +205,15 @@ func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 		t.Errorf("expected ImmediateDelayMS 200, got %d", cfg.ImmediateDelayMS)
 	}
 }
+
+func TestNormalizeImmersiveConfig_PreservesUnlimitedPostCooldownRounds(t *testing.T) {
+	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{
+		PostCooldownJudge: config.PostCooldownJudgeConfig{
+			MaxRounds: 0,
+		},
+	})
+
+	if cfg.PostCooldownJudge.MaxRounds != 0 {
+		t.Errorf("expected PostCooldownJudge.MaxRounds 0 (unlimited), got %d", cfg.PostCooldownJudge.MaxRounds)
+	}
+}

@@ -249,7 +249,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 	decision := llm.DecisionReplyNow
 	cooldownDelay := time.Duration(0)
-	if input != "" && b.cfg.PostCooldownJudge.Enabled && postRounds < b.cfg.PostCooldownJudge.MaxRounds {
+	// MaxRounds == 0 means unlimited cooldown rounds.
+	canJudgePostCooldown := b.cfg.PostCooldownJudge.MaxRounds == 0 || postRounds < b.cfg.PostCooldownJudge.MaxRounds
+	if input != "" && b.cfg.PostCooldownJudge.Enabled && canJudgePostCooldown {
 		lastSpeaker := queue[len(queue)-1].speaker
 		recent := buildRecentPreview(queue, 6)
 		judgeDecision, err := b.llm.JudgePostCooldown(context.Background(), input, lastSpeaker, recent)

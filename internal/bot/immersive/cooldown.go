@@ -87,7 +87,7 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.PostCooldownJudge.LongWaitMS <= 0 {
 		cfg.PostCooldownJudge.LongWaitMS = defaultPostLongWaitMS
 	}
-	if cfg.PostCooldownJudge.MaxRounds <= 0 {
+	if cfg.PostCooldownJudge.MaxRounds < 0 {
 		cfg.PostCooldownJudge.MaxRounds = defaultPostMaxRounds
 	}
 	return cfg
