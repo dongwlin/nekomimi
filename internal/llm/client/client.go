@@ -366,6 +366,12 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 			logReasoningEffort = override
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(requestOptions.ThinkingType), "none") {
+		thinkingType = ""
+	}
+	if override := normalizeThinkingType(requestOptions.ThinkingType); override != "" {
+		thinkingType = override
+	}
 	requestSource := strings.TrimSpace(requestOptions.Source)
 	if requestSource == "" {
 		requestSource = "default"
@@ -461,6 +467,12 @@ func (c *Client) GenerateResponsesStream(ctx context.Context, modelName, systemP
 			logReasoningEffort = override
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(requestOptions.ThinkingType), "none") {
+		thinkingType = ""
+	}
+	if override := normalizeThinkingType(requestOptions.ThinkingType); override != "" {
+		thinkingType = override
+	}
 	requestSource := strings.TrimSpace(requestOptions.Source)
 	if requestSource == "" {
 		requestSource = "default"
@@ -555,6 +567,12 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 			logReasoningEffort = override
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(requestOptions.ThinkingType), "none") {
+		thinkingType = ""
+	}
+	if override := normalizeThinkingType(requestOptions.ThinkingType); override != "" {
+		thinkingType = override
+	}
 	requestSource := strings.TrimSpace(requestOptions.Source)
 	if requestSource == "" {
 		requestSource = "default"
@@ -647,6 +665,12 @@ func (c *Client) GenerateOpenAIStream(ctx context.Context, modelName, systemProm
 			reasoningEffort = override
 			logReasoningEffort = override
 		}
+	}
+	if strings.EqualFold(strings.TrimSpace(requestOptions.ThinkingType), "none") {
+		thinkingType = ""
+	}
+	if override := normalizeThinkingType(requestOptions.ThinkingType); override != "" {
+		thinkingType = override
 	}
 	requestSource := strings.TrimSpace(requestOptions.Source)
 	if requestSource == "" {

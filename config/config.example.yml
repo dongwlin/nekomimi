@@ -43,6 +43,7 @@ llm:
       prompt: "" # 判定提示词，支持 {{file:prompts/speak_gate_judge.txt}}；空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
       reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
+      thinking_type: "" # 判定助手思考类型：enabled | disabled | auto；留空表示不传 thinking（不继承全局）
       fail_open: true # 判定失败时是否放行（true=放行发言，false=保守不发言）
     mention_judge:
       enabled: false # 被@时是否调用判定助手决定秒回
@@ -50,12 +51,14 @@ llm:
       prompt: "" # 判定提示词，支持 {{file:prompts/mention_judge.txt}}；空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
       reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
+      thinking_type: "" # 判定助手思考类型：enabled | disabled | auto；留空表示不传 thinking（不继承全局）
     post_cooldown_judge:
       enabled: false # 冷静期结束后是否二次仲裁（回复/短续冷/长续冷）
       model: "" # 判定模型名，空则复用主模型
       prompt: "" # 判定提示词，支持 {{file:prompts/post_cooldown_judge.txt}}；空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
       reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
+      thinking_type: "" # 判定助手思考类型：enabled | disabled | auto；留空表示不传 thinking（不继承全局）
       short_wait_ms: 1200 # 短续冷时长（毫秒）
       long_wait_ms: 5000 # 长续冷时长（毫秒）
       max_rounds: 3 # 最大连续续冷轮次；0 表示无上限续冷（由判定助手持续决定）

@@ -64,6 +64,7 @@ type SpeakGateConfig struct {
 	Prompt          string `yaml:"prompt"`
 	TimeoutMS       int    `yaml:"timeout_ms"`
 	ReasoningEffort string `yaml:"reasoning_effort"`
+	ThinkingType    string `yaml:"thinking_type"`
 	FailOpen        bool   `yaml:"fail_open"`
 }
 
@@ -73,6 +74,7 @@ type MentionJudgeConfig struct {
 	Prompt          string `yaml:"prompt"`
 	TimeoutMS       int    `yaml:"timeout_ms"`
 	ReasoningEffort string `yaml:"reasoning_effort"`
+	ThinkingType    string `yaml:"thinking_type"`
 }
 
 type PostCooldownJudgeConfig struct {
@@ -81,6 +83,7 @@ type PostCooldownJudgeConfig struct {
 	Prompt          string `yaml:"prompt"`
 	TimeoutMS       int    `yaml:"timeout_ms"`
 	ReasoningEffort string `yaml:"reasoning_effort"`
+	ThinkingType    string `yaml:"thinking_type"`
 	ShortWaitMS     int    `yaml:"short_wait_ms"`
 	LongWaitMS      int    `yaml:"long_wait_ms"`
 	MaxRounds       int    `yaml:"max_rounds"`

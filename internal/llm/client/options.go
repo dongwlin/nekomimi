@@ -4,6 +4,7 @@ import "context"
 
 type RequestOptions struct {
 	ReasoningEffort string
+	ThinkingType    string
 	Source          string
 }
 

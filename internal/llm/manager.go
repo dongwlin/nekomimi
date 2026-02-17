@@ -38,17 +38,20 @@ type Manager struct {
 	judgePrompt         string
 	judgeTimeout        time.Duration
 	judgeReasoning      string
+	judgeThinking       string
 	speakJudgeEnabled   bool
 	speakJudgeModel     string
 	speakJudgePrompt    string
 	speakJudgeTimeout   time.Duration
 	speakJudgeReasoning string
+	speakJudgeThinking  string
 	speakJudgeFailOpen  bool
 	postJudgeEnabled    bool
 	postJudgeModel      string
 	postJudgePrompt     string
 	postJudgeTimeout    time.Duration
 	postJudgeReasoning  string
+	postJudgeThinking   string
 	sessionStats        map[string]*sessionUsageStats
 }
 
@@ -60,10 +63,20 @@ type sessionUsageStats struct {
 
 func normalizeAssistantReasoningEffort(effort string) string {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "low", "medium", "high", "none":
+	case "minimal", "low", "medium", "high", "none":
 		return strings.ToLower(strings.TrimSpace(effort))
 	default:
 		// 助手默认不继承全局推理强度，未配置或无效时按 none 处理。
+		return "none"
+	}
+}
+
+func normalizeAssistantThinkingType(thinkingType string) string {
+	switch strings.ToLower(strings.TrimSpace(thinkingType)) {
+	case "enabled", "disabled", "auto":
+		return strings.ToLower(strings.TrimSpace(thinkingType))
+	default:
+		// 助手默认不继承全局 thinking_type，未配置或无效时不传 thinking。
 		return "none"
 	}
 }
@@ -84,6 +97,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	}
 	judgeModel := strings.TrimSpace(cfg.Immersive.MentionJudge.Model)
 	judgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.MentionJudge.ReasoningEffort)
+	judgeThinking := normalizeAssistantThinkingType(cfg.Immersive.MentionJudge.ThinkingType)
 	judgeTimeout := time.Duration(cfg.Immersive.MentionJudge.TimeoutMS) * time.Millisecond
 	if judgeTimeout <= 0 {
 		judgeTimeout = 1200 * time.Millisecond
@@ -94,6 +108,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	}
 	speakJudgeModel := strings.TrimSpace(cfg.Immersive.SpeakGate.Model)
 	speakJudgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.SpeakGate.ReasoningEffort)
+	speakJudgeThinking := normalizeAssistantThinkingType(cfg.Immersive.SpeakGate.ThinkingType)
 	speakJudgeTimeout := time.Duration(cfg.Immersive.SpeakGate.TimeoutMS) * time.Millisecond
 	if speakJudgeTimeout <= 0 {
 		speakJudgeTimeout = 1200 * time.Millisecond
@@ -104,6 +119,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	}
 	postJudgeModel := strings.TrimSpace(cfg.Immersive.PostCooldownJudge.Model)
 	postJudgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.PostCooldownJudge.ReasoningEffort)
+	postJudgeThinking := normalizeAssistantThinkingType(cfg.Immersive.PostCooldownJudge.ThinkingType)
 	postJudgeTimeout := time.Duration(cfg.Immersive.PostCooldownJudge.TimeoutMS) * time.Millisecond
 	if postJudgeTimeout <= 0 {
 		postJudgeTimeout = 1200 * time.Millisecond
@@ -137,17 +153,20 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		judgePrompt:         judgePrompt,
 		judgeTimeout:        judgeTimeout,
 		judgeReasoning:      judgeReasoning,
+		judgeThinking:       judgeThinking,
 		speakJudgeEnabled:   cfg.Immersive.SpeakGate.Enabled,
 		speakJudgeModel:     speakJudgeModel,
 		speakJudgePrompt:    speakJudgePrompt,
 		speakJudgeTimeout:   speakJudgeTimeout,
 		speakJudgeReasoning: speakJudgeReasoning,
+		speakJudgeThinking:  speakJudgeThinking,
 		speakJudgeFailOpen:  cfg.Immersive.SpeakGate.FailOpen,
 		postJudgeEnabled:    cfg.Immersive.PostCooldownJudge.Enabled,
 		postJudgeModel:      postJudgeModel,
 		postJudgePrompt:     postJudgePrompt,
 		postJudgeTimeout:    postJudgeTimeout,
 		postJudgeReasoning:  postJudgeReasoning,
+		postJudgeThinking:   postJudgeThinking,
 		sessionStats:        make(map[string]*sessionUsageStats),
 	}
 }
