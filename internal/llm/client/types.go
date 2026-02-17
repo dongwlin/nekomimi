@@ -4,6 +4,7 @@ type responsesRequest struct {
 	Model     string                  `json:"model"`
 	Input     []responsesInputMessage `json:"input"`
 	Reasoning *responsesReasoning     `json:"reasoning,omitempty"`
+	Thinking  *thinkingConfig         `json:"thinking,omitempty"`
 	Stream    bool                    `json:"stream,omitempty"`
 }
 
@@ -19,6 +20,10 @@ type responsesContent struct {
 
 type responsesReasoning struct {
 	Effort string `json:"effort"`
+}
+
+type thinkingConfig struct {
+	Type string `json:"type"`
 }
 
 type responsesResponse struct {
@@ -39,10 +44,11 @@ type responsesResponse struct {
 }
 
 type chatCompletionsRequest struct {
-	Model           string        `json:"model"`
-	Messages        []chatMessage `json:"messages"`
-	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
-	Stream          bool          `json:"stream,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []chatMessage   `json:"messages"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	Thinking        *thinkingConfig `json:"thinking,omitempty"`
+	Stream          bool            `json:"stream,omitempty"`
 }
 
 type chatMessage struct {

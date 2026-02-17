@@ -18,6 +18,7 @@ type LLMConfig struct {
 	Model           string          `yaml:"model"`
 	TimeoutMS       int             `yaml:"timeout_ms"`
 	ReasoningEffort string          `yaml:"reasoning_effort"`
+	ThinkingType    string          `yaml:"thinking_type"`
 	ShowReasoning   bool            `yaml:"show_reasoning"`
 	SystemPrompt    string          `yaml:"system_prompt"`
 	HistoryMax      int             `yaml:"history_max"`

@@ -114,6 +114,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	}
 	client := llmclient.New(apiURL, cfg.Key)
 	client.SetReasoningEffort(cfg.ReasoningEffort)
+	client.SetThinkingType(cfg.ThinkingType)
 	client.SetShowReasoning(cfg.ShowReasoning)
 	return &Manager{
 		enabled:             cfg.Enabled,

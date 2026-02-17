@@ -23,6 +23,7 @@ type Client struct {
 	apiURL          string
 	apiKey          string
 	reasoningEffort string
+	thinkingType    string
 	showReasoning   bool
 	httpClient      *http.Client
 }
@@ -75,8 +76,17 @@ func (c *Client) APIURL() string {
 
 func normalizeReasoningEffort(effort string) string {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "low", "medium", "high", "none":
+	case "minimal", "low", "medium", "high", "none":
 		return strings.ToLower(strings.TrimSpace(effort))
+	default:
+		return ""
+	}
+}
+
+func normalizeThinkingType(thinkingType string) string {
+	switch strings.ToLower(strings.TrimSpace(thinkingType)) {
+	case "enabled", "disabled", "auto":
+		return strings.ToLower(strings.TrimSpace(thinkingType))
 	default:
 		return ""
 	}
@@ -99,10 +109,29 @@ func (c *Client) SetReasoningEffort(effort string) {
 	}
 }
 
+func (c *Client) SetThinkingType(thinkingType string) {
+	raw := strings.TrimSpace(thinkingType)
+	normalized := normalizeThinkingType(raw)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.thinkingType = normalized
+	if raw != "" && normalized == "" {
+		log.Warn().
+			Str("thinking_type", raw).
+			Msg("invalid thinking_type, thinking disabled")
+	}
+}
+
 func (c *Client) reasoningEffortSnapshot() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.reasoningEffort
+}
+
+func (c *Client) thinkingTypeSnapshot() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.thinkingType
 }
 
 func (c *Client) SetShowReasoning(show bool) {
@@ -326,6 +355,7 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 	}
 	requestOptions, _ := requestOptionsFromContext(ctx)
 	reasoningEffort := c.reasoningEffortSnapshot()
+	thinkingType := c.thinkingTypeSnapshot()
 	logReasoningEffort := reasoningEffort
 	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
 		if override == "none" {
@@ -348,6 +378,9 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 	if reasoningEffort != "" {
 		reqBody.Reasoning = &responsesReasoning{Effort: reasoningEffort}
 	}
+	if thinkingType != "" {
+		reqBody.Thinking = &thinkingConfig{Type: thinkingType}
+	}
 	apiURL := c.apiURLSnapshot()
 	log.Info().
 		Str("llm_api", "responses").
@@ -357,8 +390,10 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 		Int("message_count", len(input)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
 		Bool("reasoning_enabled", reqBody.Reasoning != nil).
+		Bool("thinking_enabled", reqBody.Thinking != nil).
 		Bool("show_reasoning", c.showReasoningSnapshot()).
 		Str("reasoning_effort", logReasoningEffort).
+		Str("thinking_type", thinkingType).
 		Msg("sending llm request")
 	body, err := c.postJSON(ctx, apiURL, reqBody)
 	if err != nil {
@@ -415,6 +450,7 @@ func (c *Client) GenerateResponsesStream(ctx context.Context, modelName, systemP
 	}
 	requestOptions, _ := requestOptionsFromContext(ctx)
 	reasoningEffort := c.reasoningEffortSnapshot()
+	thinkingType := c.thinkingTypeSnapshot()
 	logReasoningEffort := reasoningEffort
 	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
 		if override == "none" {
@@ -438,6 +474,9 @@ func (c *Client) GenerateResponsesStream(ctx context.Context, modelName, systemP
 	if reasoningEffort != "" {
 		reqBody.Reasoning = &responsesReasoning{Effort: reasoningEffort}
 	}
+	if thinkingType != "" {
+		reqBody.Thinking = &thinkingConfig{Type: thinkingType}
+	}
 	apiURL := c.apiURLSnapshot()
 	log.Info().
 		Str("llm_api", "responses_stream").
@@ -447,8 +486,10 @@ func (c *Client) GenerateResponsesStream(ctx context.Context, modelName, systemP
 		Int("message_count", len(input)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
 		Bool("reasoning_enabled", reqBody.Reasoning != nil).
+		Bool("thinking_enabled", reqBody.Thinking != nil).
 		Bool("show_reasoning", c.showReasoningSnapshot()).
 		Str("reasoning_effort", logReasoningEffort).
+		Str("thinking_type", thinkingType).
 		Msg("sending llm streaming request")
 
 	var replyBuilder strings.Builder
@@ -503,6 +544,7 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 	}
 	requestOptions, _ := requestOptionsFromContext(ctx)
 	reasoningEffort := c.reasoningEffortSnapshot()
+	thinkingType := c.thinkingTypeSnapshot()
 	logReasoningEffort := reasoningEffort
 	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
 		if override == "none" {
@@ -523,6 +565,9 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 		Messages:        chatMessages,
 		ReasoningEffort: reasoningEffort,
 	}
+	if thinkingType != "" {
+		reqBody.Thinking = &thinkingConfig{Type: thinkingType}
+	}
 	apiURL := c.apiURLSnapshot()
 	log.Info().
 		Str("llm_api", "chat_completions").
@@ -532,8 +577,10 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 		Int("message_count", len(chatMessages)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
 		Bool("reasoning_enabled", strings.TrimSpace(reqBody.ReasoningEffort) != "").
+		Bool("thinking_enabled", reqBody.Thinking != nil).
 		Bool("show_reasoning", c.showReasoningSnapshot()).
 		Str("reasoning_effort", logReasoningEffort).
+		Str("thinking_type", thinkingType).
 		Msg("sending llm request")
 	body, err := c.postJSON(ctx, apiURL, reqBody)
 	if err != nil {
@@ -590,6 +637,7 @@ func (c *Client) GenerateOpenAIStream(ctx context.Context, modelName, systemProm
 	}
 	requestOptions, _ := requestOptionsFromContext(ctx)
 	reasoningEffort := c.reasoningEffortSnapshot()
+	thinkingType := c.thinkingTypeSnapshot()
 	logReasoningEffort := reasoningEffort
 	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
 		if override == "none" {
@@ -611,6 +659,9 @@ func (c *Client) GenerateOpenAIStream(ctx context.Context, modelName, systemProm
 		ReasoningEffort: reasoningEffort,
 		Stream:          true,
 	}
+	if thinkingType != "" {
+		reqBody.Thinking = &thinkingConfig{Type: thinkingType}
+	}
 	apiURL := c.apiURLSnapshot()
 	log.Info().
 		Str("llm_api", "chat_completions_stream").
@@ -620,8 +671,10 @@ func (c *Client) GenerateOpenAIStream(ctx context.Context, modelName, systemProm
 		Int("message_count", len(chatMessages)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
 		Bool("reasoning_enabled", strings.TrimSpace(reqBody.ReasoningEffort) != "").
+		Bool("thinking_enabled", reqBody.Thinking != nil).
 		Bool("show_reasoning", c.showReasoningSnapshot()).
 		Str("reasoning_effort", logReasoningEffort).
+		Str("thinking_type", thinkingType).
 		Msg("sending llm streaming request")
 
 	var replyBuilder strings.Builder

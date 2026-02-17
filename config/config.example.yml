@@ -10,7 +10,8 @@ llm:
   key: "your_api_key"
   model: "gpt-4.1-mini"
   timeout_ms: 30000 # 主请求超时（毫秒，<=0 使用默认 30000）
-  reasoning_effort: "medium" # 推理强度：low | medium | high；留空表示关闭
+  reasoning_effort: "medium" # 推理强度：minimal | low | medium | high；留空表示关闭
+  thinking_type: "" # 思考类型：enabled | disabled | auto；留空表示不传 thinking 对象
   show_reasoning: false # 是否在日志中记录响应中返回的思考过程/思考摘要（仅当上游返回该字段时生效）
   system_prompt: "你的自定义提示词（会追加在内置系统提示词后）" # 支持文件引用：{{file:相对路径}}，相对 config.yml 所在目录解析
   history_max: 10 # 多轮对话保留的轮数（每轮=一问一答），<=0 不限制
@@ -41,20 +42,20 @@ llm:
       model: "" # 判定模型名，空则复用主模型
       prompt: "" # 判定提示词，支持 {{file:prompts/speak_gate_judge.txt}}；空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
-      reasoning_effort: "none" # 判定助手推理强度：none | low | medium | high（none=不推理，不继承全局）
+      reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
       fail_open: true # 判定失败时是否放行（true=放行发言，false=保守不发言）
     mention_judge:
       enabled: false # 被@时是否调用判定助手决定秒回
       model: "" # 判定模型名，空则复用主模型
       prompt: "" # 判定提示词，支持 {{file:prompts/mention_judge.txt}}；空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
-      reasoning_effort: "none" # 判定助手推理强度：none | low | medium | high（none=不推理，不继承全局）
+      reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
     post_cooldown_judge:
       enabled: false # 冷静期结束后是否二次仲裁（回复/短续冷/长续冷）
       model: "" # 判定模型名，空则复用主模型
       prompt: "" # 判定提示词，支持 {{file:prompts/post_cooldown_judge.txt}}；空则使用内置默认
       timeout_ms: 1200 # 判定超时（毫秒）
-      reasoning_effort: "none" # 判定助手推理强度：none | low | medium | high（none=不推理，不继承全局）
+      reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
       short_wait_ms: 1200 # 短续冷时长（毫秒）
       long_wait_ms: 5000 # 长续冷时长（毫秒）
       max_rounds: 3 # 最大连续续冷轮次；0 表示无上限续冷（由判定助手持续决定）
