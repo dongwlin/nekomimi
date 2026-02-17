@@ -2,6 +2,7 @@ package immersive
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -24,9 +25,6 @@ const (
 	defaultMaxBatchMessages         = 10
 	defaultMaxBatchChars            = 1200
 	defaultImmediateDelayMS         = 120
-	defaultPostShortWaitMS          = 1200
-	defaultPostLongWaitMS           = 5000
-	defaultPostMaxRounds            = 3
 	defaultSpeakJudgeTimeoutMS      = 1200
 	defaultTimelineMaxMessages      = 200
 	defaultTimelineOverflowMessages = 50
@@ -165,7 +163,7 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	state.timeline = nil
 	state.timelineSummary = ""
 	state.recent = nil
-	state.postRounds = 0
+	state.waitRounds = 0
 	if state.timer != nil {
 		state.timer.Stop()
 		state.timer = nil
@@ -215,14 +213,14 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state.queue = nil
 	state.queueChars = 0
 	state.inFlight = true
-	postRounds := state.postRounds
+	waitRounds := state.waitRounds
 	ctx := state.lastCtx
 	state.mu.Unlock()
 	log.Info().
 		Str("session", sessionKey).
 		Int("batch_messages", len(queue)).
 		Int("batch_chars", sumQueueChars(queue)).
-		Int("post_rounds", postRounds).
+		Int("wait_rounds", waitRounds).
 		Msg("immersive flush started")
 
 	timeline, timelineSummary = b.compactTimelineSnapshot(timeline, timelineSummary)
@@ -255,7 +253,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Msg("immersive repeat triggered")
 		state.mu.Lock()
 		state.inFlight = false
-		state.postRounds = 0
+		state.waitRounds = 0
 		pending := len(state.queue) > 0
 		state.mu.Unlock()
 		if pending {
@@ -275,99 +273,57 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Int("directed_questions", gate.directedQuestions).
 		Int("messages_count", gate.messagesCount).
 		Int("participants_count", gate.participantsCount).
+		Int("wait_ms", gate.waitMS).
+		Int("wait_rounds", waitRounds).
 		Str("suppress_reason", gate.reason).
 		Msg("immersive speak gate evaluated")
-	if !gate.shouldSpeak {
-		cooldownDelay := time.Duration(b.cfg.PostCooldownJudge.ShortWaitMS) * time.Millisecond
-		if cooldownDelay <= 0 {
-			cooldownDelay = time.Duration(b.cfg.ImmediateDelayMS) * time.Millisecond
+	if gate.waitMS > 0 {
+		waitDelay := time.Duration(gate.waitMS) * time.Millisecond
+		state.mu.Lock()
+		state.queue = prependMessages(queue, state.queue)
+		state.queueChars += sumQueueChars(queue)
+		state.inFlight = false
+		state.waitRounds++
+		if state.timer != nil {
+			state.timer.Stop()
 		}
+		state.timer = time.AfterFunc(waitDelay, func() {
+			b.flush(sessionKey)
+		})
+		state.mu.Unlock()
+		log.Info().
+			Str("session", sessionKey).
+			Int64("next_wait_ms", waitDelay.Milliseconds()).
+			Int("wait_rounds", waitRounds+1).
+			Str("assistant_status", gate.assistantStatus).
+			Str("suppress_reason", gate.reason).
+			Msg("immersive flush deferred by speak gate wait")
+		return
+	}
+	if !gate.shouldSpeak {
+		delay := time.Duration(b.cfg.ImmediateDelayMS) * time.Millisecond
 		state.mu.Lock()
 		state.inFlight = false
-		state.postRounds = 0
+		state.waitRounds = 0
 		pending := len(state.queue) > 0
 		if state.timer != nil {
 			state.timer.Stop()
 		}
 		if pending {
-			state.timer = time.AfterFunc(cooldownDelay, func() {
+			state.timer = time.AfterFunc(delay, func() {
 				b.flush(sessionKey)
 			})
 		}
 		state.mu.Unlock()
 		log.Info().
 			Str("session", sessionKey).
-			Int64("next_cooldown_ms", cooldownDelay.Milliseconds()).
+			Int64("next_delay_ms", delay.Milliseconds()).
 			Bool("pending_messages", pending).
 			Bool("should_speak", false).
+			Int("wait_ms", gate.waitMS).
 			Str("assistant_status", gate.assistantStatus).
 			Str("suppress_reason", gate.reason).
 			Msg("immersive flush skipped by speak gate")
-		return
-	}
-	decision := llm.DecisionReplyNow
-	cooldownDelay := time.Duration(0)
-	// MaxRounds == 0 means unlimited cooldown rounds.
-	canJudgePostCooldown := b.cfg.PostCooldownJudge.MaxRounds == 0 || postRounds < b.cfg.PostCooldownJudge.MaxRounds
-	if input != "" && b.cfg.PostCooldownJudge.Enabled && canJudgePostCooldown {
-		lastSpeaker := queue[len(queue)-1].speaker
-		recent := buildRecentPreview(timeline, 8, b.currentIdentity())
-		judgeDecision, err := b.llm.JudgePostCooldown(context.Background(), input, lastSpeaker, recent)
-		if err == nil {
-			decision = judgeDecision
-			log.Info().
-				Str("session", sessionKey).
-				Str("decision", string(decision)).
-				Bool("should_speak", gate.shouldSpeak).
-				Str("assistant_status", gate.assistantStatus).
-				Str("suppress_reason", gate.reason).
-				Int("post_rounds", postRounds).
-				Msg("post-cooldown judge decided")
-		} else if !b.cfg.PostCooldownJudge.FailOpen {
-			decision = llm.DecisionCooldownShort
-			log.Warn().
-				Err(err).
-				Str("session", sessionKey).
-				Bool("fail_open", false).
-				Msg("post-cooldown judge failed, fallback to short cooldown")
-		} else {
-			log.Warn().
-				Err(err).
-				Str("session", sessionKey).
-				Bool("fail_open", true).
-				Msg("post-cooldown judge failed, continue reply")
-		}
-		if decision == llm.DecisionCooldownShort {
-			cooldownDelay = time.Duration(b.cfg.PostCooldownJudge.ShortWaitMS) * time.Millisecond
-		}
-		if decision == llm.DecisionCooldownLong {
-			cooldownDelay = time.Duration(b.cfg.PostCooldownJudge.LongWaitMS) * time.Millisecond
-		}
-	}
-	if decision != llm.DecisionReplyNow {
-		state.mu.Lock()
-		state.queue = prependMessages(queue, state.queue)
-		state.queueChars += sumQueueChars(queue)
-		state.inFlight = false
-		state.postRounds++
-		if state.timer != nil {
-			state.timer.Stop()
-		}
-		if cooldownDelay <= 0 {
-			cooldownDelay = time.Duration(b.cfg.PostCooldownJudge.ShortWaitMS) * time.Millisecond
-		}
-		state.timer = time.AfterFunc(cooldownDelay, func() {
-			b.flush(sessionKey)
-		})
-		state.mu.Unlock()
-		log.Info().
-			Str("session", sessionKey).
-			Str("decision", string(decision)).
-			Bool("should_speak", gate.shouldSpeak).
-			Str("assistant_status", gate.assistantStatus).
-			Str("suppress_reason", gate.reason).
-			Int64("next_cooldown_ms", cooldownDelay.Milliseconds()).
-			Msg("immersive flush deferred by post-cooldown judge")
 		return
 	}
 	if input != "" {
@@ -413,7 +369,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 	state.mu.Lock()
 	state.inFlight = false
-	state.postRounds = 0
+	state.waitRounds = 0
 	pending := len(state.queue) > 0
 	state.mu.Unlock()
 	if pending {
@@ -510,36 +466,65 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 		if err != nil {
 			if b.cfg.SpeakGate.FailOpen {
 				should = true
-				reasons = append(reasons, "assistant_error_fail_open_allow(override_yes)")
+				reasons = append(reasons, "assistant_error_fail_open_reply")
 				assistantStatus = "error_allow"
 			} else {
 				should = false
-				reasons = append(reasons, "assistant_error_block(override_no)")
+				reasons = append(reasons, "assistant_error_block_skip")
 				assistantStatus = "error_block"
 			}
 		} else if judged {
-			should = assistantDecision
-			if assistantDecision {
-				reasons = append(reasons, "assistant_yes(override)")
-				assistantStatus = "yes"
-			} else {
-				reasons = append(reasons, "assistant_no(override)")
-				assistantStatus = "no"
+			switch assistantDecision.Action {
+			case llm.SpeakGateActionReply:
+				should = true
+				reasons = append(reasons, "assistant_reply")
+				assistantStatus = "reply"
+			case llm.SpeakGateActionSkip:
+				should = false
+				reasons = append(reasons, "assistant_skip")
+				assistantStatus = "skip"
+			case llm.SpeakGateActionWait:
+				should = false
+				reasons = append(reasons, fmt.Sprintf("assistant_wait_%dms", assistantDecision.WaitMS))
+				assistantStatus = "wait"
+				return speakGateResult{
+					shouldSpeak:       false,
+					waitMS:            assistantDecision.WaitMS,
+					reason:            strings.Join(reasons, ","),
+					assistantStatus:   assistantStatus,
+					mentionsToBot:     meta.MentionsToBot,
+					addressedToBot:    meta.AddressedToBot,
+					questionsCount:    meta.QuestionsCount,
+					directedQuestions: directedQuestions,
+					messagesCount:     meta.MessagesCount,
+					participantsCount: len(meta.Participants),
+				}
+			default:
+				if b.cfg.SpeakGate.FailOpen {
+					should = true
+					reasons = append(reasons, "assistant_unknown_fail_open_reply")
+					assistantStatus = "unknown_allow"
+				} else {
+					should = false
+					reasons = append(reasons, "assistant_unknown_block_skip")
+					assistantStatus = "unknown_block"
+				}
 			}
 		} else if b.cfg.SpeakGate.FailOpen {
 			should = true
-			reasons = append(reasons, "assistant_unjudged_fail_open_allow(override_yes)")
+			reasons = append(reasons, "assistant_unjudged_fail_open_reply")
 			assistantStatus = "unjudged_allow"
 		} else {
 			should = false
-			reasons = append(reasons, "assistant_unjudged_block(override_no)")
+			reasons = append(reasons, "assistant_unjudged_block_skip")
 			assistantStatus = "unjudged_block"
 		}
 	} else {
-		reasons = append(reasons, "assistant_not_enabled_allow(default_yes)")
+		reasons = append(reasons, "assistant_not_enabled_allow_reply")
 	}
 	return speakGateResult{
 		shouldSpeak:       should,
+		waitMS:            0,
 		reason:            strings.Join(reasons, ","),
 		assistantStatus:   assistantStatus,
 		mentionsToBot:     meta.MentionsToBot,

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/llm"
 )
 
 func TestBuildCombinedInput_ContainsStructuredMeta(t *testing.T) {
@@ -101,5 +102,61 @@ func TestShouldSpeak_RuleSuppressionRemoved_DefaultAllow(t *testing.T) {
 	}
 	if !strings.Contains(result.reason, "assistant_not_enabled_allow") {
 		t.Fatalf("expected default-allow reason in assistant-only mode, got %q", result.reason)
+	}
+}
+
+func TestShouldSpeak_AssistantErrorFailOpenAllow(t *testing.T) {
+	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{
+		SpeakGate: config.SpeakGateConfig{
+			Enabled:  true,
+			FailOpen: true,
+		},
+	})
+	manager := llm.NewManager(config.LLMConfig{
+		Enabled: true,
+		Model:   "",
+		Immersive: config.ImmersiveConfig{
+			SpeakGate: config.SpeakGateConfig{
+				Enabled: true,
+			},
+		},
+	})
+	buffer := &ImmersiveBuffer{cfg: cfg, llm: manager}
+	queue := []queuedMessage{{text: "测试", speaker: "name=alice"}}
+
+	result := buffer.shouldSpeak(&immersiveSession{}, queue, buildCombinedInput(queue, botIdentity{}))
+	if !result.shouldSpeak {
+		t.Fatalf("expected fail_open=true to allow speaking on assistant error, got %+v", result)
+	}
+	if result.assistantStatus != "error_allow" {
+		t.Fatalf("expected assistantStatus=error_allow, got %q", result.assistantStatus)
+	}
+}
+
+func TestShouldSpeak_AssistantErrorFailCloseBlock(t *testing.T) {
+	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{
+		SpeakGate: config.SpeakGateConfig{
+			Enabled:  true,
+			FailOpen: false,
+		},
+	})
+	manager := llm.NewManager(config.LLMConfig{
+		Enabled: true,
+		Model:   "",
+		Immersive: config.ImmersiveConfig{
+			SpeakGate: config.SpeakGateConfig{
+				Enabled: true,
+			},
+		},
+	})
+	buffer := &ImmersiveBuffer{cfg: cfg, llm: manager}
+	queue := []queuedMessage{{text: "测试", speaker: "name=alice"}}
+
+	result := buffer.shouldSpeak(&immersiveSession{}, queue, buildCombinedInput(queue, botIdentity{}))
+	if result.shouldSpeak {
+		t.Fatalf("expected fail_open=false to block speaking on assistant error, got %+v", result)
+	}
+	if result.assistantStatus != "error_block" {
+		t.Fatalf("expected assistantStatus=error_block, got %q", result.assistantStatus)
 	}
 }

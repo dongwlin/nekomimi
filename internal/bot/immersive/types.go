@@ -41,7 +41,7 @@ type immersiveSession struct {
 	timer           *time.Timer
 	inFlight        bool
 	lastCtx         *zero.Ctx
-	postRounds      int
+	waitRounds      int
 }
 
 // queuedMessage represents a single message in the buffer queue.
@@ -83,6 +83,7 @@ type queueMeta struct {
 // speakGateResult contains the decision result from the speak gate evaluation.
 type speakGateResult struct {
 	shouldSpeak       bool
+	waitMS            int
 	reason            string
 	assistantStatus   string
 	mentionsToBot     int

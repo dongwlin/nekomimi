@@ -45,13 +45,6 @@ type Manager struct {
 	speakJudgeTimeout   time.Duration
 	speakJudgeReasoning string
 	speakJudgeThinking  string
-	speakJudgeFailOpen  bool
-	postJudgeEnabled    bool
-	postJudgeModel      string
-	postJudgePrompt     string
-	postJudgeTimeout    time.Duration
-	postJudgeReasoning  string
-	postJudgeThinking   string
 	sessionStats        map[string]*sessionUsageStats
 }
 
@@ -113,17 +106,6 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	if speakJudgeTimeout <= 0 {
 		speakJudgeTimeout = 1200 * time.Millisecond
 	}
-	postJudgePrompt := strings.TrimSpace(cfg.Immersive.PostCooldownJudge.Prompt)
-	if postJudgePrompt == "" {
-		postJudgePrompt = llmprompt.PostCooldownJudgePrompt
-	}
-	postJudgeModel := strings.TrimSpace(cfg.Immersive.PostCooldownJudge.Model)
-	postJudgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.PostCooldownJudge.ReasoningEffort)
-	postJudgeThinking := normalizeAssistantThinkingType(cfg.Immersive.PostCooldownJudge.ThinkingType)
-	postJudgeTimeout := time.Duration(cfg.Immersive.PostCooldownJudge.TimeoutMS) * time.Millisecond
-	if postJudgeTimeout <= 0 {
-		postJudgeTimeout = 1200 * time.Millisecond
-	}
 	requestTimeout := time.Duration(cfg.TimeoutMS) * time.Millisecond
 	if requestTimeout <= 0 {
 		requestTimeout = llmclient.DefaultRequestTimeout
@@ -160,13 +142,6 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		speakJudgeTimeout:   speakJudgeTimeout,
 		speakJudgeReasoning: speakJudgeReasoning,
 		speakJudgeThinking:  speakJudgeThinking,
-		speakJudgeFailOpen:  cfg.Immersive.SpeakGate.FailOpen,
-		postJudgeEnabled:    cfg.Immersive.PostCooldownJudge.Enabled,
-		postJudgeModel:      postJudgeModel,
-		postJudgePrompt:     postJudgePrompt,
-		postJudgeTimeout:    postJudgeTimeout,
-		postJudgeReasoning:  postJudgeReasoning,
-		postJudgeThinking:   postJudgeThinking,
 		sessionStats:        make(map[string]*sessionUsageStats),
 	}
 }

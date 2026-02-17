@@ -116,17 +116,5 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.SpeakGate.TimeoutMS <= 0 {
 		cfg.SpeakGate.TimeoutMS = defaultSpeakJudgeTimeoutMS
 	}
-	if cfg.PostCooldownJudge.TimeoutMS <= 0 {
-		cfg.PostCooldownJudge.TimeoutMS = 1200
-	}
-	if cfg.PostCooldownJudge.ShortWaitMS <= 0 {
-		cfg.PostCooldownJudge.ShortWaitMS = defaultPostShortWaitMS
-	}
-	if cfg.PostCooldownJudge.LongWaitMS <= 0 {
-		cfg.PostCooldownJudge.LongWaitMS = defaultPostLongWaitMS
-	}
-	if cfg.PostCooldownJudge.MaxRounds < 0 {
-		cfg.PostCooldownJudge.MaxRounds = defaultPostMaxRounds
-	}
 	return cfg
 }
