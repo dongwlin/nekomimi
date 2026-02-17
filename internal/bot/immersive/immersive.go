@@ -67,6 +67,18 @@ func NewEngine(cfg config.ImmersiveConfig, llmManager *llm.Manager, nicknames []
 	return NewImmersiveBuffer(cfg, llmManager, nicknames)
 }
 
+// ReloadConfig refreshes immersive policies without clearing queued/timeline records.
+func (b *ImmersiveBuffer) ReloadConfig(cfg config.ImmersiveConfig, nicknames []string) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.cfg = normalizeImmersiveConfig(cfg)
+	b.nicknames = normalizedBotNames(nicknames)
+	b.identity.ConfigNicknames = normalizedBotNames(nicknames)
+}
+
 // Enqueue adds a new message to the session buffer and schedules a flush
 // based on the calculated cooldown. It detects message signals (mentions,
 // addressed to bot, questions) to determine response urgency.

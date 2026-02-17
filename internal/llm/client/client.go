@@ -74,6 +74,12 @@ func (c *Client) APIURL() string {
 	return c.apiURL
 }
 
+func (c *Client) SetAPIKey(apiKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.apiKey = strings.TrimSpace(apiKey)
+}
+
 func normalizeReasoningEffort(effort string) string {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
 	case "minimal", "low", "medium", "high", "none":

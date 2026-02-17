@@ -83,3 +83,8 @@ func (s *MemoryStore) Len(sessionKey string) int {
 	return len(s.history[sessionKey])
 }
 
+func (s *MemoryStore) SetMaxRounds(maxRounds int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.maxRounds = maxRounds
+}

@@ -10,10 +10,11 @@ type ImmersiveEngine interface {
 	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool)
 	Clear(sessionKey string)
 	RefreshIdentityFromCtx(ctx *zero.Ctx)
+	ReloadConfig(cfg config.ImmersiveConfig, nicknames []string)
 }
 
 func Register(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine) {
 	registerAIHandlers(cfg, llmManager, engine)
 	registerLLMHandlers(llmManager)
-	registerBasicHandlers()
+	registerBasicHandlers(cfg, llmManager, engine)
 }
