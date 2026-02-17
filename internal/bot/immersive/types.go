@@ -1,5 +1,5 @@
-// Package immersive provides message buffering and cooldown management for immersive bot conversations.
-// It implements intelligent message queuing with configurable cooling periods, speak gating,
+// Package immersive provides message buffering and response management for immersive bot conversations.
+// It implements intelligent message queuing with immediate flush scheduling, speak gating,
 // and LLM-based decision making for when the bot should respond.
 package immersive
 
@@ -15,7 +15,7 @@ import (
 
 // ImmersiveBuffer manages message buffering and response timing for a bot session.
 // It collects messages into batches and determines when to trigger a response based on
-// cooldown calculations, speak gates, and LLM-based judgments.
+// speak gates and LLM-based judgments.
 type ImmersiveBuffer struct {
 	cfg       config.ImmersiveConfig
 	llm       *llm.Manager
@@ -38,7 +38,6 @@ type immersiveSession struct {
 	queueChars      int
 	timeline        []queuedMessage
 	timelineSummary string
-	recent          []recentSample
 	timer           *time.Timer
 	inFlight        bool
 	lastCtx         *zero.Ctx
@@ -67,12 +66,6 @@ type queuedMessage struct {
 	isMentionBot     bool
 	isQuestion       bool
 	isAddressedToBot bool
-}
-
-// recentSample tracks recent message activity for cooldown calculation.
-type recentSample struct {
-	ts    time.Time
-	chars int
 }
 
 // queueMeta contains aggregated metadata about the message queue.

@@ -17,15 +17,9 @@ llm:
   history_max: 10 # 多轮对话保留的轮数（每轮=一问一答），<=0 不限制
   context_max: 8000 # 模型上下文上限（token 估算），<=0 不启用压缩
   immersive:
-    cooldown_min_ms: 800 # 冷静期下限（毫秒）
-    cooldown_max_ms: 3500 # 冷静期上限（毫秒）
-    cooldown_base_ms: 1200 # 群聊基准冷静期（毫秒）
-    private_base_ms: 200 # 私聊基准冷静期（毫秒）
-    window_ms: 5000 # 动态判定窗口（毫秒）
-    jitter_ms: 200 # 随机抖动范围（毫秒）
     max_batch_messages: 10 # 单次合并最大消息数
     max_batch_chars: 1200 # 单次合并最大字数（按 rune 计）
-    immediate_delay_ms: 120 # 被@或问题触发的最小延迟（毫秒）
+    immediate_delay_ms: 120 # 同轮 in-flight 时的重试延迟（毫秒）
     # 预生成重生上限固定为 3 次/轮（收到新消息会取消并重生，超过上限后不再重生）
     timeline:
       max_messages: 200 # 会话时间线上限（达到后开始压缩旧消息）

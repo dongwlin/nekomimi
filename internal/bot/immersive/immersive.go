@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -17,12 +16,6 @@ import (
 
 // Default configuration values for the immersive buffer.
 const (
-	defaultCooldownMinMS            = 800
-	defaultCooldownMaxMS            = 3500
-	defaultCooldownBaseMS           = 1200
-	defaultPrivateBaseMS            = 200
-	defaultWindowMS                 = 5000
-	defaultJitterMS                 = 200
 	defaultMaxBatchMessages         = 10
 	defaultMaxBatchChars            = 1200
 	defaultImmediateDelayMS         = 120
@@ -37,19 +30,12 @@ const (
 	defaultContinuousMaxMS          = 900
 	maxPreGenerateRegensPerRound    = 3
 	preGenerateWaitTimeout          = 35 * time.Second
-
-	activeMsgPenaltyMS  = 150
-	activeCharPenaltyMS = 4
-	shortMsgLen         = 12
-	shortMsgPenaltyMS   = 200
-	mentionBonusMS      = 400
 )
 
 // NewImmersiveBuffer creates a new ImmersiveBuffer with the given configuration,
 // LLM manager, and bot nicknames.
 func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager *llm.Manager, nicknames []string) *ImmersiveBuffer {
 	normalized := normalizeImmersiveConfig(cfg)
-	rand.Seed(time.Now().UnixNano())
 	configNames := normalizedBotNames(nicknames)
 	return &ImmersiveBuffer{
 		cfg:       normalized,
@@ -79,9 +65,9 @@ func (b *ImmersiveBuffer) ReloadConfig(cfg config.ImmersiveConfig, nicknames []s
 	b.identity.ConfigNicknames = normalizedBotNames(nicknames)
 }
 
-// Enqueue adds a new message to the session buffer and schedules a flush
-// based on the calculated cooldown. It detects message signals (mentions,
-// addressed to bot, questions) to determine response urgency.
+// Enqueue adds a new message to the session buffer and schedules an immediate
+// flush. It detects message signals (mentions, addressed to bot, questions)
+// for downstream policies.
 func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool) {
 	if b == nil || b.llm == nil {
 		return
@@ -109,18 +95,13 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.queue = append(state.queue, msg)
 	state.queueChars += charCount
 	state.timeline = appendTimelineMessage(state.timeline, msg, b.timelineLimit())
-	state.recent = append(state.recent, recentSample{ts: now, chars: charCount})
-	state.recent = trimRecent(state.recent, now, b.cfg.WindowMS)
 
-	recentCount, recentChars := summarizeRecent(state.recent)
-	cooldown := b.calcCooldown(isPrivate, addressed, question, recentCount, recentChars, charCount)
+	// Cooldown is intentionally disabled: flush immediately after enqueue.
+	cooldown := time.Duration(0)
 	queueSnapshot := make([]queuedMessage, len(state.queue))
 	copy(queueSnapshot, state.queue)
 
 	judgeEnabled := mention && !isPrivate && b.cfg.MentionJudge.Enabled
-	if (addressed || question) && !judgeEnabled {
-		cooldown = minDuration(cooldown, time.Duration(b.cfg.ImmediateDelayMS)*time.Millisecond)
-	}
 	log.Info().
 		Str("session", sessionKey).
 		Bool("is_private", isPrivate).
@@ -129,8 +110,6 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		Bool("question", question).
 		Int("queue_len", len(queueSnapshot)).
 		Int("queue_chars", state.queueChars).
-		Int("recent_count", recentCount).
-		Int("recent_chars", recentChars).
 		Int64("cooldown_ms", cooldown.Milliseconds()).
 		Msg("immersive enqueue scheduled")
 	state.mu.Unlock()
@@ -139,7 +118,6 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		preview := buildRecentPreview(queueSnapshot, 4, b.currentIdentity())
 		immediate, err := b.llm.JudgeMentionImmediate(context.Background(), trimmed, speaker, preview)
 		if err == nil && immediate {
-			cooldown = minDuration(cooldown, time.Duration(b.cfg.ImmediateDelayMS)*time.Millisecond)
 			log.Info().
 				Str("session", sessionKey).
 				Int64("cooldown_ms", cooldown.Milliseconds()).
@@ -153,9 +131,6 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	}
 
 	state.mu.Lock()
-	if state.queueChars >= b.cfg.MaxBatchChars || len(state.queue) >= b.cfg.MaxBatchMessages {
-		cooldown = minDuration(cooldown, 200*time.Millisecond)
-	}
 	if state.timer != nil {
 		state.timer.Stop()
 	}
@@ -178,7 +153,6 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	state.queueChars = 0
 	state.timeline = nil
 	state.timelineSummary = ""
-	state.recent = nil
 	state.waitRounds = 0
 	if state.timer != nil {
 		state.timer.Stop()

@@ -27,12 +27,6 @@ type LLMConfig struct {
 }
 
 type ImmersiveConfig struct {
-	CooldownMinMS    int                    `yaml:"cooldown_min_ms"`
-	CooldownMaxMS    int                    `yaml:"cooldown_max_ms"`
-	CooldownBaseMS   int                    `yaml:"cooldown_base_ms"`
-	PrivateBaseMS    int                    `yaml:"private_base_ms"`
-	WindowMS         int                    `yaml:"window_ms"`
-	JitterMS         int                    `yaml:"jitter_ms"`
 	MaxBatchMessages int                    `yaml:"max_batch_messages"`
 	MaxBatchChars    int                    `yaml:"max_batch_chars"`
 	ImmediateDelayMS int                    `yaml:"immediate_delay_ms"`

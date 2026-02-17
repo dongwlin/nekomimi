@@ -7,35 +7,6 @@ import (
 	"time"
 )
 
-// trimRecent removes samples from the recent activity list that are older than
-// the specified time window.
-func trimRecent(recent []recentSample, now time.Time, windowMS int) []recentSample {
-	if len(recent) == 0 {
-		return recent
-	}
-	cutoff := now.Add(-time.Duration(windowMS) * time.Millisecond)
-	start := 0
-	for start < len(recent) && recent[start].ts.Before(cutoff) {
-		start++
-	}
-	if start == 0 {
-		return recent
-	}
-	trimmed := make([]recentSample, len(recent)-start)
-	copy(trimmed, recent[start:])
-	return trimmed
-}
-
-// summarizeRecent returns the count of recent samples and total character count.
-func summarizeRecent(recent []recentSample) (int, int) {
-	count := len(recent)
-	totalChars := 0
-	for _, sample := range recent {
-		totalChars += sample.chars
-	}
-	return count, totalChars
-}
-
 // buildRecentPreview creates a formatted input string from the last 'keep' messages
 // in the queue for use in LLM prompts.
 func buildRecentPreview(queue []queuedMessage, keep int, identity botIdentity) string {
