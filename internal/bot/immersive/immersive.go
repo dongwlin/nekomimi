@@ -206,6 +206,26 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Msg("immersive flush started")
 
 	input := buildCombinedInput(queue)
+	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(queue)
+	if repeatText != "" && ctx != nil {
+		ctx.Send(repeatText)
+		log.Info().
+			Str("session", sessionKey).
+			Str("repeat_text", repeatText).
+			Int("repeat_count", repeatCount).
+			Int("repeat_participants", repeatParticipants).
+			Msg("immersive repeat triggered")
+		state.mu.Lock()
+		state.inFlight = false
+		state.postRounds = 0
+		pending := len(state.queue) > 0
+		state.mu.Unlock()
+		if pending {
+			log.Info().Str("session", sessionKey).Msg("pending messages detected, flushing again")
+			b.flush(sessionKey)
+		}
+		return
+	}
 	gate := b.shouldSpeak(state, queue)
 	log.Info().
 		Str("session", sessionKey).
