@@ -101,6 +101,13 @@ func (m *Manager) summarizeWithProvider(ctx context.Context, providerName, model
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
+	source := "summary_full"
+	if mode == summarizer.ModeLight {
+		source = "summary_light"
+	}
+	reqCtx = llmclient.WithRequestOptions(reqCtx, llmclient.RequestOptions{
+		Source: source,
+	})
 	timeout := m.requestTimeout
 	if timeout <= 0 {
 		timeout = llmclient.DefaultRequestTimeout

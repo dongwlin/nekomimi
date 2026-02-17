@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dongwlin/nekomimi/internal/llm/model"
 	"github.com/rs/zerolog/log"
@@ -319,6 +320,7 @@ func parseChatCompletionText(parsed chatCompletionsResponse) (string, string, er
 }
 
 func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
+	startedAt := time.Now()
 	if err := c.ensureAPIKey(); err != nil {
 		return "", err
 	}
@@ -360,20 +362,39 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 		Msg("sending llm request")
 	body, err := c.postJSON(ctx, apiURL, reqBody)
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("llm_api", "responses").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm request failed")
 		return "", err
 	}
 
 	var parsed responsesResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
+		log.Warn().
+			Err(err).
+			Str("llm_api", "responses").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm response parse failed")
 		return "", err
 	}
 	reply, reasoning, err := parseResponsesText(parsed)
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("llm_api", "responses").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm response extraction failed")
 		return "", err
 	}
 	log.Info().
 		Str("llm_api", "responses").
 		Str("request_source", requestSource).
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Int("reply_chars", len([]rune(reply))).
 		Int("reasoning_chars", len([]rune(reasoning))).
 		Msg("llm response received")
@@ -388,6 +409,7 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 }
 
 func (c *Client) GenerateResponsesStream(ctx context.Context, modelName, systemPrompt string, messages []model.Message, onDelta func(delta string) error) (string, error) {
+	startedAt := time.Now()
 	if err := c.ensureAPIKey(); err != nil {
 		return "", err
 	}
@@ -448,21 +470,34 @@ func (c *Client) GenerateResponsesStream(ctx context.Context, modelName, systemP
 		return nil
 	})
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("llm_api", "responses_stream").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm streaming request failed")
 		return "", err
 	}
 	reply := strings.TrimSpace(replyBuilder.String())
 	if reply == "" {
+		log.Warn().
+			Str("llm_api", "responses_stream").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm streaming response empty")
 		return "", errors.New("模型未返回文本内容")
 	}
 	log.Info().
 		Str("llm_api", "responses_stream").
 		Str("request_source", requestSource).
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Int("reply_chars", len([]rune(reply))).
 		Msg("llm streaming response received")
 	return reply, nil
 }
 
 func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
+	startedAt := time.Now()
 	if err := c.ensureAPIKey(); err != nil {
 		return "", err
 	}
@@ -502,20 +537,39 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 		Msg("sending llm request")
 	body, err := c.postJSON(ctx, apiURL, reqBody)
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("llm_api", "chat_completions").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm request failed")
 		return "", err
 	}
 
 	var parsed chatCompletionsResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
+		log.Warn().
+			Err(err).
+			Str("llm_api", "chat_completions").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm response parse failed")
 		return "", err
 	}
 	reply, reasoning, err := parseChatCompletionText(parsed)
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("llm_api", "chat_completions").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm response extraction failed")
 		return "", err
 	}
 	log.Info().
 		Str("llm_api", "chat_completions").
 		Str("request_source", requestSource).
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Int("reply_chars", len([]rune(reply))).
 		Int("reasoning_chars", len([]rune(reasoning))).
 		Msg("llm response received")
@@ -530,6 +584,7 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 }
 
 func (c *Client) GenerateOpenAIStream(ctx context.Context, modelName, systemPrompt string, messages []model.Message, onDelta func(delta string) error) (string, error) {
+	startedAt := time.Now()
 	if err := c.ensureAPIKey(); err != nil {
 		return "", err
 	}
@@ -589,15 +644,27 @@ func (c *Client) GenerateOpenAIStream(ctx context.Context, modelName, systemProm
 		return nil
 	})
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("llm_api", "chat_completions_stream").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm streaming request failed")
 		return "", err
 	}
 	reply := strings.TrimSpace(replyBuilder.String())
 	if reply == "" {
+		log.Warn().
+			Str("llm_api", "chat_completions_stream").
+			Str("request_source", requestSource).
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm streaming response empty")
 		return "", errors.New("模型未返回文本内容")
 	}
 	log.Info().
 		Str("llm_api", "chat_completions_stream").
 		Str("request_source", requestSource).
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Int("reply_chars", len([]rune(reply))).
 		Msg("llm streaming response received")
 	return reply, nil

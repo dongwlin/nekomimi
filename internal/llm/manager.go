@@ -12,6 +12,7 @@ import (
 	"github.com/dongwlin/nekomimi/internal/llm/history"
 	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
 	"github.com/dongwlin/nekomimi/internal/llm/provider"
+	"github.com/rs/zerolog/log"
 )
 
 type Manager struct {
@@ -230,6 +231,7 @@ func (m *Manager) Status() (enabled bool, provider string, model string, systemP
 }
 
 func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker string) (string, error) {
+	startedAt := time.Now()
 	m.mu.RLock()
 	provider := m.provider
 	model := m.model
@@ -250,13 +252,23 @@ func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker stri
 		Source: "main_reply",
 	})
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("request_source", "main_reply").
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm assistant reply failed")
 		return "", err
 	}
 	m.appendHistory(sessionKey, userContent, reply)
+	log.Info().
+		Str("request_source", "main_reply").
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+		Msg("llm assistant reply completed")
 	return reply, nil
 }
 
 func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speaker string, onDelta func(delta string) error) (string, error) {
+	startedAt := time.Now()
 	m.mu.RLock()
 	provider := m.provider
 	model := m.model
@@ -277,9 +289,18 @@ func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speake
 		Source: "main_reply_stream",
 	}, onDelta)
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("request_source", "main_reply_stream").
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm assistant streaming reply failed")
 		return "", err
 	}
 	m.appendHistory(sessionKey, userContent, reply)
+	log.Info().
+		Str("request_source", "main_reply_stream").
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+		Msg("llm assistant streaming reply completed")
 	return reply, nil
 }
 
