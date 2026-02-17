@@ -48,6 +48,14 @@ func (b *ImmersiveBuffer) calcCooldown(isPrivate, mention, question bool, recent
 // normalizeImmersiveConfig ensures all configuration values have sensible defaults
 // for the immersive buffer to function correctly.
 func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig {
+	if !cfg.ContinuousSpeech.Enabled &&
+		cfg.ContinuousSpeech.MinChunkChars == 0 &&
+		cfg.ContinuousSpeech.MaxChunkChars == 0 &&
+		cfg.ContinuousSpeech.MinIntervalMS == 0 &&
+		cfg.ContinuousSpeech.MaxIntervalMS == 0 &&
+		!cfg.ContinuousSpeech.RequireStream {
+		cfg.ContinuousSpeech.Enabled = true
+	}
 	if cfg.CooldownMinMS <= 0 {
 		cfg.CooldownMinMS = defaultCooldownMinMS
 	}
@@ -74,6 +82,24 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	}
 	if cfg.ImmediateDelayMS <= 0 {
 		cfg.ImmediateDelayMS = defaultImmediateDelayMS
+	}
+	if cfg.ContinuousSpeech.MinChunkChars <= 0 {
+		cfg.ContinuousSpeech.MinChunkChars = defaultContinuousMinChars
+	}
+	if cfg.ContinuousSpeech.MaxChunkChars <= 0 {
+		cfg.ContinuousSpeech.MaxChunkChars = defaultContinuousMaxChars
+	}
+	if cfg.ContinuousSpeech.MaxChunkChars < cfg.ContinuousSpeech.MinChunkChars {
+		cfg.ContinuousSpeech.MaxChunkChars = cfg.ContinuousSpeech.MinChunkChars
+	}
+	if cfg.ContinuousSpeech.MinIntervalMS <= 0 {
+		cfg.ContinuousSpeech.MinIntervalMS = defaultContinuousMinMS
+	}
+	if cfg.ContinuousSpeech.MaxIntervalMS <= 0 {
+		cfg.ContinuousSpeech.MaxIntervalMS = defaultContinuousMaxMS
+	}
+	if cfg.ContinuousSpeech.MaxIntervalMS < cfg.ContinuousSpeech.MinIntervalMS {
+		cfg.ContinuousSpeech.MaxIntervalMS = cfg.ContinuousSpeech.MinIntervalMS
 	}
 	if cfg.SpeakGate.TimeoutMS <= 0 {
 		cfg.SpeakGate.TimeoutMS = defaultSpeakJudgeTimeoutMS

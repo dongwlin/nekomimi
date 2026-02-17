@@ -25,6 +25,13 @@ llm:
     max_batch_messages: 10 # 单次合并最大消息数
     max_batch_chars: 1200 # 单次合并最大字数（按 rune 计）
     immediate_delay_ms: 120 # 被@或问题触发的最小延迟（毫秒）
+    continuous_speech:
+      enabled: true # 是否启用流式连续发言（更像真人逐条回复）
+      min_chunk_chars: 12 # 每条最小分段字数（不足会继续积累）
+      max_chunk_chars: 80 # 每条最大分段字数（超过将强制切段）
+      min_interval_ms: 300 # 连续发言最小间隔（毫秒）
+      max_interval_ms: 900 # 连续发言最大间隔（毫秒）
+      require_stream: false # 流式失败是否禁止降级（true=不降级，false=降级为单条回复）
     speak_gate:
       enabled: false # 是否启用“发言判定助手”（用于边界场景裁决）
       model: "" # 判定模型名，空则复用主模型

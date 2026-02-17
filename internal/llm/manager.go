@@ -52,9 +52,9 @@ type Manager struct {
 }
 
 type sessionUsageStats struct {
-	startedAt             time.Time
-	historyCompressCount  int
-	contextCompressCount  int
+	startedAt            time.Time
+	historyCompressCount int
+	contextCompressCount int
 }
 
 func normalizeAssistantReasoningEffort(effort string) string {
@@ -256,6 +256,33 @@ func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker stri
 	return reply, nil
 }
 
+func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speaker string, onDelta func(delta string) error) (string, error) {
+	m.mu.RLock()
+	provider := m.provider
+	model := m.model
+	systemPrompt := m.systemPrompt
+	m.mu.RUnlock()
+	if strings.TrimSpace(model) == "" {
+		return "", errors.New("未配置模型名")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.compressHistoryIfNeeded(ctx, provider, model, sessionKey)
+	history := m.historySnapshot(sessionKey)
+	userContent := formatUserContent(userInput, speaker)
+	messages := append(history, Message{Role: "user", Content: userContent})
+	messages = m.compressMessages(ctx, provider, model, systemPrompt, sessionKey, messages)
+	reply, err := m.generateStreamWithProvider(ctx, provider, model, systemPrompt, messages, llmclient.RequestOptions{
+		Source: "main_reply_stream",
+	}, onDelta)
+	if err != nil {
+		return "", err
+	}
+	m.appendHistory(sessionKey, userContent, reply)
+	return reply, nil
+}
+
 func (m *Manager) generateWithProvider(ctx context.Context, providerName, model, systemPrompt string, messages []Message, options llmclient.RequestOptions) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -269,4 +296,19 @@ func (m *Manager) generateWithProvider(ctx context.Context, providerName, model,
 	defer cancel()
 	providerClient := m.providers.From(providerName)
 	return providerClient.Generate(reqCtx, model, systemPrompt, messages)
+}
+
+func (m *Manager) generateStreamWithProvider(ctx context.Context, providerName, model, systemPrompt string, messages []Message, options llmclient.RequestOptions, onDelta func(delta string) error) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = llmclient.WithRequestOptions(ctx, options)
+	timeout := m.requestTimeout
+	if timeout <= 0 {
+		timeout = llmclient.DefaultRequestTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	providerClient := m.providers.From(providerName)
+	return providerClient.GenerateStream(reqCtx, model, systemPrompt, messages, onDelta)
 }

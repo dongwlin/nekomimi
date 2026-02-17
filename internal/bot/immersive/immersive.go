@@ -27,6 +27,10 @@ const (
 	defaultPostLongWaitMS      = 5000
 	defaultPostMaxRounds       = 3
 	defaultSpeakJudgeTimeoutMS = 1200
+	defaultContinuousMinChars  = 12
+	defaultContinuousMaxChars  = 80
+	defaultContinuousMinMS     = 300
+	defaultContinuousMaxMS     = 900
 
 	activeMsgPenaltyMS  = 150
 	activeCharPenaltyMS = 4
@@ -333,21 +337,42 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		return
 	}
 	if input != "" {
-		reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
-		if err != nil {
-			log.Error().
-				Err(err).
-				Str("session", sessionKey).
-				Msg("immersive reply failed")
-			if ctx != nil {
+		if ctx == nil {
+			reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
+			if err != nil {
+				log.Error().
+					Err(err).
+					Str("session", sessionKey).
+					Msg("immersive reply failed")
+			} else {
+				log.Info().
+					Str("session", sessionKey).
+					Int("reply_chars", len([]rune(reply))).
+					Msg("immersive reply generated without ctx")
+			}
+		} else if b.cfg.ContinuousSpeech.Enabled {
+			if err := b.sendContinuousReply(ctx, sessionKey, input); err != nil {
+				log.Error().
+					Err(err).
+					Str("session", sessionKey).
+					Msg("immersive continuous reply failed")
 				ctx.Send("LLM调用失败: " + llm.UserVisibleError(err))
 			}
-		} else if ctx != nil {
-			ctx.Send(reply)
-			log.Info().
-				Str("session", sessionKey).
-				Int("reply_chars", len([]rune(reply))).
-				Msg("immersive reply sent")
+		} else {
+			reply, err := b.llm.Reply(context.Background(), input, sessionKey, "")
+			if err != nil {
+				log.Error().
+					Err(err).
+					Str("session", sessionKey).
+					Msg("immersive reply failed")
+				ctx.Send("LLM调用失败: " + llm.UserVisibleError(err))
+			} else {
+				ctx.Send(reply)
+				log.Info().
+					Str("session", sessionKey).
+					Int("reply_chars", len([]rune(reply))).
+					Msg("immersive reply sent")
+			}
 		}
 	}
 
@@ -360,6 +385,54 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		log.Info().Str("session", sessionKey).Msg("pending messages detected, flushing again")
 		b.flush(sessionKey)
 	}
+}
+
+func (b *ImmersiveBuffer) sendContinuousReply(ctx *zero.Ctx, sessionKey, input string) error {
+	acc := newStreamChunkAccumulator(b.cfg.ContinuousSpeech)
+	sentMessages := 0
+	sentChars := 0
+	reply, err := b.llm.ReplyStream(context.Background(), input, sessionKey, "", func(delta string) error {
+		chunks := acc.Append(delta)
+		for _, chunk := range chunks {
+			if sentMessages > 0 {
+				time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
+			}
+			ctx.Send(chunk)
+			sentMessages++
+			sentChars += len([]rune(chunk))
+		}
+		return nil
+	})
+	if err != nil {
+		if !b.cfg.ContinuousSpeech.RequireStream {
+			fallbackReply, fallbackErr := b.llm.Reply(context.Background(), input, sessionKey, "")
+			if fallbackErr != nil {
+				return fallbackErr
+			}
+			ctx.Send(fallbackReply)
+			log.Info().
+				Str("session", sessionKey).
+				Int("reply_chars", len([]rune(fallbackReply))).
+				Msg("immersive continuous reply fallback sent")
+			return nil
+		}
+		return err
+	}
+	for _, chunk := range acc.FlushTail() {
+		if sentMessages > 0 {
+			time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
+		}
+		ctx.Send(chunk)
+		sentMessages++
+		sentChars += len([]rune(chunk))
+	}
+	log.Info().
+		Str("session", sessionKey).
+		Int("reply_chars", len([]rune(reply))).
+		Int("reply_messages", sentMessages).
+		Int("sent_chars", sentChars).
+		Msg("immersive continuous reply sent")
+	return nil
 }
 
 // session retrieves or creates the session state for the given session key.

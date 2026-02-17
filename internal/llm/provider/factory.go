@@ -36,12 +36,20 @@ func (p responsesProvider) Generate(ctx context.Context, modelName, systemPrompt
 	return p.client.GenerateResponses(ctx, modelName, systemPrompt, messages)
 }
 
+func (p responsesProvider) GenerateStream(ctx context.Context, modelName, systemPrompt string, messages []model.Message, onDelta StreamHandler) (string, error) {
+	return p.client.GenerateResponsesStream(ctx, modelName, systemPrompt, messages, onDelta)
+}
+
 type openAIProvider struct {
 	client *llmclient.Client
 }
 
 func (p openAIProvider) Generate(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
 	return p.client.GenerateOpenAI(ctx, modelName, systemPrompt, messages)
+}
+
+func (p openAIProvider) GenerateStream(ctx context.Context, modelName, systemPrompt string, messages []model.Message, onDelta StreamHandler) (string, error) {
+	return p.client.GenerateOpenAIStream(ctx, modelName, systemPrompt, messages, onDelta)
 }
 
 type unsupportedProvider struct {
@@ -52,3 +60,7 @@ func (p unsupportedProvider) Generate(ctx context.Context, modelName, systemProm
 	return "", p.err
 }
 
+func (p unsupportedProvider) GenerateStream(ctx context.Context, modelName, systemPrompt string, messages []model.Message, onDelta StreamHandler) (string, error) {
+	_ = onDelta
+	return "", p.err
+}

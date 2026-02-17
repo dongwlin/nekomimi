@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -205,6 +206,67 @@ func (c *Client) postJSON(ctx context.Context, apiURL string, reqBody any) ([]by
 	return body, nil
 }
 
+func (c *Client) postSSE(ctx context.Context, apiURL string, reqBody any, onData func(data string) error) error {
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return sanitizeRequestError(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return readErr
+		}
+		return fmt.Errorf("请求失败: %s", strings.TrimSpace(string(body)))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	dataLines := make([]string, 0, 4)
+	emit := func() error {
+		if len(dataLines) == 0 {
+			return nil
+		}
+		payload := strings.Join(dataLines, "\n")
+		dataLines = dataLines[:0]
+		if onData == nil {
+			return nil
+		}
+		return onData(payload)
+	}
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if line == "" {
+			if err := emit(); err != nil {
+				return err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return emit()
+}
+
 func parseResponsesText(parsed responsesResponse) (string, string, error) {
 	if parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
 		return "", "", errors.New(parsed.Error.Message)
@@ -325,6 +387,81 @@ func (c *Client) GenerateResponses(ctx context.Context, modelName, systemPrompt 
 	return reply, nil
 }
 
+func (c *Client) GenerateResponsesStream(ctx context.Context, modelName, systemPrompt string, messages []model.Message, onDelta func(delta string) error) (string, error) {
+	if err := c.ensureAPIKey(); err != nil {
+		return "", err
+	}
+	requestOptions, _ := requestOptionsFromContext(ctx)
+	reasoningEffort := c.reasoningEffortSnapshot()
+	logReasoningEffort := reasoningEffort
+	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
+		if override == "none" {
+			reasoningEffort = ""
+			logReasoningEffort = "none"
+		} else {
+			reasoningEffort = override
+			logReasoningEffort = override
+		}
+	}
+	requestSource := strings.TrimSpace(requestOptions.Source)
+	if requestSource == "" {
+		requestSource = "default"
+	}
+	input := buildResponsesInput(systemPrompt, messages)
+	reqBody := responsesRequest{
+		Model:  modelName,
+		Input:  input,
+		Stream: true,
+	}
+	if reasoningEffort != "" {
+		reqBody.Reasoning = &responsesReasoning{Effort: reasoningEffort}
+	}
+	apiURL := c.apiURLSnapshot()
+	log.Info().
+		Str("llm_api", "responses_stream").
+		Str("request_source", requestSource).
+		Bool("api_url_configured", strings.TrimSpace(apiURL) != "").
+		Str("model", strings.TrimSpace(modelName)).
+		Int("message_count", len(input)).
+		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
+		Bool("reasoning_enabled", reqBody.Reasoning != nil).
+		Bool("show_reasoning", c.showReasoningSnapshot()).
+		Str("reasoning_effort", logReasoningEffort).
+		Msg("sending llm streaming request")
+
+	var replyBuilder strings.Builder
+	err := c.postSSE(ctx, apiURL, reqBody, func(data string) error {
+		if strings.EqualFold(strings.TrimSpace(data), "[DONE]") {
+			return nil
+		}
+		delta, done, eventErr := parseResponsesStreamEvent(data)
+		if eventErr != nil {
+			return eventErr
+		}
+		if done || strings.TrimSpace(delta) == "" {
+			return nil
+		}
+		replyBuilder.WriteString(delta)
+		if onDelta != nil {
+			return onDelta(delta)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	reply := strings.TrimSpace(replyBuilder.String())
+	if reply == "" {
+		return "", errors.New("模型未返回文本内容")
+	}
+	log.Info().
+		Str("llm_api", "responses_stream").
+		Str("request_source", requestSource).
+		Int("reply_chars", len([]rune(reply))).
+		Msg("llm streaming response received")
+	return reply, nil
+}
+
 func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt string, messages []model.Message) (string, error) {
 	if err := c.ensureAPIKey(); err != nil {
 		return "", err
@@ -390,4 +527,148 @@ func (c *Client) GenerateOpenAI(ctx context.Context, modelName, systemPrompt str
 			Msg("llm reasoning content")
 	}
 	return reply, nil
+}
+
+func (c *Client) GenerateOpenAIStream(ctx context.Context, modelName, systemPrompt string, messages []model.Message, onDelta func(delta string) error) (string, error) {
+	if err := c.ensureAPIKey(); err != nil {
+		return "", err
+	}
+	requestOptions, _ := requestOptionsFromContext(ctx)
+	reasoningEffort := c.reasoningEffortSnapshot()
+	logReasoningEffort := reasoningEffort
+	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
+		if override == "none" {
+			reasoningEffort = ""
+			logReasoningEffort = "none"
+		} else {
+			reasoningEffort = override
+			logReasoningEffort = override
+		}
+	}
+	requestSource := strings.TrimSpace(requestOptions.Source)
+	if requestSource == "" {
+		requestSource = "default"
+	}
+	chatMessages := buildChatMessages(systemPrompt, messages)
+	reqBody := chatCompletionsRequest{
+		Model:           modelName,
+		Messages:        chatMessages,
+		ReasoningEffort: reasoningEffort,
+		Stream:          true,
+	}
+	apiURL := c.apiURLSnapshot()
+	log.Info().
+		Str("llm_api", "chat_completions_stream").
+		Str("request_source", requestSource).
+		Bool("api_url_configured", strings.TrimSpace(apiURL) != "").
+		Str("model", strings.TrimSpace(modelName)).
+		Int("message_count", len(chatMessages)).
+		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
+		Bool("reasoning_enabled", strings.TrimSpace(reqBody.ReasoningEffort) != "").
+		Bool("show_reasoning", c.showReasoningSnapshot()).
+		Str("reasoning_effort", logReasoningEffort).
+		Msg("sending llm streaming request")
+
+	var replyBuilder strings.Builder
+	err := c.postSSE(ctx, apiURL, reqBody, func(data string) error {
+		if strings.EqualFold(strings.TrimSpace(data), "[DONE]") {
+			return nil
+		}
+		deltas, eventErr := parseChatCompletionsStreamEvent(data)
+		if eventErr != nil {
+			return eventErr
+		}
+		for _, delta := range deltas {
+			replyBuilder.WriteString(delta)
+			if onDelta != nil {
+				if err := onDelta(delta); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	reply := strings.TrimSpace(replyBuilder.String())
+	if reply == "" {
+		return "", errors.New("模型未返回文本内容")
+	}
+	log.Info().
+		Str("llm_api", "chat_completions_stream").
+		Str("request_source", requestSource).
+		Int("reply_chars", len([]rune(reply))).
+		Msg("llm streaming response received")
+	return reply, nil
+}
+
+func parseChatCompletionsStreamEvent(data string) ([]string, error) {
+	var parsed chatCompletionsStreamResponse
+	if err := json.Unmarshal([]byte(data), &parsed); err != nil {
+		return nil, nil
+	}
+	if parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
+		return nil, errors.New(parsed.Error.Message)
+	}
+	deltas := make([]string, 0, len(parsed.Choices))
+	for _, choice := range parsed.Choices {
+		delta := choice.Delta.Content
+		if delta == "" {
+			continue
+		}
+		deltas = append(deltas, delta)
+	}
+	return deltas, nil
+}
+
+func parseResponsesStreamEvent(data string) (delta string, done bool, err error) {
+	var payload map[string]any
+	if unmarshalErr := json.Unmarshal([]byte(data), &payload); unmarshalErr != nil {
+		return "", false, nil
+	}
+	eventType := strings.TrimSpace(toString(payload["type"]))
+	if eventType == "" {
+		return "", false, nil
+	}
+	if strings.Contains(eventType, "error") {
+		if errMsg := responsesErrorMessage(payload); errMsg != "" {
+			return "", false, errors.New(errMsg)
+		}
+		return "", false, errors.New("流式请求返回错误事件")
+	}
+	if strings.Contains(eventType, "completed") {
+		return "", true, nil
+	}
+	rawDelta := toString(payload["delta"])
+	return rawDelta, false, nil
+}
+
+func responsesErrorMessage(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	errVal, ok := payload["error"]
+	if !ok {
+		return ""
+	}
+	switch v := errVal.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case map[string]any:
+		return strings.TrimSpace(toString(v["message"]))
+	default:
+		return ""
+	}
+}
+
+func toString(value any) string {
+	if value == nil {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return text
 }

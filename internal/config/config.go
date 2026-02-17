@@ -35,9 +35,19 @@ type ImmersiveConfig struct {
 	MaxBatchMessages  int                     `yaml:"max_batch_messages"`
 	MaxBatchChars     int                     `yaml:"max_batch_chars"`
 	ImmediateDelayMS  int                     `yaml:"immediate_delay_ms"`
+	ContinuousSpeech  ContinuousSpeechConfig  `yaml:"continuous_speech"`
 	SpeakGate         SpeakGateConfig         `yaml:"speak_gate"`
 	MentionJudge      MentionJudgeConfig      `yaml:"mention_judge"`
 	PostCooldownJudge PostCooldownJudgeConfig `yaml:"post_cooldown_judge"`
+}
+
+type ContinuousSpeechConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	MinChunkChars int  `yaml:"min_chunk_chars"`
+	MaxChunkChars int  `yaml:"max_chunk_chars"`
+	MinIntervalMS int  `yaml:"min_interval_ms"`
+	MaxIntervalMS int  `yaml:"max_interval_ms"`
+	RequireStream bool `yaml:"require_stream"`
 }
 
 type SpeakGateConfig struct {
