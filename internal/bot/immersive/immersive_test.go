@@ -30,7 +30,7 @@ func TestBuildCombinedInput_ContainsStructuredMeta(t *testing.T) {
 		},
 	}
 
-	input := buildCombinedInput(queue)
+	input := buildCombinedInput(queue, botIdentity{})
 	for _, token := range []string{
 		"batch_meta:",
 		"now_date:",
@@ -63,7 +63,7 @@ func TestShouldSpeak_ExplicitMentionAlwaysPasses(t *testing.T) {
 			isAddressedToBot: true,
 		},
 	}
-	result := buffer.shouldSpeak(&immersiveSession{}, queue, buildCombinedInput(queue))
+	result := buffer.shouldSpeak(&immersiveSession{}, queue, buildCombinedInput(queue, botIdentity{}))
 	if !result.shouldSpeak {
 		t.Fatalf("expected mention to pass speak gate, got %+v", result)
 	}
@@ -95,7 +95,7 @@ func TestShouldSpeak_RuleSuppressionRemoved_DefaultAllow(t *testing.T) {
 			isQuestion:       false,
 		},
 	}
-	result := buffer.shouldSpeak(state, queue, buildCombinedInput(queue))
+	result := buffer.shouldSpeak(state, queue, buildCombinedInput(queue, botIdentity{}))
 	if !result.shouldSpeak {
 		t.Fatalf("expected assistant-only mode to allow speaking when assistant is disabled, got %+v", result)
 	}

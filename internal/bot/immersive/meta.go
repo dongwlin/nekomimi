@@ -38,7 +38,7 @@ func summarizeRecent(recent []recentSample) (int, int) {
 
 // buildRecentPreview creates a formatted input string from the last 'keep' messages
 // in the queue for use in LLM prompts.
-func buildRecentPreview(queue []queuedMessage, keep int) string {
+func buildRecentPreview(queue []queuedMessage, keep int, identity botIdentity) string {
 	if len(queue) == 0 || keep <= 0 {
 		return ""
 	}
@@ -46,13 +46,13 @@ func buildRecentPreview(queue []queuedMessage, keep int) string {
 	if start < 0 {
 		start = 0
 	}
-	return buildCombinedInput(queue[start:])
+	return buildCombinedInput(queue[start:], identity)
 }
 
 // buildCombinedInput builds a complete formatted input string from the queue,
 // including metadata about the batch and all messages in transcript format.
-func buildCombinedInput(queue []queuedMessage) string {
-	meta := summarizeQueueMeta(queue, time.Now(), nil)
+func buildCombinedInput(queue []queuedMessage, identity botIdentity) string {
+	meta := summarizeQueueMeta(queue, time.Now(), identity)
 	var builder strings.Builder
 	builder.WriteString("batch_meta:\n")
 	builder.WriteString("  now_date: ")
@@ -66,6 +66,18 @@ func buildCombinedInput(queue []queuedMessage) string {
 	builder.WriteString("]\n")
 	builder.WriteString("  bot_primary_name: ")
 	builder.WriteString(meta.BotPrimaryName)
+	builder.WriteString("\n")
+	builder.WriteString("  bot_config_names: [")
+	builder.WriteString(strings.Join(meta.BotConfigNames, ","))
+	builder.WriteString("]\n")
+	builder.WriteString("  bot_account_nickname: ")
+	builder.WriteString(meta.BotAccountNick)
+	builder.WriteString("\n")
+	builder.WriteString("  bot_account_ids: [")
+	builder.WriteString(strings.Join(meta.BotAccountIDs, ","))
+	builder.WriteString("]\n")
+	builder.WriteString("  bot_primary_id: ")
+	builder.WriteString(meta.BotPrimaryID)
 	builder.WriteString("\n")
 	builder.WriteString("  messages_count: ")
 	builder.WriteString(strconv.Itoa(meta.MessagesCount))
@@ -101,8 +113,8 @@ func buildCombinedInput(queue []queuedMessage) string {
 	return strings.TrimSpace(builder.String())
 }
 
-func buildCombinedInputWithSummary(queue []queuedMessage, summary string) string {
-	base := buildCombinedInput(queue)
+func buildCombinedInputWithSummary(queue []queuedMessage, summary string, identity botIdentity) string {
+	base := buildCombinedInput(queue, identity)
 	trimmedSummary := strings.TrimSpace(summary)
 	if trimmedSummary == "" {
 		return base
@@ -272,20 +284,44 @@ func limitRunes(text string, maxRunes int) string {
 
 // summarizeQueueMeta computes aggregated metadata from a queue of messages,
 // including participant count, mentions, questions, and time span.
-func summarizeQueueMeta(queue []queuedMessage, now time.Time, botNames []string) queueMeta {
+func summarizeQueueMeta(queue []queuedMessage, now time.Time, identity botIdentity) queueMeta {
 	meta := queueMeta{
 		NowDate:        now.Format("2006-01-02"),
 		NowTime:        now.Format("15:04:05"),
 		BotNames:       []string{"bot"},
 		BotPrimaryName: "bot",
+		BotConfigNames: []string{"bot"},
+		BotAccountNick: "unknown",
+		BotAccountIDs:  []string{"unknown"},
+		BotPrimaryID:   "unknown",
 		MessagesCount:  len(queue),
 		LastSpeaker:    "unknown",
 		Participants:   []string{"none"},
 	}
-	normalizedNames := normalizedBotNames(botNames)
+	configNames := normalizedBotNames(identity.ConfigNicknames)
+	if len(configNames) > 0 {
+		meta.BotConfigNames = configNames
+		meta.BotPrimaryName = configNames[0]
+	}
+	accountNick := sanitizeInline(strings.TrimSpace(identity.AccountNickname))
+	if accountNick != "" {
+		meta.BotAccountNick = accountNick
+	}
+	accountIDs := normalizedBotNames(identity.AccountIDs)
+	if len(accountIDs) > 0 {
+		meta.BotAccountIDs = accountIDs
+		meta.BotPrimaryID = accountIDs[0]
+	}
+	combinedNames := append([]string{}, meta.BotConfigNames...)
+	if meta.BotAccountNick != "" && meta.BotAccountNick != "unknown" {
+		combinedNames = append(combinedNames, meta.BotAccountNick)
+	}
+	normalizedNames := normalizedBotNames(combinedNames)
 	if len(normalizedNames) > 0 {
 		meta.BotNames = normalizedNames
-		meta.BotPrimaryName = normalizedNames[0]
+		if meta.BotPrimaryName == "" || meta.BotPrimaryName == "bot" {
+			meta.BotPrimaryName = normalizedNames[0]
+		}
 	}
 	if len(queue) == 0 {
 		return meta

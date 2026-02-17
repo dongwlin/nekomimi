@@ -48,7 +48,12 @@ func (b *ImmersiveBuffer) isExplicitMention(ctx *zero.Ctx) bool {
 // containsNickname checks if the message text contains any of the bot's nicknames.
 func (b *ImmersiveBuffer) containsNickname(text string) bool {
 	lower := strings.ToLower(text)
-	for _, name := range b.nicknames {
+	identity := b.currentIdentity()
+	allNames := append([]string{}, identity.ConfigNicknames...)
+	if trimmed := strings.TrimSpace(identity.AccountNickname); trimmed != "" {
+		allNames = append(allNames, trimmed)
+	}
+	for _, name := range allNames {
 		trimmed := strings.ToLower(strings.TrimSpace(name))
 		if trimmed == "" {
 			continue

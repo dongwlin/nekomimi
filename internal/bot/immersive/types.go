@@ -19,8 +19,15 @@ type ImmersiveBuffer struct {
 	cfg       config.ImmersiveConfig
 	llm       *llm.Manager
 	nicknames []string
+	identity  botIdentity
 	mu        sync.Mutex
 	sessions  map[string]*immersiveSession
+}
+
+type botIdentity struct {
+	ConfigNicknames []string
+	AccountNickname string
+	AccountIDs      []string
 }
 
 // immersiveSession holds the state for a single conversation session.
@@ -60,6 +67,10 @@ type queueMeta struct {
 	NowTime        string
 	BotNames       []string
 	BotPrimaryName string
+	BotConfigNames []string
+	BotAccountNick string
+	BotAccountIDs  []string
+	BotPrimaryID   string
 	MessagesCount  int
 	Participants   []string
 	MentionsToBot  int

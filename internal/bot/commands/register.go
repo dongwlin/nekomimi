@@ -9,6 +9,7 @@ import (
 type ImmersiveEngine interface {
 	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool)
 	Clear(sessionKey string)
+	RefreshIdentityFromCtx(ctx *zero.Ctx)
 }
 
 func Register(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine) {

@@ -3,6 +3,7 @@ package immersive
 import (
 	"context"
 	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,11 +49,15 @@ const (
 func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager *llm.Manager, nicknames []string) *ImmersiveBuffer {
 	normalized := normalizeImmersiveConfig(cfg)
 	rand.Seed(time.Now().UnixNano())
+	configNames := normalizedBotNames(nicknames)
 	return &ImmersiveBuffer{
 		cfg:       normalized,
 		llm:       llmManager,
-		nicknames: nicknames,
-		sessions:  make(map[string]*immersiveSession),
+		nicknames: configNames,
+		identity: botIdentity{
+			ConfigNicknames: configNames,
+		},
+		sessions: make(map[string]*immersiveSession),
 	}
 }
 
@@ -118,7 +123,7 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.mu.Unlock()
 
 	if judgeEnabled {
-		preview := buildRecentPreview(queueSnapshot, 4)
+		preview := buildRecentPreview(queueSnapshot, 4, b.currentIdentity())
 		immediate, err := b.llm.JudgeMentionImmediate(context.Background(), trimmed, speaker, preview)
 		if err == nil && immediate {
 			cooldown = minDuration(cooldown, time.Duration(b.cfg.ImmediateDelayMS)*time.Millisecond)
@@ -234,9 +239,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 	state.timelineSummary = timelineSummary
 	state.mu.Unlock()
-	input := buildCombinedInputWithSummary(timeline, timelineSummary)
+	input := buildCombinedInputWithSummary(timeline, timelineSummary, b.currentIdentity())
 	if strings.TrimSpace(input) == "" {
-		input = buildCombinedInput(queue)
+		input = buildCombinedInput(queue, b.currentIdentity())
 	}
 	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(queue)
 	if repeatText != "" && ctx != nil {
@@ -306,7 +311,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	canJudgePostCooldown := b.cfg.PostCooldownJudge.MaxRounds == 0 || postRounds < b.cfg.PostCooldownJudge.MaxRounds
 	if input != "" && b.cfg.PostCooldownJudge.Enabled && canJudgePostCooldown {
 		lastSpeaker := queue[len(queue)-1].speaker
-		recent := buildRecentPreview(timeline, 8)
+		recent := buildRecentPreview(timeline, 8, b.currentIdentity())
 		judgeDecision, err := b.llm.JudgePostCooldown(context.Background(), input, lastSpeaker, recent)
 		if err == nil {
 			decision = judgeDecision
@@ -486,7 +491,7 @@ func (b *ImmersiveBuffer) session(sessionKey string) *immersiveSession {
 // and the configured speak gate. It may call the LLM to make the decision.
 func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMessage, judgeInput string) speakGateResult {
 	_ = state
-	meta := summarizeQueueMeta(queue, time.Now(), b.nicknames)
+	meta := summarizeQueueMeta(queue, time.Now(), b.currentIdentity())
 	reasons := make([]string, 0, 4)
 	directedQuestions := 0
 	for _, msg := range queue {
@@ -626,13 +631,57 @@ func (b *ImmersiveBuffer) summarizeTimelineChunk(previousSummary string, chunk [
 }
 
 func (b *ImmersiveBuffer) botPrimaryName() string {
-	for _, name := range b.nicknames {
+	identity := b.currentIdentity()
+	for _, name := range identity.ConfigNicknames {
 		trimmed := strings.TrimSpace(name)
 		if trimmed != "" {
 			return trimmed
 		}
 	}
+	if trimmed := strings.TrimSpace(identity.AccountNickname); trimmed != "" {
+		return trimmed
+	}
 	return "bot"
+}
+
+// RefreshIdentityFromCtx updates runtime bot identity data from event context.
+// It captures account nickname and account IDs from both event and get_login_info.
+func (b *ImmersiveBuffer) RefreshIdentityFromCtx(ctx *zero.Ctx) {
+	if b == nil || ctx == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	updated := b.identity
+	updated.ConfigNicknames = normalizedBotNames(b.nicknames)
+	if ctx.Event != nil {
+		if ctx.Event.SelfID != 0 {
+			updated.AccountIDs = append(updated.AccountIDs, strconv.FormatInt(ctx.Event.SelfID, 10))
+		}
+		if strings.TrimSpace(ctx.Event.SelfTinyID) != "" {
+			updated.AccountIDs = append(updated.AccountIDs, strings.TrimSpace(ctx.Event.SelfTinyID))
+		}
+	}
+	info := ctx.GetLoginInfo()
+	if nick := strings.TrimSpace(info.Get("nickname").String()); nick != "" {
+		updated.AccountNickname = nick
+	}
+	if id := strings.TrimSpace(info.Get("user_id").String()); id != "" {
+		updated.AccountIDs = append(updated.AccountIDs, id)
+	}
+	updated.AccountIDs = normalizedBotNames(updated.AccountIDs)
+	b.identity = updated
+}
+
+func (b *ImmersiveBuffer) currentIdentity() botIdentity {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	current := b.identity
+	configNames := append([]string{}, b.nicknames...)
+	configNames = append(configNames, current.ConfigNicknames...)
+	current.ConfigNicknames = normalizedBotNames(configNames)
+	current.AccountIDs = normalizedBotNames(current.AccountIDs)
+	return current
 }
 
 func (b *ImmersiveBuffer) timelineLimit() int {

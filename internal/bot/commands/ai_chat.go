@@ -14,6 +14,7 @@ import (
 
 func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine) {
 	zero.OnCommand("ai").Handle(func(ctx *zero.Ctx) {
+		engine.RefreshIdentityFromCtx(ctx)
 		prompt := strings.TrimSpace(ctx.State["args"].(string))
 		if prompt == "" {
 			ctx.Send("用法: /ai 你的问题")
@@ -36,6 +37,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 	})
 
 	zero.OnCommand("chat", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
+		engine.RefreshIdentityFromCtx(ctx)
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		if args == "" {
 			ctx.Send("用法: /chat on|off|status")
@@ -130,6 +132,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 	})
 
 	zero.OnMessage().Handle(func(ctx *zero.Ctx) {
+		engine.RefreshIdentityFromCtx(ctx)
 		if !llmManager.IsEnabled() || !llmManager.IsImmersive(sessionKey(ctx)) {
 			return
 		}
@@ -145,6 +148,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 	})
 
 	zero.On("notice/notify/poke").Handle(func(ctx *zero.Ctx) {
+		engine.RefreshIdentityFromCtx(ctx)
 		if ctx == nil || ctx.Event == nil || !ctx.Event.IsToMe {
 			return
 		}
