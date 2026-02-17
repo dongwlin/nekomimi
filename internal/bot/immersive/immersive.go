@@ -14,23 +14,27 @@ import (
 
 // Default configuration values for the immersive buffer.
 const (
-	defaultCooldownMinMS       = 800
-	defaultCooldownMaxMS       = 3500
-	defaultCooldownBaseMS      = 1200
-	defaultPrivateBaseMS       = 200
-	defaultWindowMS            = 5000
-	defaultJitterMS            = 200
-	defaultMaxBatchMessages    = 10
-	defaultMaxBatchChars       = 1200
-	defaultImmediateDelayMS    = 120
-	defaultPostShortWaitMS     = 1200
-	defaultPostLongWaitMS      = 5000
-	defaultPostMaxRounds       = 3
-	defaultSpeakJudgeTimeoutMS = 1200
-	defaultContinuousMinChars  = 12
-	defaultContinuousMaxChars  = 80
-	defaultContinuousMinMS     = 300
-	defaultContinuousMaxMS     = 900
+	defaultCooldownMinMS            = 800
+	defaultCooldownMaxMS            = 3500
+	defaultCooldownBaseMS           = 1200
+	defaultPrivateBaseMS            = 200
+	defaultWindowMS                 = 5000
+	defaultJitterMS                 = 200
+	defaultMaxBatchMessages         = 10
+	defaultMaxBatchChars            = 1200
+	defaultImmediateDelayMS         = 120
+	defaultPostShortWaitMS          = 1200
+	defaultPostLongWaitMS           = 5000
+	defaultPostMaxRounds            = 3
+	defaultSpeakJudgeTimeoutMS      = 1200
+	defaultTimelineMaxMessages      = 200
+	defaultTimelineOverflowMessages = 50
+	defaultTimelineCompressBatch    = 100
+	timelineFallbackSummaryLen      = 1000
+	defaultContinuousMinChars       = 12
+	defaultContinuousMaxChars       = 80
+	defaultContinuousMinMS          = 300
+	defaultContinuousMaxMS          = 900
 
 	activeMsgPenaltyMS  = 150
 	activeCharPenaltyMS = 4
@@ -86,6 +90,7 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.lastCtx = ctx
 	state.queue = append(state.queue, msg)
 	state.queueChars += charCount
+	state.timeline = appendTimelineMessage(state.timeline, msg, b.timelineLimit())
 	state.recent = append(state.recent, recentSample{ts: now, chars: charCount})
 	state.recent = trimRecent(state.recent, now, b.cfg.WindowMS)
 
@@ -152,6 +157,8 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	defer state.mu.Unlock()
 	state.queue = nil
 	state.queueChars = 0
+	state.timeline = nil
+	state.timelineSummary = ""
 	state.recent = nil
 	state.postRounds = 0
 	if state.timer != nil {
@@ -196,6 +203,10 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 	queue := make([]queuedMessage, len(state.queue))
 	copy(queue, state.queue)
+	timeline := make([]queuedMessage, len(state.timeline))
+	copy(timeline, state.timeline)
+	timelineSnapshotLen := len(timeline)
+	timelineSummary := strings.TrimSpace(state.timelineSummary)
 	state.queue = nil
 	state.queueChars = 0
 	state.inFlight = true
@@ -209,10 +220,28 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Int("post_rounds", postRounds).
 		Msg("immersive flush started")
 
-	input := buildCombinedInput(queue)
+	timeline, timelineSummary = b.compactTimelineSnapshot(timeline, timelineSummary)
+	state.mu.Lock()
+	if len(state.timeline) > timelineSnapshotLen {
+		tail := make([]queuedMessage, len(state.timeline)-timelineSnapshotLen)
+		copy(tail, state.timeline[timelineSnapshotLen:])
+		merged := make([]queuedMessage, 0, len(timeline)+len(tail))
+		merged = append(merged, timeline...)
+		merged = append(merged, tail...)
+		state.timeline = trimTimelineTail(merged, b.timelineLimit())
+	} else {
+		state.timeline = trimTimelineTail(timeline, b.timelineLimit())
+	}
+	state.timelineSummary = timelineSummary
+	state.mu.Unlock()
+	input := buildCombinedInputWithSummary(timeline, timelineSummary)
+	if strings.TrimSpace(input) == "" {
+		input = buildCombinedInput(queue)
+	}
 	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(queue)
 	if repeatText != "" && ctx != nil {
 		ctx.Send(repeatText)
+		b.recordAssistantUtterance(sessionKey, repeatText)
 		log.Info().
 			Str("session", sessionKey).
 			Str("repeat_text", repeatText).
@@ -230,7 +259,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		}
 		return
 	}
-	gate := b.shouldSpeak(state, queue)
+	gate := b.shouldSpeak(state, queue, input)
 	log.Info().
 		Str("session", sessionKey).
 		Bool("should_speak", gate.shouldSpeak).
@@ -277,7 +306,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	canJudgePostCooldown := b.cfg.PostCooldownJudge.MaxRounds == 0 || postRounds < b.cfg.PostCooldownJudge.MaxRounds
 	if input != "" && b.cfg.PostCooldownJudge.Enabled && canJudgePostCooldown {
 		lastSpeaker := queue[len(queue)-1].speaker
-		recent := buildRecentPreview(queue, 6)
+		recent := buildRecentPreview(timeline, 8)
 		judgeDecision, err := b.llm.JudgePostCooldown(context.Background(), input, lastSpeaker, recent)
 		if err == nil {
 			decision = judgeDecision
@@ -368,6 +397,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				ctx.Send("LLM调用失败: " + llm.UserVisibleError(err))
 			} else {
 				ctx.Send(reply)
+				b.recordAssistantUtterance(sessionKey, reply)
 				log.Info().
 					Str("session", sessionKey).
 					Int("reply_chars", len([]rune(reply))).
@@ -410,6 +440,7 @@ func (b *ImmersiveBuffer) sendContinuousReply(ctx *zero.Ctx, sessionKey, input s
 				return fallbackErr
 			}
 			ctx.Send(fallbackReply)
+			b.recordAssistantUtterance(sessionKey, fallbackReply)
 			log.Info().
 				Str("session", sessionKey).
 				Int("reply_chars", len([]rune(fallbackReply))).
@@ -432,6 +463,7 @@ func (b *ImmersiveBuffer) sendContinuousReply(ctx *zero.Ctx, sessionKey, input s
 		Int("reply_messages", sentMessages).
 		Int("sent_chars", sentChars).
 		Msg("immersive continuous reply sent")
+	b.recordAssistantUtterance(sessionKey, reply)
 	return nil
 }
 
@@ -452,7 +484,7 @@ func (b *ImmersiveBuffer) session(sessionKey string) *immersiveSession {
 
 // shouldSpeak evaluates whether the bot should speak based on the queued messages
 // and the configured speak gate. It may call the LLM to make the decision.
-func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMessage) speakGateResult {
+func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMessage, judgeInput string) speakGateResult {
 	_ = state
 	meta := summarizeQueueMeta(queue, time.Now(), b.nicknames)
 	reasons := make([]string, 0, 4)
@@ -468,7 +500,7 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 		assistantStatus = "enabled"
 		assistantDecision, judged, err := b.llm.JudgeSpeakGate(
 			context.Background(),
-			buildCombinedInput(queue),
+			judgeInput,
 		)
 		if err != nil {
 			if b.cfg.SpeakGate.FailOpen {
@@ -512,4 +544,97 @@ func (b *ImmersiveBuffer) shouldSpeak(state *immersiveSession, queue []queuedMes
 		messagesCount:     meta.MessagesCount,
 		participantsCount: len(meta.Participants),
 	}
+}
+
+func (b *ImmersiveBuffer) recordAssistantUtterance(sessionKey, text string) {
+	if strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+	state := b.session(sessionKey)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	msg := queuedMessage{
+		text:    strings.TrimSpace(text),
+		speaker: b.botPrimaryName(),
+		ts:      time.Now(),
+		chars:   len([]rune(strings.TrimSpace(text))),
+	}
+	state.timeline = appendTimelineMessage(state.timeline, msg, b.timelineLimit())
+}
+
+func (b *ImmersiveBuffer) compactTimelineSnapshot(timeline []queuedMessage, summary string) ([]queuedMessage, string) {
+	trimmedSummary := strings.TrimSpace(summary)
+	working := make([]queuedMessage, len(timeline))
+	copy(working, timeline)
+	changed := false
+	maxMessages := b.cfg.Timeline.MaxMessages
+	compressBatch := b.cfg.Timeline.CompressBatch
+	limit := b.timelineLimit()
+	for len(working) >= maxMessages {
+		if len(working) < compressBatch {
+			break
+		}
+		chunk := make([]queuedMessage, compressBatch)
+		copy(chunk, working[:compressBatch])
+		nextSummary := b.summarizeTimelineChunk(trimmedSummary, chunk)
+		if strings.TrimSpace(nextSummary) == "" {
+			// Keep recent context if summarization is unavailable.
+			break
+		}
+		trimmedSummary = strings.TrimSpace(nextSummary)
+		working = working[compressBatch:]
+		changed = true
+	}
+	if !changed && len(working) <= limit {
+		return working, trimmedSummary
+	}
+	working = trimTimelineTail(working, limit)
+	return working, trimmedSummary
+}
+
+func (b *ImmersiveBuffer) summarizeTimelineChunk(previousSummary string, chunk []queuedMessage) string {
+	if len(chunk) == 0 {
+		return strings.TrimSpace(previousSummary)
+	}
+	messages := make([]llm.Message, 0, len(chunk))
+	botName := strings.ToLower(strings.TrimSpace(b.botPrimaryName()))
+	for _, msg := range chunk {
+		content := strings.TrimSpace(msg.text)
+		if content == "" {
+			continue
+		}
+		role := "user"
+		speaker := strings.TrimSpace(msg.speaker)
+		if speaker != "" && strings.ToLower(speaker) == botName {
+			role = "assistant"
+		}
+		text := content
+		if speaker != "" {
+			text = "[" + speaker + "]: " + content
+		}
+		messages = append(messages, llm.Message{Role: role, Content: text})
+	}
+	if len(messages) == 0 {
+		return strings.TrimSpace(previousSummary)
+	}
+	if b.llm != nil {
+		if summary := b.llm.SummarizeImmersiveTimeline(context.Background(), previousSummary, messages); strings.TrimSpace(summary) != "" {
+			return strings.TrimSpace(summary)
+		}
+	}
+	return buildTimelineFallbackSummary(previousSummary, chunk, timelineFallbackSummaryLen)
+}
+
+func (b *ImmersiveBuffer) botPrimaryName() string {
+	for _, name := range b.nicknames {
+		trimmed := strings.TrimSpace(name)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return "bot"
+}
+
+func (b *ImmersiveBuffer) timelineLimit() int {
+	return b.cfg.Timeline.MaxMessages + b.cfg.Timeline.OverflowMessages
 }

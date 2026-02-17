@@ -25,14 +25,16 @@ type ImmersiveBuffer struct {
 
 // immersiveSession holds the state for a single conversation session.
 type immersiveSession struct {
-	mu         sync.Mutex
-	queue      []queuedMessage
-	queueChars int
-	recent     []recentSample
-	timer      *time.Timer
-	inFlight   bool
-	lastCtx    *zero.Ctx
-	postRounds int
+	mu              sync.Mutex
+	queue           []queuedMessage
+	queueChars      int
+	timeline        []queuedMessage
+	timelineSummary string
+	recent          []recentSample
+	timer           *time.Timer
+	inFlight        bool
+	lastCtx         *zero.Ctx
+	postRounds      int
 }
 
 // queuedMessage represents a single message in the buffer queue.

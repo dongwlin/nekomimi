@@ -55,14 +55,15 @@ func TestShouldSpeak_ExplicitMentionAlwaysPasses(t *testing.T) {
 		SpeakGate: config.SpeakGateConfig{},
 	})
 	buffer := &ImmersiveBuffer{cfg: cfg}
-	result := buffer.shouldSpeak(&immersiveSession{}, []queuedMessage{
+	queue := []queuedMessage{
 		{
 			text:             "@bot 在吗",
 			speaker:          "name=alice",
 			isMentionBot:     true,
 			isAddressedToBot: true,
 		},
-	})
+	}
+	result := buffer.shouldSpeak(&immersiveSession{}, queue, buildCombinedInput(queue))
 	if !result.shouldSpeak {
 		t.Fatalf("expected mention to pass speak gate, got %+v", result)
 	}
@@ -74,7 +75,7 @@ func TestShouldSpeak_RuleSuppressionRemoved_DefaultAllow(t *testing.T) {
 	})
 	buffer := &ImmersiveBuffer{cfg: cfg}
 	state := &immersiveSession{}
-	result := buffer.shouldSpeak(state, []queuedMessage{
+	queue := []queuedMessage{
 		{
 			text:             "我们继续聊",
 			speaker:          "name=alice",
@@ -93,7 +94,8 @@ func TestShouldSpeak_RuleSuppressionRemoved_DefaultAllow(t *testing.T) {
 			isAddressedToBot: false,
 			isQuestion:       false,
 		},
-	})
+	}
+	result := buffer.shouldSpeak(state, queue, buildCombinedInput(queue))
 	if !result.shouldSpeak {
 		t.Fatalf("expected assistant-only mode to allow speaking when assistant is disabled, got %+v", result)
 	}

@@ -35,10 +35,17 @@ type ImmersiveConfig struct {
 	MaxBatchMessages  int                     `yaml:"max_batch_messages"`
 	MaxBatchChars     int                     `yaml:"max_batch_chars"`
 	ImmediateDelayMS  int                     `yaml:"immediate_delay_ms"`
+	Timeline          TimelineConfig          `yaml:"timeline"`
 	ContinuousSpeech  ContinuousSpeechConfig  `yaml:"continuous_speech"`
 	SpeakGate         SpeakGateConfig         `yaml:"speak_gate"`
 	MentionJudge      MentionJudgeConfig      `yaml:"mention_judge"`
 	PostCooldownJudge PostCooldownJudgeConfig `yaml:"post_cooldown_judge"`
+}
+
+type TimelineConfig struct {
+	MaxMessages      int `yaml:"max_messages"`
+	OverflowMessages int `yaml:"overflow_messages"`
+	CompressBatch    int `yaml:"compress_batch"`
 }
 
 type ContinuousSpeechConfig struct {

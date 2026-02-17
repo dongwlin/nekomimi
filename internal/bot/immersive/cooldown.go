@@ -83,6 +83,18 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.ImmediateDelayMS <= 0 {
 		cfg.ImmediateDelayMS = defaultImmediateDelayMS
 	}
+	if cfg.Timeline.MaxMessages <= 0 {
+		cfg.Timeline.MaxMessages = defaultTimelineMaxMessages
+	}
+	if cfg.Timeline.OverflowMessages <= 0 {
+		cfg.Timeline.OverflowMessages = defaultTimelineOverflowMessages
+	}
+	if cfg.Timeline.CompressBatch <= 0 {
+		cfg.Timeline.CompressBatch = defaultTimelineCompressBatch
+	}
+	if cfg.Timeline.CompressBatch > cfg.Timeline.MaxMessages {
+		cfg.Timeline.CompressBatch = cfg.Timeline.MaxMessages
+	}
 	if cfg.ContinuousSpeech.MinChunkChars <= 0 {
 		cfg.ContinuousSpeech.MinChunkChars = defaultContinuousMinChars
 	}

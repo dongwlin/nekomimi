@@ -109,3 +109,28 @@ func (m *Manager) summarizeWithProvider(ctx context.Context, providerName, model
 	defer cancel()
 	return chain.Summarize(reqCtx, model, messages)
 }
+
+// SummarizeImmersiveTimeline summarizes immersive chat timeline chunks.
+// It folds previous summaries into the new context so iterative compression
+// keeps long-term conversation memory coherent.
+func (m *Manager) SummarizeImmersiveTimeline(ctx context.Context, previousSummary string, messages []Message) string {
+	if m == nil || len(messages) == 0 {
+		return ""
+	}
+	m.mu.RLock()
+	provider := m.provider
+	model := m.model
+	m.mu.RUnlock()
+	if strings.TrimSpace(model) == "" {
+		return ""
+	}
+	input := make([]Message, 0, len(messages)+1)
+	if trimmed := strings.TrimSpace(previousSummary); trimmed != "" {
+		input = append(input, Message{
+			Role:    "system",
+			Content: "已有历史摘要: " + trimmed,
+		})
+	}
+	input = append(input, messages...)
+	return m.summarizeWithProvider(ctx, provider, model, summarizer.ModeFull, input, 1000)
+}

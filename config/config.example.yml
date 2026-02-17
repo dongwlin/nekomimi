@@ -25,6 +25,10 @@ llm:
     max_batch_messages: 10 # 单次合并最大消息数
     max_batch_chars: 1200 # 单次合并最大字数（按 rune 计）
     immediate_delay_ms: 120 # 被@或问题触发的最小延迟（毫秒）
+    timeline:
+      max_messages: 200 # 会话时间线上限（达到后开始压缩旧消息）
+      overflow_messages: 50 # 允许额外超限缓存（避免频繁压缩）
+      compress_batch: 100 # 每次压缩最早消息条数（旧摘要会并入下次压缩）
     continuous_speech:
       enabled: true # 是否启用流式连续发言（更像真人逐条回复）
       min_chunk_chars: 12 # 每条最小分段字数（不足会继续积累）

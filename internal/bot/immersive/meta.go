@@ -101,6 +101,22 @@ func buildCombinedInput(queue []queuedMessage) string {
 	return strings.TrimSpace(builder.String())
 }
 
+func buildCombinedInputWithSummary(queue []queuedMessage, summary string) string {
+	base := buildCombinedInput(queue)
+	trimmedSummary := strings.TrimSpace(summary)
+	if trimmedSummary == "" {
+		return base
+	}
+	var builder strings.Builder
+	builder.WriteString("history_summary: ")
+	builder.WriteString(sanitizeInline(trimmedSummary))
+	if strings.TrimSpace(base) != "" {
+		builder.WriteString("\n")
+		builder.WriteString(base)
+	}
+	return strings.TrimSpace(builder.String())
+}
+
 // formatQueuedMessage formats a single queued message as a transcript line
 // with speaker label and optional timestamp.
 func formatQueuedMessage(msg queuedMessage) string {
@@ -192,6 +208,66 @@ func prependMessages(head, tail []queuedMessage) []queuedMessage {
 	next = append(next, head...)
 	next = append(next, tail...)
 	return next
+}
+
+// appendTimelineMessage appends one message into timeline with bounded length.
+func appendTimelineMessage(timeline []queuedMessage, msg queuedMessage, maxMessages int) []queuedMessage {
+	timeline = append(timeline, msg)
+	if maxMessages <= 0 || len(timeline) <= maxMessages {
+		return timeline
+	}
+	start := len(timeline) - maxMessages
+	trimmed := make([]queuedMessage, maxMessages)
+	copy(trimmed, timeline[start:])
+	return trimmed
+}
+
+func trimTimelineTail(timeline []queuedMessage, maxMessages int) []queuedMessage {
+	if maxMessages <= 0 || len(timeline) <= maxMessages {
+		return timeline
+	}
+	start := len(timeline) - maxMessages
+	trimmed := make([]queuedMessage, maxMessages)
+	copy(trimmed, timeline[start:])
+	return trimmed
+}
+
+func buildTimelineFallbackSummary(previousSummary string, messages []queuedMessage, maxChars int) string {
+	parts := make([]string, 0, len(messages)+1)
+	if trimmed := strings.TrimSpace(previousSummary); trimmed != "" {
+		parts = append(parts, "已有摘要:"+trimmed)
+	}
+	for _, msg := range messages {
+		content := strings.TrimSpace(msg.text)
+		if content == "" {
+			continue
+		}
+		speaker := strings.TrimSpace(msg.speaker)
+		if speaker == "" {
+			speaker = "unknown"
+		}
+		entry := speaker + ":" + strings.Join(strings.Fields(content), " ")
+		parts = append(parts, entry)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	joined := strings.Join(parts, "；")
+	if maxChars > 0 {
+		return limitRunes(joined, maxChars)
+	}
+	return joined
+}
+
+func limitRunes(text string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 // summarizeQueueMeta computes aggregated metadata from a queue of messages,
