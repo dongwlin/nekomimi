@@ -1,4 +1,4 @@
-package bot
+package runtime
 
 import (
 	"github.com/dongwlin/nekomimi/internal/config"

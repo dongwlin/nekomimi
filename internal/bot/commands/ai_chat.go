@@ -1,4 +1,4 @@
-package handlers
+package commands
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
-func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, buffer ImmersiveBuffer) {
+func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine) {
 	zero.OnCommand("ai").Handle(func(ctx *zero.Ctx) {
 		prompt := strings.TrimSpace(ctx.State["args"].(string))
 		if prompt == "" {
@@ -50,7 +50,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, buffer Imme
 			ctx.Send("沉浸模式已开启，直接发消息即可对话（/chat off 关闭）")
 		case "off":
 			llmManager.SetImmersive(sessionKey(ctx), false)
-			buffer.Clear(sessionKey(ctx))
+			engine.Clear(sessionKey(ctx))
 			ctx.Send("沉浸模式已关闭")
 		case "status":
 			status := "关闭"
@@ -75,7 +75,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, buffer Imme
 			return
 		}
 		isPrivate := ctx.Event != nil && ctx.Event.DetailType == "private"
-		buffer.Enqueue(ctx, sessionKey(ctx), text, speakerLabel(ctx), isPrivate)
+		engine.Enqueue(ctx, sessionKey(ctx), text, speakerLabel(ctx), isPrivate)
 	})
 }
 

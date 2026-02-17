@@ -1,32 +1,11 @@
-package handlers
+package commands
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/dongwlin/nekomimi/internal/version"
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
-
-func registerBasicHandlers() {
-	zero.OnFullMatch("ping").Handle(func(ctx *zero.Ctx) {
-		ctx.Send("pong")
-	})
-	zero.OnCommand("version").Handle(func(ctx *zero.Ctx) {
-		ctx.Send("当前版本: " + version.String())
-	})
-}
-
-func parseActionArgs(args string) (string, string) {
-	args = strings.TrimSpace(args)
-	if args == "" {
-		return "", ""
-	}
-	fields := strings.Fields(args)
-	action := strings.ToLower(fields[0])
-	rest := strings.TrimSpace(args[len(fields[0]):])
-	return action, rest
-}
 
 func sessionKey(ctx *zero.Ctx) string {
 	if ctx == nil || ctx.Event == nil {

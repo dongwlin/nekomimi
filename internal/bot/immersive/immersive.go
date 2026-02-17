@@ -1,4 +1,4 @@
-package buffer
+package immersive
 
 import (
 	"context"
@@ -46,6 +46,11 @@ func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager *llm.Manager, nic
 		nicknames: nicknames,
 		sessions:  make(map[string]*immersiveSession),
 	}
+}
+
+// NewEngine creates an immersive engine with configured policies.
+func NewEngine(cfg config.ImmersiveConfig, llmManager *llm.Manager, nicknames []string) *ImmersiveBuffer {
+	return NewImmersiveBuffer(cfg, llmManager, nicknames)
 }
 
 // Enqueue adds a new message to the session buffer and schedules a flush

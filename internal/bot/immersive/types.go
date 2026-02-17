@@ -1,7 +1,7 @@
-// Package buffer provides message buffering and cooldown management for immersive bot conversations.
+// Package immersive provides message buffering and cooldown management for immersive bot conversations.
 // It implements intelligent message queuing with configurable cooling periods, speak gating,
 // and LLM-based decision making for when the bot should respond.
-package buffer
+package immersive
 
 import (
 	"sync"

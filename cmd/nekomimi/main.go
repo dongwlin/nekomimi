@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/dongwlin/nekomimi/internal/bot"
+	"github.com/dongwlin/nekomimi/internal/bot/bootstrap"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
 	"github.com/dongwlin/nekomimi/internal/version"
@@ -35,10 +35,7 @@ func main() {
 	llmManager := llm.NewManager(cfg.LLM)
 	log.Info().
 		Msg("llm manager initialized")
-	bot.RegisterHandlers(cfg, llmManager)
-	log.Info().
-		Msg("handlers registered")
-	bot.Run(cfg)
+	bootstrap.Start(cfg, llmManager)
 }
 
 func shouldPrintVersion(args []string) bool {

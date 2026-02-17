@@ -1,4 +1,4 @@
-package handlers
+package commands
 
 import (
 	"github.com/dongwlin/nekomimi/internal/config"
@@ -6,13 +6,13 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
-type ImmersiveBuffer interface {
+type ImmersiveEngine interface {
 	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool)
 	Clear(sessionKey string)
 }
 
-func Register(cfg *config.Config, llmManager *llm.Manager, buffer ImmersiveBuffer) {
-	registerAIHandlers(cfg, llmManager, buffer)
+func Register(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine) {
+	registerAIHandlers(cfg, llmManager, engine)
 	registerLLMHandlers(llmManager)
 	registerBasicHandlers()
 }
