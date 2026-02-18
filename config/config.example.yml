@@ -40,13 +40,6 @@ llm:
       reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
       thinking_type: "" # 判定助手思考类型：enabled | disabled | auto；留空表示不传 thinking（不继承全局）
       fail_open: true # 判定失败时是否放行（true=放行发言，false=保守不发言）
-    mention_judge:
-      enabled: false # 被@时是否调用判定助手决定秒回
-      model: "" # 判定模型名，空则复用主模型
-      prompt: "" # 判定提示词，支持 {{file:prompts/mention_judge.txt}}；空则使用内置默认
-      timeout_ms: 1200 # 判定超时（毫秒）
-      reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
-      thinking_type: "" # 判定助手思考类型：enabled | disabled | auto；留空表示不传 thinking（不继承全局）
 driver:
   websocket:
     url: "ws://localhost:3001"

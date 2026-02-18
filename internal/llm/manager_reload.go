@@ -32,17 +32,6 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	if contextMax < 0 {
 		contextMax = 0
 	}
-	judgePrompt := strings.TrimSpace(cfg.Immersive.MentionJudge.Prompt)
-	if judgePrompt == "" {
-		judgePrompt = llmprompt.MentionJudgePrompt
-	}
-	judgeModel := strings.TrimSpace(cfg.Immersive.MentionJudge.Model)
-	judgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.MentionJudge.ReasoningEffort)
-	judgeThinking := normalizeAssistantThinkingType(cfg.Immersive.MentionJudge.ThinkingType)
-	judgeTimeout := time.Duration(cfg.Immersive.MentionJudge.TimeoutMS) * time.Millisecond
-	if judgeTimeout <= 0 {
-		judgeTimeout = 1200 * time.Millisecond
-	}
 	speakJudgePrompt := strings.TrimSpace(cfg.Immersive.SpeakGate.Prompt)
 	if speakJudgePrompt == "" {
 		speakJudgePrompt = llmprompt.SpeakGateJudgePrompt
@@ -68,12 +57,6 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	m.defaultProv = providerName
 	m.historyMax = historyMax
 	m.contextMax = contextMax
-	m.judgeEnabled = cfg.Immersive.MentionJudge.Enabled
-	m.judgeModel = judgeModel
-	m.judgePrompt = judgePrompt
-	m.judgeTimeout = judgeTimeout
-	m.judgeReasoning = judgeReasoning
-	m.judgeThinking = judgeThinking
 	m.speakJudgeEnabled = cfg.Immersive.SpeakGate.Enabled
 	m.speakJudgeModel = speakJudgeModel
 	m.speakJudgePrompt = speakJudgePrompt

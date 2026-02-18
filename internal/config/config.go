@@ -33,7 +33,6 @@ type ImmersiveConfig struct {
 	Timeline         TimelineConfig         `yaml:"timeline"`
 	ContinuousSpeech ContinuousSpeechConfig `yaml:"continuous_speech"`
 	SpeakGate        SpeakGateConfig        `yaml:"speak_gate"`
-	MentionJudge     MentionJudgeConfig     `yaml:"mention_judge"`
 }
 
 type TimelineConfig struct {
@@ -59,15 +58,6 @@ type SpeakGateConfig struct {
 	ReasoningEffort string `yaml:"reasoning_effort"`
 	ThinkingType    string `yaml:"thinking_type"`
 	FailOpen        bool   `yaml:"fail_open"`
-}
-
-type MentionJudgeConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	Model           string `yaml:"model"`
-	Prompt          string `yaml:"prompt"`
-	TimeoutMS       int    `yaml:"timeout_ms"`
-	ReasoningEffort string `yaml:"reasoning_effort"`
-	ThinkingType    string `yaml:"thinking_type"`
 }
 
 type DriverConfig struct {

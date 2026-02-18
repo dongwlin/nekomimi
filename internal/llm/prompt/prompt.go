@@ -14,7 +14,6 @@ var (
 	SpeakerSystemPrompt     = mustReadPrompt("speaker_system.txt")
 	SummarySystemPrompt     = mustReadPrompt("summary_system.txt")
 	LightSummaryPrompt      = mustReadPrompt("light_summary.txt")
-	MentionJudgePrompt      = mustReadPrompt("mention_judge.txt")
 	SpeakGateJudgePrompt    = mustReadPrompt("speak_gate_judge.txt")
 )
 

@@ -33,12 +33,6 @@ type Manager struct {
 	historyMax          int
 	contextMax          int
 	immersive           map[string]bool
-	judgeEnabled        bool
-	judgeModel          string
-	judgePrompt         string
-	judgeTimeout        time.Duration
-	judgeReasoning      string
-	judgeThinking       string
 	speakJudgeEnabled   bool
 	speakJudgeModel     string
 	speakJudgePrompt    string
@@ -84,17 +78,6 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	if contextMax < 0 {
 		contextMax = 0
 	}
-	judgePrompt := strings.TrimSpace(cfg.Immersive.MentionJudge.Prompt)
-	if judgePrompt == "" {
-		judgePrompt = llmprompt.MentionJudgePrompt
-	}
-	judgeModel := strings.TrimSpace(cfg.Immersive.MentionJudge.Model)
-	judgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.MentionJudge.ReasoningEffort)
-	judgeThinking := normalizeAssistantThinkingType(cfg.Immersive.MentionJudge.ThinkingType)
-	judgeTimeout := time.Duration(cfg.Immersive.MentionJudge.TimeoutMS) * time.Millisecond
-	if judgeTimeout <= 0 {
-		judgeTimeout = 1200 * time.Millisecond
-	}
 	speakJudgePrompt := strings.TrimSpace(cfg.Immersive.SpeakGate.Prompt)
 	if speakJudgePrompt == "" {
 		speakJudgePrompt = llmprompt.SpeakGateJudgePrompt
@@ -130,12 +113,6 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		historyStore:        history.NewMemoryStore(historyMax),
 		historyMax:          historyMax,
 		contextMax:          contextMax,
-		judgeEnabled:        cfg.Immersive.MentionJudge.Enabled,
-		judgeModel:          judgeModel,
-		judgePrompt:         judgePrompt,
-		judgeTimeout:        judgeTimeout,
-		judgeReasoning:      judgeReasoning,
-		judgeThinking:       judgeThinking,
 		speakJudgeEnabled:   cfg.Immersive.SpeakGate.Enabled,
 		speakJudgeModel:     speakJudgeModel,
 		speakJudgePrompt:    speakJudgePrompt,

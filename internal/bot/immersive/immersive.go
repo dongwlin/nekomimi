@@ -100,8 +100,6 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	cooldown := time.Duration(0)
 	queueSnapshot := make([]queuedMessage, len(state.queue))
 	copy(queueSnapshot, state.queue)
-
-	judgeEnabled := mention && !isPrivate && b.cfg.MentionJudge.Enabled
 	log.Info().
 		Str("session", sessionKey).
 		Bool("is_private", isPrivate).
@@ -113,22 +111,6 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		Int64("cooldown_ms", cooldown.Milliseconds()).
 		Msg("immersive enqueue scheduled")
 	state.mu.Unlock()
-
-	if judgeEnabled {
-		preview := buildRecentPreview(queueSnapshot, 4, b.currentIdentity())
-		immediate, err := b.llm.JudgeMentionImmediate(context.Background(), trimmed, speaker, preview)
-		if err == nil && immediate {
-			log.Info().
-				Str("session", sessionKey).
-				Int64("cooldown_ms", cooldown.Milliseconds()).
-				Msg("mention judge requested immediate reply")
-		} else if err != nil {
-			log.Warn().
-				Err(err).
-				Str("session", sessionKey).
-				Msg("mention judge failed")
-		}
-	}
 
 	state.mu.Lock()
 	if state.timer != nil {
