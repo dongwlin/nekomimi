@@ -45,7 +45,11 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 			ctx.Send("用法: /chat on|off|status")
 			return
 		}
-		action, _ := parseActionArgs(args)
+		action, rest := parseActionArgs(args)
+		if strings.TrimSpace(rest) != "" {
+			ctx.Send("用法: /chat on|off|status")
+			return
+		}
 		switch action {
 		case "on":
 			if !llmManager.IsEnabled() {

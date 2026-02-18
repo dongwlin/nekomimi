@@ -83,3 +83,13 @@ func TestIsDigits(t *testing.T) {
 		}
 	}
 }
+
+func TestParseActionArgs_ExtraArgsDetected(t *testing.T) {
+	action, rest := parseActionArgs("on group 123456")
+	if action != "on" {
+		t.Fatalf("action got=%q want=%q", action, "on")
+	}
+	if rest != "group 123456" {
+		t.Fatalf("rest got=%q want=%q", rest, "group 123456")
+	}
+}
