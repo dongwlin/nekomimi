@@ -219,7 +219,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		if err != nil {
 			fallback := pokeFallbackReplies(moodTier)
 			fallbackReply := fallback[rand.Intn(len(fallback))]
-			ctx.Send(fallbackReply)
+			sendPokeContinuousReply(ctx, cfg.LLM.Immersive.ContinuousSpeech, fallbackReply)
 			engine.RecordTimelineEvent(session, fallbackReply, "assistant")
 			return
 		}
@@ -228,7 +228,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 			fallback := pokeFallbackReplies(moodTier)
 			reply = fallback[0]
 		}
-		ctx.Send(reply)
+		sendPokeContinuousReply(ctx, cfg.LLM.Immersive.ContinuousSpeech, reply)
 		engine.RecordTimelineEvent(session, reply, "assistant")
 	})
 }
@@ -313,4 +313,106 @@ func isDigits(value string) bool {
 		}
 	}
 	return value != ""
+}
+
+func sendPokeContinuousReply(ctx *zero.Ctx, continuous config.ContinuousSpeechConfig, reply string) {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return
+	}
+	if !continuous.Enabled {
+		ctx.Send(trimmed)
+		return
+	}
+	chunks := splitPokeReplyChunks(trimmed, continuous.MinChunkChars, continuous.MaxChunkChars)
+	if len(chunks) == 0 {
+		ctx.Send(trimmed)
+		return
+	}
+	for idx, chunk := range chunks {
+		if idx > 0 {
+			time.Sleep(nextPokeContinuousSpeechDelay(continuous))
+		}
+		ctx.Send(chunk)
+	}
+}
+
+func splitPokeReplyChunks(text string, minChars, maxChars int) []string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil
+	}
+	if minChars <= 0 {
+		minChars = 12
+	}
+	if maxChars <= 0 {
+		maxChars = 80
+	}
+	if maxChars < minChars {
+		maxChars = minChars
+	}
+	chunks := make([]string, 0, 4)
+	startByte := 0
+	startRune := 0
+	lastBoundaryByte := -1
+	runeCount := 0
+	for idx, r := range trimmed {
+		runeCount++
+		if isPokeChunkBoundary(r) {
+			lastBoundaryByte = idx + len(string(r))
+		}
+		segmentRunes := runeCount - startRune
+		if segmentRunes < minChars && segmentRunes < maxChars {
+			continue
+		}
+		cutByte := -1
+		if lastBoundaryByte > startByte && segmentRunes >= minChars {
+			cutByte = lastBoundaryByte
+		}
+		if segmentRunes >= maxChars && cutByte < 0 {
+			cutByte = idx + len(string(r))
+		}
+		if cutByte < 0 {
+			continue
+		}
+		chunk := strings.TrimSpace(trimmed[startByte:cutByte])
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+		startByte = cutByte
+		startRune = runeCount
+		lastBoundaryByte = -1
+	}
+	rest := strings.TrimSpace(trimmed[startByte:])
+	if rest != "" {
+		chunks = append(chunks, rest)
+	}
+	return chunks
+}
+
+func isPokeChunkBoundary(r rune) bool {
+	switch r {
+	case '。', '！', '？', '!', '?', '.', ';', '；', '\n':
+		return true
+	default:
+		return false
+	}
+}
+
+func nextPokeContinuousSpeechDelay(cfg config.ContinuousSpeechConfig) time.Duration {
+	minMS := cfg.MinIntervalMS
+	maxMS := cfg.MaxIntervalMS
+	if minMS <= 0 {
+		minMS = 300
+	}
+	if maxMS <= 0 {
+		maxMS = 900
+	}
+	if maxMS < minMS {
+		maxMS = minMS
+	}
+	if maxMS == minMS {
+		return time.Duration(minMS) * time.Millisecond
+	}
+	return time.Duration(minMS+rand.Intn(maxMS-minMS+1)) * time.Millisecond
 }
