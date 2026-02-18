@@ -153,6 +153,23 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		ctx.Send("已静默开启沉浸模式: " + targetLabel)
 	})
 
+	zero.OnCommand("chatoff", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
+		engine.RefreshIdentityFromCtx(ctx)
+		args := strings.TrimSpace(ctx.State["args"].(string))
+		targetSession, targetLabel, err := parseTargetSessionKey(args)
+		if err != nil {
+			ctx.Send("用法: /chatoff group <群号> | /chatoff private <QQ号>\n示例: /chatoff group 123456")
+			return
+		}
+		llmManager.SetImmersive(targetSession, false)
+		engine.Clear(targetSession)
+		// 静默关闭：若命令在目标会话内执行，不回任何关闭文案。
+		if targetSession == sessionKey(ctx) {
+			return
+		}
+		ctx.Send("已静默关闭沉浸模式: " + targetLabel)
+	})
+
 	zero.OnMessage().Handle(func(ctx *zero.Ctx) {
 		engine.RefreshIdentityFromCtx(ctx)
 		if !llmManager.IsEnabled() || !llmManager.IsImmersive(sessionKey(ctx)) {

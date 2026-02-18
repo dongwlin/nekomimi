@@ -63,3 +63,23 @@ func TestParseTargetSessionKey(t *testing.T) {
 		}
 	}
 }
+
+func TestIsDigits(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "123", want: true},
+		{value: "001", want: true},
+		{value: "", want: false},
+		{value: "12a3", want: false},
+		{value: " 123 ", want: false},
+		{value: "-1", want: false},
+	}
+	for _, tt := range tests {
+		got := isDigits(tt.value)
+		if got != tt.want {
+			t.Fatalf("value=%q got=%v want=%v", tt.value, got, tt.want)
+		}
+	}
+}
