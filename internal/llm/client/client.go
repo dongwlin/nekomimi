@@ -53,7 +53,9 @@ func New(apiURL, apiKey string) *Client {
 		apiURL: apiURL,
 		apiKey: apiKey,
 		httpClient: &http.Client{
-			Timeout: DefaultRequestTimeout,
+			// Keep client timeout disabled and rely on per-request context deadlines.
+			// This avoids accidentally overriding configured request timeouts (e.g. llm.timeout_ms).
+			Timeout: 0,
 		},
 	}
 }
