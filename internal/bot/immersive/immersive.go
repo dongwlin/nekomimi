@@ -31,7 +31,6 @@ const (
 	defaultPokeReactionWindowMS      = 180000
 	defaultPokeReactionMildThresh    = 3
 	defaultPokeReactionAnnoyedThresh = 6
-	defaultPokeReactionMaxReplyChars = 20
 	maxPreGenerateRegensPerRound     = 3
 	preGenerateWaitTimeout           = 35 * time.Second
 )

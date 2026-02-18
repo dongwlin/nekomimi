@@ -163,7 +163,6 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		session := sessionKey(ctx)
 		actorLabel, actorName := pokeActorInfo(ctx)
 		pokeCount, moodTier := pokeReactions.Observe(session, time.Now())
-		maxChars := pokeMaxReplyChars(cfg.LLM.Immersive.PokeReaction)
 
 		engine.RecordTimelineEvent(session, actorName+"戳了你一下。", actorLabel)
 
@@ -172,7 +171,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 
 		reply, err := llmManager.Reply(
 			context.Background(),
-			buildPokeReplyPrompt(pokeCount, moodTier, maxChars),
+			buildPokeReplyPrompt(pokeCount, moodTier),
 			session,
 			speakerLabel(ctx),
 		)

@@ -65,7 +65,6 @@ type PokeReactionConfig struct {
 	WindowMS         int `yaml:"window_ms"`
 	MildThreshold    int `yaml:"mild_threshold"`
 	AnnoyedThreshold int `yaml:"annoyed_threshold"`
-	MaxReplyChars    int `yaml:"max_reply_chars"`
 }
 
 type DriverConfig struct {

@@ -79,12 +79,13 @@ func TestPokeTrackerObserve_CountBySessionOnly(t *testing.T) {
 }
 
 func TestBuildPokeReplyPrompt_ContainsKeyConstraints(t *testing.T) {
-	prompt := buildPokeReplyPrompt(4, pokeMoodMild, 18)
+	prompt := buildPokeReplyPrompt(4, pokeMoodMild)
 	for _, token := range []string{
 		"连续被戳了 4 次",
-		"不超过18字",
 		"轻微烦躁",
 		"想和你对话",
+		"优先 1-3 句",
+		"像在和网友聊天",
 	} {
 		if !strings.Contains(prompt, token) {
 			t.Fatalf("prompt missing token %q: %s", token, prompt)

@@ -44,7 +44,7 @@ llm:
       window_ms: 180000 # 统计窗口（毫秒）；窗口内戳得越频繁，语气越烦躁
       mild_threshold: 3 # 达到该次数后进入“轻微烦躁”语气
       annoyed_threshold: 6 # 达到该次数后进入“明显烦躁”语气
-      max_reply_chars: 20 # 戳一戳回复最大字数
+      # 回复长度不做硬限制；主回复会按语境自然输出（建议 1-3 句）
 driver:
   websocket:
     url: "ws://localhost:3001"

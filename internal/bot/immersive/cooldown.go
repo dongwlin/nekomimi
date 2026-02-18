@@ -69,8 +69,5 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.PokeReaction.AnnoyedThreshold < cfg.PokeReaction.MildThreshold {
 		cfg.PokeReaction.AnnoyedThreshold = cfg.PokeReaction.MildThreshold
 	}
-	if cfg.PokeReaction.MaxReplyChars <= 0 {
-		cfg.PokeReaction.MaxReplyChars = defaultPokeReactionMaxReplyChars
-	}
 	return cfg
 }

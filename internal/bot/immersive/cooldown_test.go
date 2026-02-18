@@ -42,9 +42,6 @@ func TestNormalizeImmersiveConfig_DefaultValues(t *testing.T) {
 	if cfg.PokeReaction.AnnoyedThreshold != defaultPokeReactionAnnoyedThresh {
 		t.Errorf("expected PokeReaction.AnnoyedThreshold %d, got %d", defaultPokeReactionAnnoyedThresh, cfg.PokeReaction.AnnoyedThreshold)
 	}
-	if cfg.PokeReaction.MaxReplyChars != defaultPokeReactionMaxReplyChars {
-		t.Errorf("expected PokeReaction.MaxReplyChars %d, got %d", defaultPokeReactionMaxReplyChars, cfg.PokeReaction.MaxReplyChars)
-	}
 }
 
 func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
@@ -64,7 +61,6 @@ func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 			WindowMS:         60000,
 			MildThreshold:    4,
 			AnnoyedThreshold: 7,
-			MaxReplyChars:    24,
 		},
 	})
 
@@ -104,9 +100,6 @@ func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 	if cfg.PokeReaction.AnnoyedThreshold != 7 {
 		t.Errorf("expected PokeReaction.AnnoyedThreshold 7, got %d", cfg.PokeReaction.AnnoyedThreshold)
 	}
-	if cfg.PokeReaction.MaxReplyChars != 24 {
-		t.Errorf("expected PokeReaction.MaxReplyChars 24, got %d", cfg.PokeReaction.MaxReplyChars)
-	}
 }
 
 func TestNormalizeImmersiveConfig_PokeReactionThresholdOrder(t *testing.T) {
@@ -115,7 +108,6 @@ func TestNormalizeImmersiveConfig_PokeReactionThresholdOrder(t *testing.T) {
 			WindowMS:         30000,
 			MildThreshold:    5,
 			AnnoyedThreshold: 2,
-			MaxReplyChars:    18,
 		},
 	})
 	if cfg.PokeReaction.AnnoyedThreshold != cfg.PokeReaction.MildThreshold {

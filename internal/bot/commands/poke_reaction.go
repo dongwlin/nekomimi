@@ -88,30 +88,19 @@ func resolvePokeMoodTier(count, mild, annoyed int) pokeMoodTier {
 	return pokeMoodWarm
 }
 
-func pokeMaxReplyChars(cfg config.PokeReactionConfig) int {
-	if cfg.MaxReplyChars <= 0 {
-		return 20
-	}
-	return cfg.MaxReplyChars
-}
-
-func buildPokeReplyPrompt(count int, tier pokeMoodTier, maxChars int) string {
-	if maxChars <= 0 {
-		maxChars = 20
-	}
+func buildPokeReplyPrompt(count int, tier pokeMoodTier) string {
 	var moodRule string
 	switch tier {
 	case pokeMoodAnnoyed:
-		moodRule = "语气：明显烦躁，先温和表达边界感，再给一句可继续聊天的话。"
+		moodRule = "语气建议：明显烦躁，先温和表达边界感，再自然接一句能继续聊的话。"
 	case pokeMoodMild:
-		moodRule = "语气：轻微烦躁，可以小吐槽，但不要辱骂或攻击。"
+		moodRule = "语气建议：轻微烦躁，可以小吐槽，但不要辱骂或攻击。"
 	default:
-		moodRule = "语气：自然、可爱、愿意接话。"
+		moodRule = "语气建议：自然、像网友、愿意接话。"
 	}
 	return fmt.Sprintf(
-		"你在当前会话最近窗口内已经连续被戳了 %d 次，这代表有人想和你对话。请用中文回复一句话，长度不超过%d字，不要加引号。%s 回复要带一点互动感，最好能自然接到对话。",
+		"你在当前会话最近窗口内已经连续被戳了 %d 次，这代表有人想和你对话。请用中文自然回复，优先 1-3 句，像在和网友聊天，带互动感并尽量接上当前语境。不要使用引号。%s",
 		count,
-		maxChars,
 		moodRule,
 	)
 }

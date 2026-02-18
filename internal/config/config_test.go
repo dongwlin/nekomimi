@@ -214,7 +214,6 @@ llm:
       window_ms: 60000
       mild_threshold: 4
       annoyed_threshold: 8
-      max_reply_chars: 18
 driver:
   websocket:
     url: "ws://localhost:3001"
@@ -236,8 +235,5 @@ driver:
 	}
 	if cfg.LLM.Immersive.PokeReaction.AnnoyedThreshold != 8 {
 		t.Fatalf("unexpected annoyed_threshold: %d", cfg.LLM.Immersive.PokeReaction.AnnoyedThreshold)
-	}
-	if cfg.LLM.Immersive.PokeReaction.MaxReplyChars != 18 {
-		t.Fatalf("unexpected max_reply_chars: %d", cfg.LLM.Immersive.PokeReaction.MaxReplyChars)
 	}
 }
