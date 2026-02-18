@@ -33,6 +33,7 @@ type ImmersiveConfig struct {
 	Timeline         TimelineConfig         `yaml:"timeline"`
 	ContinuousSpeech ContinuousSpeechConfig `yaml:"continuous_speech"`
 	SpeakGate        SpeakGateConfig        `yaml:"speak_gate"`
+	PokeReaction     PokeReactionConfig     `yaml:"poke_reaction"`
 }
 
 type TimelineConfig struct {
@@ -58,6 +59,13 @@ type SpeakGateConfig struct {
 	ReasoningEffort string `yaml:"reasoning_effort"`
 	ThinkingType    string `yaml:"thinking_type"`
 	FailOpen        bool   `yaml:"fail_open"`
+}
+
+type PokeReactionConfig struct {
+	WindowMS         int `yaml:"window_ms"`
+	MildThreshold    int `yaml:"mild_threshold"`
+	AnnoyedThreshold int `yaml:"annoyed_threshold"`
+	MaxReplyChars    int `yaml:"max_reply_chars"`
 }
 
 type DriverConfig struct {

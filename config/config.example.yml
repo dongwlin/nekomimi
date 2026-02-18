@@ -40,6 +40,11 @@ llm:
       reasoning_effort: "none" # 判定助手推理强度：none | minimal | low | medium | high（none=不推理，不继承全局）
       thinking_type: "" # 判定助手思考类型：enabled | disabled | auto；留空表示不传 thinking（不继承全局）
       fail_open: true # 判定失败时是否放行（true=放行发言，false=保守不发言）
+    poke_reaction:
+      window_ms: 180000 # 统计窗口（毫秒）；窗口内戳得越频繁，语气越烦躁
+      mild_threshold: 3 # 达到该次数后进入“轻微烦躁”语气
+      annoyed_threshold: 6 # 达到该次数后进入“明显烦躁”语气
+      max_reply_chars: 20 # 戳一戳回复最大字数
 driver:
   websocket:
     url: "ws://localhost:3001"

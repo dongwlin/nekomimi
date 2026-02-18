@@ -13,6 +13,8 @@ import (
 )
 
 func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine) {
+	pokeReactions := newPokeTracker(cfg.LLM.Immersive.PokeReaction)
+
 	zero.OnCommand("ai").Handle(func(ctx *zero.Ctx) {
 		engine.RefreshIdentityFromCtx(ctx)
 		prompt := strings.TrimSpace(ctx.State["args"].(string))
@@ -158,30 +160,36 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		if ctx.Event.UserID == 0 || ctx.Event.UserID == ctx.Event.SelfID {
 			return
 		}
+		session := sessionKey(ctx)
+		actorLabel, actorName, actorKey := pokeActorInfo(ctx)
+		pokeCount, moodTier := pokeReactions.Observe(session, actorKey, time.Now())
+		maxChars := pokeMaxReplyChars(cfg.LLM.Immersive.PokeReaction)
+
+		engine.RecordTimelineEvent(session, actorName+"戳了你一下。", actorLabel)
 
 		ctx.SendPoke(ctx.Event.GroupID, ctx.Event.UserID)
+		engine.RecordTimelineEvent(session, "你回戳了对方。", "assistant")
 
 		reply, err := llmManager.Reply(
 			context.Background(),
-			"有人刚刚戳了你一下。请用中文回复一句自然、简短、可爱的回应（不超过20字，不要使用引号）。",
-			sessionKey(ctx),
+			buildPokeReplyPrompt(pokeCount, moodTier, maxChars),
+			session,
 			speakerLabel(ctx),
 		)
 		if err != nil {
-			sendRandomMessage(ctx, []string{
-				"戳回去啦，别跑呀~",
-				"哼哼，我也戳你一下！",
-				"被我抓到啦，戳回去！",
-				"收到戳戳，回礼奉上~",
-				"你戳我？那我也戳你！",
-			})
+			fallback := pokeFallbackReplies(moodTier)
+			fallbackReply := fallback[rand.Intn(len(fallback))]
+			ctx.Send(fallbackReply)
+			engine.RecordTimelineEvent(session, fallbackReply, "assistant")
 			return
 		}
 		reply = strings.TrimSpace(reply)
 		if reply == "" {
-			reply = "戳回去啦~"
+			fallback := pokeFallbackReplies(moodTier)
+			reply = fallback[0]
 		}
 		ctx.Send(reply)
+		engine.RecordTimelineEvent(session, reply, "assistant")
 	})
 }
 

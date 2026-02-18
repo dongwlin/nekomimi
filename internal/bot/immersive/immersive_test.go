@@ -160,3 +160,27 @@ func TestShouldSpeak_AssistantErrorFailCloseBlock(t *testing.T) {
 		t.Fatalf("expected assistantStatus=error_block, got %q", result.assistantStatus)
 	}
 }
+
+func TestRecordTimelineEvent_AppendsWithoutQueueing(t *testing.T) {
+	buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, nil, []string{"neko"})
+	sessionKey := "group:1"
+	buffer.RecordTimelineEvent(sessionKey, "用户戳了你一下。", "name=alice")
+	buffer.RecordTimelineEvent(sessionKey, "你回戳了对方。", "assistant")
+
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if len(state.queue) != 0 {
+		t.Fatalf("expected queue to remain empty, got %d", len(state.queue))
+	}
+	if len(state.timeline) != 2 {
+		t.Fatalf("expected timeline size 2, got %d", len(state.timeline))
+	}
+	if state.timeline[0].speaker != "name=alice" {
+		t.Fatalf("unexpected first speaker: %q", state.timeline[0].speaker)
+	}
+	if state.timeline[1].speaker != "assistant" {
+		t.Fatalf("unexpected second speaker: %q", state.timeline[1].speaker)
+	}
+}

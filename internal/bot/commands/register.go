@@ -8,6 +8,7 @@ import (
 
 type ImmersiveEngine interface {
 	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool)
+	RecordTimelineEvent(sessionKey, text, speaker string)
 	Clear(sessionKey string)
 	RefreshIdentityFromCtx(ctx *zero.Ctx)
 	ReloadConfig(cfg config.ImmersiveConfig, nicknames []string)

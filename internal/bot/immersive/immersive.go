@@ -16,20 +16,24 @@ import (
 
 // Default configuration values for the immersive buffer.
 const (
-	defaultMaxBatchMessages         = 10
-	defaultMaxBatchChars            = 1200
-	defaultImmediateDelayMS         = 120
-	defaultSpeakJudgeTimeoutMS      = 1200
-	defaultTimelineMaxMessages      = 200
-	defaultTimelineOverflowMessages = 50
-	defaultTimelineCompressBatch    = 100
-	timelineFallbackSummaryLen      = 1000
-	defaultContinuousMinChars       = 12
-	defaultContinuousMaxChars       = 80
-	defaultContinuousMinMS          = 300
-	defaultContinuousMaxMS          = 900
-	maxPreGenerateRegensPerRound    = 3
-	preGenerateWaitTimeout          = 35 * time.Second
+	defaultMaxBatchMessages          = 10
+	defaultMaxBatchChars             = 1200
+	defaultImmediateDelayMS          = 120
+	defaultSpeakJudgeTimeoutMS       = 1200
+	defaultTimelineMaxMessages       = 200
+	defaultTimelineOverflowMessages  = 50
+	defaultTimelineCompressBatch     = 100
+	timelineFallbackSummaryLen       = 1000
+	defaultContinuousMinChars        = 12
+	defaultContinuousMaxChars        = 80
+	defaultContinuousMinMS           = 300
+	defaultContinuousMaxMS           = 900
+	defaultPokeReactionWindowMS      = 180000
+	defaultPokeReactionMildThresh    = 3
+	defaultPokeReactionAnnoyedThresh = 6
+	defaultPokeReactionMaxReplyChars = 20
+	maxPreGenerateRegensPerRound     = 3
+	preGenerateWaitTimeout           = 35 * time.Second
 )
 
 // NewImmersiveBuffer creates a new ImmersiveBuffer with the given configuration,
@@ -657,12 +661,20 @@ func (b *ImmersiveBuffer) recordAssistantUtterance(sessionKey, text string) {
 	if strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
 		return
 	}
+	b.RecordTimelineEvent(sessionKey, text, b.botPrimaryName())
+}
+
+// RecordTimelineEvent appends an event to session timeline without queuing or flushing.
+func (b *ImmersiveBuffer) RecordTimelineEvent(sessionKey, text, speaker string) {
+	if b == nil || strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
+		return
+	}
 	state := b.session(sessionKey)
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	msg := queuedMessage{
 		text:    strings.TrimSpace(text),
-		speaker: b.botPrimaryName(),
+		speaker: strings.TrimSpace(speaker),
 		ts:      time.Now(),
 		chars:   len([]rune(strings.TrimSpace(text))),
 	}
@@ -712,7 +724,8 @@ func (b *ImmersiveBuffer) summarizeTimelineChunk(previousSummary string, chunk [
 		}
 		role := "user"
 		speaker := strings.TrimSpace(msg.speaker)
-		if speaker != "" && strings.ToLower(speaker) == botName {
+		normalizedSpeaker := strings.ToLower(speaker)
+		if speaker != "" && (normalizedSpeaker == botName || normalizedSpeaker == "assistant" || normalizedSpeaker == "bot") {
 			role = "assistant"
 		}
 		text := content

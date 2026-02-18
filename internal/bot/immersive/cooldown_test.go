@@ -33,6 +33,18 @@ func TestNormalizeImmersiveConfig_DefaultValues(t *testing.T) {
 	if cfg.ContinuousSpeech.MaxIntervalMS != defaultContinuousMaxMS {
 		t.Errorf("expected MaxIntervalMS %d, got %d", defaultContinuousMaxMS, cfg.ContinuousSpeech.MaxIntervalMS)
 	}
+	if cfg.PokeReaction.WindowMS != defaultPokeReactionWindowMS {
+		t.Errorf("expected PokeReaction.WindowMS %d, got %d", defaultPokeReactionWindowMS, cfg.PokeReaction.WindowMS)
+	}
+	if cfg.PokeReaction.MildThreshold != defaultPokeReactionMildThresh {
+		t.Errorf("expected PokeReaction.MildThreshold %d, got %d", defaultPokeReactionMildThresh, cfg.PokeReaction.MildThreshold)
+	}
+	if cfg.PokeReaction.AnnoyedThreshold != defaultPokeReactionAnnoyedThresh {
+		t.Errorf("expected PokeReaction.AnnoyedThreshold %d, got %d", defaultPokeReactionAnnoyedThresh, cfg.PokeReaction.AnnoyedThreshold)
+	}
+	if cfg.PokeReaction.MaxReplyChars != defaultPokeReactionMaxReplyChars {
+		t.Errorf("expected PokeReaction.MaxReplyChars %d, got %d", defaultPokeReactionMaxReplyChars, cfg.PokeReaction.MaxReplyChars)
+	}
 }
 
 func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
@@ -47,6 +59,12 @@ func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 			MinIntervalMS: 350,
 			MaxIntervalMS: 1000,
 			RequireStream: true,
+		},
+		PokeReaction: config.PokeReactionConfig{
+			WindowMS:         60000,
+			MildThreshold:    4,
+			AnnoyedThreshold: 7,
+			MaxReplyChars:    24,
 		},
 	})
 
@@ -76,5 +94,35 @@ func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 	}
 	if !cfg.ContinuousSpeech.RequireStream {
 		t.Errorf("expected RequireStream true, got false")
+	}
+	if cfg.PokeReaction.WindowMS != 60000 {
+		t.Errorf("expected PokeReaction.WindowMS 60000, got %d", cfg.PokeReaction.WindowMS)
+	}
+	if cfg.PokeReaction.MildThreshold != 4 {
+		t.Errorf("expected PokeReaction.MildThreshold 4, got %d", cfg.PokeReaction.MildThreshold)
+	}
+	if cfg.PokeReaction.AnnoyedThreshold != 7 {
+		t.Errorf("expected PokeReaction.AnnoyedThreshold 7, got %d", cfg.PokeReaction.AnnoyedThreshold)
+	}
+	if cfg.PokeReaction.MaxReplyChars != 24 {
+		t.Errorf("expected PokeReaction.MaxReplyChars 24, got %d", cfg.PokeReaction.MaxReplyChars)
+	}
+}
+
+func TestNormalizeImmersiveConfig_PokeReactionThresholdOrder(t *testing.T) {
+	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{
+		PokeReaction: config.PokeReactionConfig{
+			WindowMS:         30000,
+			MildThreshold:    5,
+			AnnoyedThreshold: 2,
+			MaxReplyChars:    18,
+		},
+	})
+	if cfg.PokeReaction.AnnoyedThreshold != cfg.PokeReaction.MildThreshold {
+		t.Fatalf(
+			"expected AnnoyedThreshold to be clamped to MildThreshold, got annoyed=%d mild=%d",
+			cfg.PokeReaction.AnnoyedThreshold,
+			cfg.PokeReaction.MildThreshold,
+		)
 	}
 }

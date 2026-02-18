@@ -57,5 +57,20 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.SpeakGate.TimeoutMS <= 0 {
 		cfg.SpeakGate.TimeoutMS = defaultSpeakJudgeTimeoutMS
 	}
+	if cfg.PokeReaction.WindowMS <= 0 {
+		cfg.PokeReaction.WindowMS = defaultPokeReactionWindowMS
+	}
+	if cfg.PokeReaction.MildThreshold <= 0 {
+		cfg.PokeReaction.MildThreshold = defaultPokeReactionMildThresh
+	}
+	if cfg.PokeReaction.AnnoyedThreshold <= 0 {
+		cfg.PokeReaction.AnnoyedThreshold = defaultPokeReactionAnnoyedThresh
+	}
+	if cfg.PokeReaction.AnnoyedThreshold < cfg.PokeReaction.MildThreshold {
+		cfg.PokeReaction.AnnoyedThreshold = cfg.PokeReaction.MildThreshold
+	}
+	if cfg.PokeReaction.MaxReplyChars <= 0 {
+		cfg.PokeReaction.MaxReplyChars = defaultPokeReactionMaxReplyChars
+	}
 	return cfg
 }

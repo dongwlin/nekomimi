@@ -188,3 +188,56 @@ driver:
 		t.Fatal("expected path traversal error, got nil")
 	}
 }
+
+func TestLoad_ParseImmersivePokeReaction(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  history_max: 10
+  context_max: 1000
+  immersive:
+    max_batch_messages: 10
+    max_batch_chars: 1000
+    immediate_delay_ms: 100
+    poke_reaction:
+      window_ms: 60000
+      mild_threshold: 4
+      annoyed_threshold: 8
+      max_reply_chars: 18
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if cfg.LLM.Immersive.PokeReaction.WindowMS != 60000 {
+		t.Fatalf("unexpected window_ms: %d", cfg.LLM.Immersive.PokeReaction.WindowMS)
+	}
+	if cfg.LLM.Immersive.PokeReaction.MildThreshold != 4 {
+		t.Fatalf("unexpected mild_threshold: %d", cfg.LLM.Immersive.PokeReaction.MildThreshold)
+	}
+	if cfg.LLM.Immersive.PokeReaction.AnnoyedThreshold != 8 {
+		t.Fatalf("unexpected annoyed_threshold: %d", cfg.LLM.Immersive.PokeReaction.AnnoyedThreshold)
+	}
+	if cfg.LLM.Immersive.PokeReaction.MaxReplyChars != 18 {
+		t.Fatalf("unexpected max_reply_chars: %d", cfg.LLM.Immersive.PokeReaction.MaxReplyChars)
+	}
+}
