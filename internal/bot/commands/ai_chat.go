@@ -161,8 +161,8 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 			return
 		}
 		session := sessionKey(ctx)
-		actorLabel, actorName, actorKey := pokeActorInfo(ctx)
-		pokeCount, moodTier := pokeReactions.Observe(session, actorKey, time.Now())
+		actorLabel, actorName := pokeActorInfo(ctx)
+		pokeCount, moodTier := pokeReactions.Observe(session, time.Now())
 		maxChars := pokeMaxReplyChars(cfg.LLM.Immersive.PokeReaction)
 
 		engine.RecordTimelineEvent(session, actorName+"戳了你一下。", actorLabel)

@@ -50,12 +50,12 @@ func newPokeTracker(cfg config.PokeReactionConfig) *pokeTracker {
 	}
 }
 
-func (t *pokeTracker) Observe(sessionKey, userKey string, now time.Time) (int, pokeMoodTier) {
+func (t *pokeTracker) Observe(sessionKey string, now time.Time) (int, pokeMoodTier) {
 	if t == nil {
 		return 1, pokeMoodWarm
 	}
-	key := strings.TrimSpace(sessionKey) + "|" + strings.TrimSpace(userKey)
-	if strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(userKey) == "" {
+	key := strings.TrimSpace(sessionKey)
+	if key == "" {
 		return 1, pokeMoodWarm
 	}
 	cutoff := now.Add(-t.window)
@@ -109,7 +109,7 @@ func buildPokeReplyPrompt(count int, tier pokeMoodTier, maxChars int) string {
 		moodRule = "语气：自然、可爱、愿意接话。"
 	}
 	return fmt.Sprintf(
-		"你刚被同一位用户在最近窗口内连续戳了 %d 次，这代表对方想和你对话。请用中文回复一句话，长度不超过%d字，不要加引号。%s 回复要带一点互动感，最好能自然接到对话。",
+		"你在当前会话最近窗口内已经连续被戳了 %d 次，这代表有人想和你对话。请用中文回复一句话，长度不超过%d字，不要加引号。%s 回复要带一点互动感，最好能自然接到对话。",
 		count,
 		maxChars,
 		moodRule,
@@ -139,9 +139,9 @@ func pokeFallbackReplies(tier pokeMoodTier) []string {
 	}
 }
 
-func pokeActorInfo(ctx *zero.Ctx) (speaker string, displayName string, userKey string) {
+func pokeActorInfo(ctx *zero.Ctx) (speaker string, displayName string) {
 	if ctx == nil || ctx.Event == nil {
-		return "user", "对方", "unknown"
+		return "user", "对方"
 	}
 	label := strings.TrimSpace(speakerLabel(ctx))
 	name, speakerID := speakerNameAndID(ctx)
@@ -159,10 +159,5 @@ func pokeActorInfo(ctx *zero.Ctx) (speaker string, displayName string, userKey s
 			label = "user"
 		}
 	}
-	if strings.TrimSpace(speakerID) == "" {
-		userKey = fmt.Sprintf("%d", ctx.Event.UserID)
-	} else {
-		userKey = strings.TrimSpace(speakerID)
-	}
-	return label, displayName, userKey
+	return label, displayName
 }
