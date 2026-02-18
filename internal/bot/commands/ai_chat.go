@@ -133,6 +133,26 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		}
 	})
 
+	zero.OnCommand("chaton", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
+		engine.RefreshIdentityFromCtx(ctx)
+		if !llmManager.IsEnabled() {
+			ctx.Send("LLM 未开启，可使用 /llm on 开启")
+			return
+		}
+		args := strings.TrimSpace(ctx.State["args"].(string))
+		targetSession, targetLabel, err := parseTargetSessionKey(args)
+		if err != nil {
+			ctx.Send("用法: /chaton group <群号> | /chaton private <QQ号>\n示例: /chaton group 123456")
+			return
+		}
+		llmManager.SetImmersive(targetSession, true)
+		// 静默开启：若命令在目标会话内执行，不回任何开启文案。
+		if targetSession == sessionKey(ctx) {
+			return
+		}
+		ctx.Send("已静默开启沉浸模式: " + targetLabel)
+	})
+
 	zero.OnMessage().Handle(func(ctx *zero.Ctx) {
 		engine.RefreshIdentityFromCtx(ctx)
 		if !llmManager.IsEnabled() || !llmManager.IsImmersive(sessionKey(ctx)) {
@@ -243,4 +263,33 @@ func sendTimeAwareRandomMessage(ctx *zero.Ctx, dayMessages []string, nightMessag
 		}
 	}
 	sendRandomMessage(ctx, dayMessages)
+}
+
+func parseTargetSessionKey(raw string) (sessionKeyValue string, label string, err error) {
+	fields := strings.Fields(strings.TrimSpace(raw))
+	if len(fields) != 2 {
+		return "", "", fmt.Errorf("invalid args")
+	}
+	targetType := strings.ToLower(strings.TrimSpace(fields[0]))
+	targetID := strings.TrimSpace(fields[1])
+	if targetID == "" || !isDigits(targetID) {
+		return "", "", fmt.Errorf("invalid target id")
+	}
+	switch targetType {
+	case "group", "grp", "g":
+		return "group:" + targetID, "群聊(" + targetID + ")", nil
+	case "private", "pri", "p", "user", "u":
+		return "private:" + targetID, "私聊(" + targetID + ")", nil
+	default:
+		return "", "", fmt.Errorf("invalid target type")
+	}
+}
+
+func isDigits(value string) bool {
+	for _, ch := range value {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return value != ""
 }
