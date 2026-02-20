@@ -32,17 +32,6 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	if contextMax < 0 {
 		contextMax = 0
 	}
-	speakJudgePrompt := strings.TrimSpace(cfg.Immersive.SpeakGate.Prompt)
-	if speakJudgePrompt == "" {
-		speakJudgePrompt = llmprompt.SpeakGateJudgePrompt
-	}
-	speakJudgeModel := strings.TrimSpace(cfg.Immersive.SpeakGate.Model)
-	speakJudgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.SpeakGate.ReasoningEffort)
-	speakJudgeThinking := normalizeAssistantThinkingType(cfg.Immersive.SpeakGate.ThinkingType)
-	speakJudgeTimeout := time.Duration(cfg.Immersive.SpeakGate.TimeoutMS) * time.Millisecond
-	if speakJudgeTimeout <= 0 {
-		speakJudgeTimeout = 1200 * time.Millisecond
-	}
 
 	m.mu.Lock()
 	m.enabled = cfg.Enabled
@@ -57,12 +46,6 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	m.defaultProv = providerName
 	m.historyMax = historyMax
 	m.contextMax = contextMax
-	m.speakJudgeEnabled = cfg.Immersive.SpeakGate.Enabled
-	m.speakJudgeModel = speakJudgeModel
-	m.speakJudgePrompt = speakJudgePrompt
-	m.speakJudgeTimeout = speakJudgeTimeout
-	m.speakJudgeReasoning = speakJudgeReasoning
-	m.speakJudgeThinking = speakJudgeThinking
 	m.mu.Unlock()
 
 	m.client.SetAPIURL(apiURL)

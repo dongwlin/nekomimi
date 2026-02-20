@@ -10,11 +10,11 @@ import (
 var promptFS embed.FS
 
 var (
-	DefaultSystemPrompt     = mustReadPrompt("default_system.txt")
-	SpeakerSystemPrompt     = mustReadPrompt("speaker_system.txt")
-	SummarySystemPrompt     = mustReadPrompt("summary_system.txt")
-	LightSummaryPrompt      = mustReadPrompt("light_summary.txt")
-	SpeakGateJudgePrompt    = mustReadPrompt("speak_gate_judge.txt")
+	DefaultSystemPrompt    = mustReadPrompt("default_system.txt")
+	SpeakerSystemPrompt    = mustReadPrompt("speaker_system.txt")
+	SummarySystemPrompt    = mustReadPrompt("summary_system.txt")
+	LightSummaryPrompt     = mustReadPrompt("light_summary.txt")
+	ImmersiveControlPrompt = mustReadPrompt("immersive_control_reply.txt")
 )
 
 func mustReadPrompt(name string) string {

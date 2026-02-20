@@ -16,56 +16,30 @@ import (
 )
 
 type Manager struct {
-	mu                  sync.RWMutex
-	enabled             bool
-	provider            string
-	model               string
-	requestTimeout      time.Duration
-	systemPrompt        string
-	basePrompt          string
-	defaultModel        string
-	defaultPrompt       string
-	defaultAPI          string
-	defaultProv         string
-	client              *llmclient.Client
-	providers           *provider.Factory
-	historyStore        history.Store
-	historyMax          int
-	contextMax          int
-	immersive           map[string]bool
-	speakJudgeEnabled   bool
-	speakJudgeModel     string
-	speakJudgePrompt    string
-	speakJudgeTimeout   time.Duration
-	speakJudgeReasoning string
-	speakJudgeThinking  string
-	sessionStats        map[string]*sessionUsageStats
+	mu             sync.RWMutex
+	enabled        bool
+	provider       string
+	model          string
+	requestTimeout time.Duration
+	systemPrompt   string
+	basePrompt     string
+	defaultModel   string
+	defaultPrompt  string
+	defaultAPI     string
+	defaultProv    string
+	client         *llmclient.Client
+	providers      *provider.Factory
+	historyStore   history.Store
+	historyMax     int
+	contextMax     int
+	immersive      map[string]bool
+	sessionStats   map[string]*sessionUsageStats
 }
 
 type sessionUsageStats struct {
 	startedAt            time.Time
 	historyCompressCount int
 	contextCompressCount int
-}
-
-func normalizeAssistantReasoningEffort(effort string) string {
-	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "minimal", "low", "medium", "high", "none":
-		return strings.ToLower(strings.TrimSpace(effort))
-	default:
-		// 助手默认不继承全局推理强度，未配置或无效时按 none 处理。
-		return "none"
-	}
-}
-
-func normalizeAssistantThinkingType(thinkingType string) string {
-	switch strings.ToLower(strings.TrimSpace(thinkingType)) {
-	case "enabled", "disabled", "auto":
-		return strings.ToLower(strings.TrimSpace(thinkingType))
-	default:
-		// 助手默认不继承全局 thinking_type，未配置或无效时不传 thinking。
-		return "none"
-	}
 }
 
 func NewManager(cfg config.LLMConfig) *Manager {
@@ -78,17 +52,6 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	if contextMax < 0 {
 		contextMax = 0
 	}
-	speakJudgePrompt := strings.TrimSpace(cfg.Immersive.SpeakGate.Prompt)
-	if speakJudgePrompt == "" {
-		speakJudgePrompt = llmprompt.SpeakGateJudgePrompt
-	}
-	speakJudgeModel := strings.TrimSpace(cfg.Immersive.SpeakGate.Model)
-	speakJudgeReasoning := normalizeAssistantReasoningEffort(cfg.Immersive.SpeakGate.ReasoningEffort)
-	speakJudgeThinking := normalizeAssistantThinkingType(cfg.Immersive.SpeakGate.ThinkingType)
-	speakJudgeTimeout := time.Duration(cfg.Immersive.SpeakGate.TimeoutMS) * time.Millisecond
-	if speakJudgeTimeout <= 0 {
-		speakJudgeTimeout = 1200 * time.Millisecond
-	}
 	requestTimeout := time.Duration(cfg.TimeoutMS) * time.Millisecond
 	if requestTimeout <= 0 {
 		requestTimeout = llmclient.DefaultRequestTimeout
@@ -98,28 +61,22 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	client.SetThinkingType(cfg.ThinkingType)
 	client.SetShowReasoning(cfg.ShowReasoning)
 	return &Manager{
-		enabled:             cfg.Enabled,
-		provider:            providerName,
-		model:               strings.TrimSpace(cfg.Model),
-		requestTimeout:      requestTimeout,
-		systemPrompt:        systemPrompt,
-		basePrompt:          basePrompt,
-		defaultModel:        strings.TrimSpace(cfg.Model),
-		defaultPrompt:       systemPrompt,
-		defaultAPI:          apiURL,
-		defaultProv:         providerName,
-		client:              client,
-		providers:           provider.NewFactory(client),
-		historyStore:        history.NewMemoryStore(historyMax),
-		historyMax:          historyMax,
-		contextMax:          contextMax,
-		speakJudgeEnabled:   cfg.Immersive.SpeakGate.Enabled,
-		speakJudgeModel:     speakJudgeModel,
-		speakJudgePrompt:    speakJudgePrompt,
-		speakJudgeTimeout:   speakJudgeTimeout,
-		speakJudgeReasoning: speakJudgeReasoning,
-		speakJudgeThinking:  speakJudgeThinking,
-		sessionStats:        make(map[string]*sessionUsageStats),
+		enabled:        cfg.Enabled,
+		provider:       providerName,
+		model:          strings.TrimSpace(cfg.Model),
+		requestTimeout: requestTimeout,
+		systemPrompt:   systemPrompt,
+		basePrompt:     basePrompt,
+		defaultModel:   strings.TrimSpace(cfg.Model),
+		defaultPrompt:  systemPrompt,
+		defaultAPI:     apiURL,
+		defaultProv:    providerName,
+		client:         client,
+		providers:      provider.NewFactory(client),
+		historyStore:   history.NewMemoryStore(historyMax),
+		historyMax:     historyMax,
+		contextMax:     contextMax,
+		sessionStats:   make(map[string]*sessionUsageStats),
 	}
 }
 
@@ -271,6 +228,44 @@ func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speake
 	m.appendHistory(sessionKey, userContent, reply)
 	log.Info().
 		Str("request_source", "main_reply_stream").
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+		Msg("llm assistant streaming reply completed")
+	return reply, nil
+}
+
+func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onDelta func(delta string) error) (string, error) {
+	startedAt := time.Now()
+	m.mu.RLock()
+	provider := m.provider
+	model := m.model
+	systemPrompt := m.systemPrompt
+	m.mu.RUnlock()
+	requestPrompt := composeSystemPrompt(systemPrompt, extraPrompt)
+	if strings.TrimSpace(model) == "" {
+		return "", errors.New("未配置模型名")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.compressHistoryIfNeeded(ctx, provider, model, sessionKey)
+	history := m.historySnapshot(sessionKey)
+	userContent := formatUserContent(userInput, speaker)
+	messages := append(history, Message{Role: "user", Content: userContent})
+	messages = m.compressMessages(ctx, provider, model, requestPrompt, sessionKey, messages)
+	reply, err := m.generateStreamWithProvider(ctx, provider, model, requestPrompt, messages, llmclient.RequestOptions{
+		Source: "immersive_control_reply_stream",
+	}, onDelta)
+	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("request_source", "immersive_control_reply_stream").
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm assistant streaming reply failed")
+		return "", err
+	}
+	m.appendHistory(sessionKey, userContent, reply)
+	log.Info().
+		Str("request_source", "immersive_control_reply_stream").
 		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Msg("llm assistant streaming reply completed")
 	return reply, nil

@@ -32,7 +32,6 @@ type ImmersiveConfig struct {
 	ImmediateDelayMS int                    `yaml:"immediate_delay_ms"`
 	Timeline         TimelineConfig         `yaml:"timeline"`
 	ContinuousSpeech ContinuousSpeechConfig `yaml:"continuous_speech"`
-	SpeakGate        SpeakGateConfig        `yaml:"speak_gate"`
 	PokeReaction     PokeReactionConfig     `yaml:"poke_reaction"`
 }
 
@@ -49,16 +48,6 @@ type ContinuousSpeechConfig struct {
 	MinIntervalMS int  `yaml:"min_interval_ms"`
 	MaxIntervalMS int  `yaml:"max_interval_ms"`
 	RequireStream bool `yaml:"require_stream"`
-}
-
-type SpeakGateConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	Model           string `yaml:"model"`
-	Prompt          string `yaml:"prompt"`
-	TimeoutMS       int    `yaml:"timeout_ms"`
-	ReasoningEffort string `yaml:"reasoning_effort"`
-	ThinkingType    string `yaml:"thinking_type"`
-	FailOpen        bool   `yaml:"fail_open"`
 }
 
 type PokeReactionConfig struct {

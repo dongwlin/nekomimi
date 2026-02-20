@@ -54,9 +54,6 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.ContinuousSpeech.MaxIntervalMS < cfg.ContinuousSpeech.MinIntervalMS {
 		cfg.ContinuousSpeech.MaxIntervalMS = cfg.ContinuousSpeech.MinIntervalMS
 	}
-	if cfg.SpeakGate.TimeoutMS <= 0 {
-		cfg.SpeakGate.TimeoutMS = defaultSpeakJudgeTimeoutMS
-	}
 	if cfg.PokeReaction.WindowMS <= 0 {
 		cfg.PokeReaction.WindowMS = defaultPokeReactionWindowMS
 	}
