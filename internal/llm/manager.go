@@ -205,16 +205,16 @@ func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker stri
 	return reply, nil
 }
 
-func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speaker string, onDelta func(delta string) error) (string, error) {
+func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speaker string, onEvent StreamEventHandler) (string, error) {
 	startedAt := time.Now()
-	reply, err := m.replyWithPipeline(ctx, pipelineRequest{
+	reply, err := m.replyStreamWithPipeline(ctx, pipelineRequest{
 		UserInput:   userInput,
 		SessionKey:  sessionKey,
 		Speaker:     speaker,
 		ExtraPrompt: "",
 		Source:      "main_reply_stream",
 		AppendTurn:  true,
-	})
+	}, onEvent)
 	if err != nil {
 		log.Warn().
 			Err(err).
@@ -223,16 +223,6 @@ func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speake
 			Msg("llm assistant streaming reply failed")
 		return "", err
 	}
-	if onDelta != nil && strings.TrimSpace(reply) != "" {
-		if err := onDelta(reply); err != nil {
-			log.Warn().
-				Err(err).
-				Str("request_source", "main_reply_stream").
-				Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
-				Msg("llm assistant streaming callback failed")
-			return "", err
-		}
-	}
 	log.Info().
 		Str("request_source", "main_reply_stream").
 		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
@@ -240,16 +230,16 @@ func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speake
 	return reply, nil
 }
 
-func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onDelta func(delta string) error) (string, error) {
+func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error) {
 	startedAt := time.Now()
-	reply, err := m.replyWithPipeline(ctx, pipelineRequest{
+	reply, err := m.replyStreamWithPipeline(ctx, pipelineRequest{
 		UserInput:   userInput,
 		SessionKey:  sessionKey,
 		Speaker:     speaker,
 		ExtraPrompt: extraPrompt,
 		Source:      "immersive_control_reply_stream",
 		AppendTurn:  false,
-	})
+	}, onEvent)
 	if err != nil {
 		log.Warn().
 			Err(err).
@@ -257,16 +247,6 @@ func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, ses
 			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 			Msg("llm assistant streaming reply failed")
 		return "", err
-	}
-	if onDelta != nil && strings.TrimSpace(reply) != "" {
-		if err := onDelta(reply); err != nil {
-			log.Warn().
-				Err(err).
-				Str("request_source", "immersive_control_reply_stream").
-				Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
-				Msg("llm assistant streaming callback failed")
-			return "", err
-		}
 	}
 	log.Info().
 		Str("request_source", "immersive_control_reply_stream").
@@ -288,4 +268,19 @@ func (m *Manager) generateWithProvider(ctx context.Context, providerName, model,
 	defer cancel()
 	providerClient := m.providers.From(providerName)
 	return providerClient.Generate(reqCtx, model, systemPrompt, messages)
+}
+
+func (m *Manager) generateStreamWithProvider(ctx context.Context, providerName, model, systemPrompt string, messages []Message, options llmclient.RequestOptions, onDelta func(delta string) error) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = llmclient.WithRequestOptions(ctx, options)
+	timeout := m.requestTimeout
+	if timeout <= 0 {
+		timeout = llmclient.DefaultRequestTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	providerClient := m.providers.From(providerName)
+	return providerClient.GenerateStream(reqCtx, model, systemPrompt, messages, onDelta)
 }

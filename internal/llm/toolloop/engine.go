@@ -15,6 +15,8 @@ const defaultMaxSteps = 8
 var (
 	ErrRouterRequired = errors.New("tool router is required")
 	ErrDriverRequired = errors.New("model driver is required")
+
+	errStreamEventCallback = errors.New("stream event callback failed")
 )
 
 // EngineOptions controls default behavior for the loop engine.
@@ -133,6 +135,189 @@ func (e *loopEngine) Run(ctx context.Context, req RunRequest) (RunResult, error)
 	}
 
 	return finalize(trace, StopReasonMaxSteps), nil
+}
+
+func (e *loopEngine) RunStream(ctx context.Context, req RunRequest, onEvent StreamEventHandler) (RunResult, error) {
+	if e.router == nil {
+		return RunResult{}, ErrRouterRequired
+	}
+	if e.driver == nil {
+		return RunResult{}, ErrDriverRequired
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	streamDriver, ok := e.driver.(StreamModelDriver)
+	if !ok {
+		result, err := e.Run(ctx, req)
+		if err != nil {
+			return result, err
+		}
+		if onEvent != nil {
+			if strings.TrimSpace(result.FinalMessage) != "" {
+				if err := onEvent(StreamEvent{
+					Step: 0,
+					Frame: StreamMessage{
+						Version: StreamProtocolVersion,
+						Type:    MessageTypeDelta,
+						Delta: &DeltaPayload{
+							Text: result.FinalMessage,
+						},
+					},
+				}); err != nil {
+					return RunResult{}, fmt.Errorf("%w: %v", errStreamEventCallback, err)
+				}
+			}
+			if err := onEvent(StreamEvent{
+				Step: 0,
+				Frame: StreamMessage{
+					Version: StreamProtocolVersion,
+					Type:    MessageTypeFinal,
+					Final: &FinalPayload{
+						Content:    result.FinalMessage,
+						StopReason: result.StopReason,
+					},
+				},
+			}); err != nil {
+				return RunResult{}, fmt.Errorf("%w: %v", errStreamEventCallback, err)
+			}
+		}
+		return result, nil
+	}
+
+	maxSteps := req.Config.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = e.defaultMaxSteps
+	}
+	if maxSteps <= 0 {
+		maxSteps = defaultMaxSteps
+	}
+
+	trace := make([]Message, 0, maxSteps*2+1)
+	for step := 0; step < maxSteps; step++ {
+		if isTimeout(ctx.Err()) {
+			result := finalize(trace, StopReasonTimeout)
+			if err := emitSafetyFinalEvent(onEvent, step, StopReasonTimeout); err != nil {
+				return RunResult{}, err
+			}
+			return result, nil
+		}
+
+		next, err := streamDriver.NextStream(ctx, req, copyTrace(trace), func(frame StreamMessage) error {
+			if frame.Type != MessageTypeDelta {
+				return errors.New("stream driver emitted non-delta frame")
+			}
+			if frame.Delta == nil {
+				return errors.New("stream delta payload is required")
+			}
+			if onEvent == nil {
+				return nil
+			}
+			if err := onEvent(StreamEvent{Step: step, Frame: frame}); err != nil {
+				return fmt.Errorf("%w: %v", errStreamEventCallback, err)
+			}
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, errStreamEventCallback) {
+				return RunResult{}, err
+			}
+			if isTimeout(err) || isTimeout(ctx.Err()) {
+				result := finalize(trace, StopReasonTimeout)
+				if emitErr := emitSafetyFinalEvent(onEvent, step, StopReasonTimeout); emitErr != nil {
+					return RunResult{}, emitErr
+				}
+				return result, nil
+			}
+			trace = append(trace, errorMessage(ErrorCodeModelResponse, err.Error(), false))
+			errorFrame := messageToStreamFrame(trace[len(trace)-1])
+			if emitErr := emitEvent(onEvent, step, errorFrame); emitErr != nil {
+				return RunResult{}, emitErr
+			}
+			return RunResult{
+				StopReason: StopReasonError,
+				Trace:      trace,
+			}, nil
+		}
+
+		if protocolErr := validateModelMessage(next); protocolErr != nil {
+			message := Message{
+				Version: ProtocolVersion,
+				Type:    MessageTypeError,
+				Error:   protocolErr,
+			}
+			trace = append(trace, message)
+			if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
+				return RunResult{}, emitErr
+			}
+			return RunResult{
+				StopReason: StopReasonError,
+				Trace:      trace,
+			}, nil
+		}
+
+		next.Version = ProtocolVersion
+		trace = append(trace, next)
+		if emitErr := emitEvent(onEvent, step, messageToStreamFrame(next)); emitErr != nil {
+			return RunResult{}, emitErr
+		}
+
+		switch next.Type {
+		case MessageTypeToolCall:
+			toolResult, callErr := e.executeTool(ctx, *next.ToolCall)
+			if callErr != nil {
+				message := Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeError,
+					Error:   callErr,
+				}
+				trace = append(trace, message)
+				if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
+					return RunResult{}, emitErr
+				}
+				return RunResult{
+					StopReason: StopReasonError,
+					Trace:      trace,
+				}, nil
+			}
+			trace = append(trace, toolResult)
+			if emitErr := emitEvent(onEvent, step, messageToStreamFrame(toolResult)); emitErr != nil {
+				return RunResult{}, emitErr
+			}
+		case MessageTypeFinal:
+			return RunResult{
+				FinalMessage: next.Final.Content,
+				StopReason:   next.Final.StopReason,
+				Trace:        trace,
+			}, nil
+		case MessageTypeError:
+			return RunResult{
+				StopReason: StopReasonError,
+				Trace:      trace,
+			}, nil
+		default:
+			message := errorMessage(
+				ErrorCodeInvalidProtocol,
+				fmt.Sprintf("unsupported model message type %q", next.Type),
+				false,
+			)
+			trace = append(trace, message)
+			if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
+				return RunResult{}, emitErr
+			}
+			return RunResult{
+				StopReason: StopReasonError,
+				Trace:      trace,
+			}, nil
+		}
+	}
+
+	result := finalize(trace, StopReasonMaxSteps)
+	if err := emitSafetyFinalEvent(onEvent, maxSteps, StopReasonMaxSteps); err != nil {
+		return RunResult{}, err
+	}
+	return result, nil
 }
 
 func (e *loopEngine) executeTool(ctx context.Context, call ToolCallPayload) (Message, *ErrorPayload) {
@@ -381,4 +566,34 @@ func copyTrace(trace []Message) []Message {
 
 func isTimeout(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func emitSafetyFinalEvent(onEvent StreamEventHandler, step int, reason StopReason) error {
+	if onEvent == nil {
+		return nil
+	}
+	return onEvent(StreamEvent{
+		Step: step,
+		Frame: StreamMessage{
+			Version: StreamProtocolVersion,
+			Type:    MessageTypeFinal,
+			Final: &FinalPayload{
+				Content:    "",
+				StopReason: reason,
+			},
+		},
+	})
+}
+
+func emitEvent(onEvent StreamEventHandler, step int, frame StreamMessage) error {
+	if onEvent == nil {
+		return nil
+	}
+	if err := onEvent(StreamEvent{
+		Step:  step,
+		Frame: frame,
+	}); err != nil {
+		return fmt.Errorf("%w: %v", errStreamEventCallback, err)
+	}
+	return nil
 }

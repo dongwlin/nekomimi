@@ -325,6 +325,235 @@ func TestEngine_Run_ModelDriverError(t *testing.T) {
 	}
 }
 
+func TestEngine_RunStream_DeltaAndFinal(t *testing.T) {
+	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
+		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
+	})
+	driver := &scriptedStreamDriver{
+		t: t,
+		steps: []streamDriverStep{
+			{
+				frames: []StreamMessage{
+					{
+						Version: StreamProtocolVersion,
+						Type:    MessageTypeDelta,
+						Delta:   &DeltaPayload{Text: "你"},
+					},
+					{
+						Version: StreamProtocolVersion,
+						Type:    MessageTypeDelta,
+						Delta:   &DeltaPayload{Text: "好"},
+					},
+				},
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeFinal,
+					Final: &FinalPayload{
+						Content:    "你好",
+						StopReason: StopReasonFinal,
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(router, driver, EngineOptions{})
+	events := make([]StreamEvent, 0, 4)
+	result, err := engine.RunStream(context.Background(), RunRequest{
+		Config: RunConfig{MaxSteps: 3},
+	}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("run stream failed: %v", err)
+	}
+	if result.StopReason != StopReasonFinal {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonFinal)
+	}
+	if result.FinalMessage != "你好" {
+		t.Fatalf("final message mismatch: got %q", result.FinalMessage)
+	}
+	if len(events) != 3 {
+		t.Fatalf("event count mismatch: got %d, want 3", len(events))
+	}
+	if events[0].Frame.Type != MessageTypeDelta || events[1].Frame.Type != MessageTypeDelta || events[2].Frame.Type != MessageTypeFinal {
+		t.Fatalf("unexpected event sequence: %+v", events)
+	}
+}
+
+func TestEngine_RunStream_ToolCallToolResultFinalSequence(t *testing.T) {
+	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
+		return tools.CallResult{
+			Name:    req.Name,
+			Content: "echo: hello",
+		}, nil
+	})
+	driver := &scriptedStreamDriver{
+		t: t,
+		steps: []streamDriverStep{
+			{
+				frames: []StreamMessage{
+					{
+						Version: StreamProtocolVersion,
+						Type:    MessageTypeDelta,
+						Delta:   &DeltaPayload{Text: "thinking"},
+					},
+				},
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeToolCall,
+					ToolCall: &ToolCallPayload{
+						CallID:    "c1",
+						Name:      "internal/echo",
+						Arguments: mustRawJSON(t, map[string]any{"text": "hello"}),
+					},
+				},
+			},
+			{
+				frames: []StreamMessage{
+					{
+						Version: StreamProtocolVersion,
+						Type:    MessageTypeDelta,
+						Delta:   &DeltaPayload{Text: "done"},
+					},
+				},
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeFinal,
+					Final: &FinalPayload{
+						Content:    "done",
+						StopReason: StopReasonFinal,
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(router, driver, EngineOptions{})
+	events := make([]StreamEvent, 0, 8)
+	result, err := engine.RunStream(context.Background(), RunRequest{
+		Config: RunConfig{MaxSteps: 4},
+	}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("run stream failed: %v", err)
+	}
+	if result.StopReason != StopReasonFinal {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonFinal)
+	}
+	if len(events) < 5 {
+		t.Fatalf("event count should be >= 5, got %d", len(events))
+	}
+	if events[0].Frame.Type != MessageTypeDelta {
+		t.Fatalf("events[0] should be delta, got %q", events[0].Frame.Type)
+	}
+	if events[1].Frame.Type != MessageTypeToolCall {
+		t.Fatalf("events[1] should be tool_call, got %q", events[1].Frame.Type)
+	}
+	if events[2].Frame.Type != MessageTypeToolResult {
+		t.Fatalf("events[2] should be tool_result, got %q", events[2].Frame.Type)
+	}
+	if events[3].Frame.Type != MessageTypeDelta {
+		t.Fatalf("events[3] should be delta, got %q", events[3].Frame.Type)
+	}
+	if events[4].Frame.Type != MessageTypeFinal {
+		t.Fatalf("events[4] should be final, got %q", events[4].Frame.Type)
+	}
+}
+
+func TestEngine_RunStream_CallbackError(t *testing.T) {
+	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
+		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
+	})
+	driver := &scriptedStreamDriver{
+		t: t,
+		steps: []streamDriverStep{
+			{
+				frames: []StreamMessage{
+					{
+						Version: StreamProtocolVersion,
+						Type:    MessageTypeDelta,
+						Delta:   &DeltaPayload{Text: "x"},
+					},
+				},
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeFinal,
+					Final: &FinalPayload{
+						Content:    "x",
+						StopReason: StopReasonFinal,
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(router, driver, EngineOptions{})
+	_, err := engine.RunStream(context.Background(), RunRequest{Config: RunConfig{MaxSteps: 2}}, func(event StreamEvent) error {
+		return errors.New("event failed")
+	})
+	if err == nil {
+		t.Fatal("expected callback error, got nil")
+	}
+	if !strings.Contains(err.Error(), "event failed") {
+		t.Fatalf("callback error detail missing: %v", err)
+	}
+}
+
+func TestEngine_RunStream_MaxStepsSafetyExit(t *testing.T) {
+	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
+		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
+	})
+	driver := &scriptedStreamDriver{
+		t: t,
+		steps: []streamDriverStep{
+			{
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeToolCall,
+					ToolCall: &ToolCallPayload{
+						CallID:    "c1",
+						Name:      "internal/echo",
+						Arguments: mustRawJSON(t, map[string]any{}),
+					},
+				},
+			},
+			{
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeToolCall,
+					ToolCall: &ToolCallPayload{
+						CallID:    "c2",
+						Name:      "internal/echo",
+						Arguments: mustRawJSON(t, map[string]any{}),
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(router, driver, EngineOptions{})
+	events := make([]StreamEvent, 0, 4)
+	result, err := engine.RunStream(context.Background(), RunRequest{
+		Config: RunConfig{MaxSteps: 1},
+	}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("run stream failed: %v", err)
+	}
+	if result.StopReason != StopReasonMaxSteps {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonMaxSteps)
+	}
+	if len(events) == 0 || events[len(events)-1].Frame.Type != MessageTypeFinal {
+		t.Fatalf("expected safety final event, got %+v", events)
+	}
+}
+
 type scriptedDriver struct {
 	t     *testing.T
 	steps []driverStep
@@ -358,6 +587,48 @@ type repeatToolCallDriver struct {
 func (d *repeatToolCallDriver) Next(ctx context.Context, req RunRequest, trace []Message) (Message, error) {
 	d.calls++
 	return d.msg, nil
+}
+
+type streamDriverStep struct {
+	frames      []StreamMessage
+	msg         Message
+	err         error
+	assertTrace func(t *testing.T, trace []Message)
+}
+
+type scriptedStreamDriver struct {
+	t     *testing.T
+	steps []streamDriverStep
+	calls int
+}
+
+func (d *scriptedStreamDriver) Next(ctx context.Context, req RunRequest, trace []Message) (Message, error) {
+	if d.calls >= len(d.steps) {
+		return Message{}, errors.New("unexpected model step")
+	}
+	step := d.steps[d.calls]
+	d.calls++
+	return step.msg, step.err
+}
+
+func (d *scriptedStreamDriver) NextStream(ctx context.Context, req RunRequest, trace []Message, onFrame StreamFrameHandler) (Message, error) {
+	if d.calls >= len(d.steps) {
+		return Message{}, errors.New("unexpected model step")
+	}
+	step := d.steps[d.calls]
+	d.calls++
+	if step.assertTrace != nil {
+		step.assertTrace(d.t, trace)
+	}
+	for _, frame := range step.frames {
+		if onFrame == nil {
+			continue
+		}
+		if err := onFrame(frame); err != nil {
+			return Message{}, err
+		}
+	}
+	return step.msg, step.err
 }
 
 func buildTestRouter(t *testing.T, toolName string, handler func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error)) tools.Router {

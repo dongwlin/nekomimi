@@ -1,6 +1,7 @@
 package immersive
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -197,10 +198,93 @@ func newResponsesJSONServer(t *testing.T, statusCode int, responseBody string) *
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(statusCode)
-		_, _ = fmt.Fprint(w, body)
+		for _, event := range buildResponsesStreamEvents(t, body) {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", event)
+		}
 	}))
+}
+
+func buildResponsesStreamEvents(t *testing.T, body string) []string {
+	t.Helper()
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return []string{
+			`{"type":"response.completed"}`,
+		}
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return []string{
+			mustResponsesDeltaEventRaw(t, trimmed),
+			`{"type":"response.completed"}`,
+		}
+	}
+
+	if rawErr, ok := payload["error"].(map[string]any); ok {
+		message := strings.TrimSpace(toString(rawErr["message"]))
+		if message == "" {
+			message = "model error"
+		}
+		event := map[string]any{
+			"type": "response.error",
+			"error": map[string]any{
+				"message": message,
+			},
+		}
+		return []string{mustMarshalJSON(t, event)}
+	}
+
+	text := extractResponsesText(payload)
+	return []string{
+		mustResponsesDeltaEventRaw(t, text),
+		`{"type":"response.completed"}`,
+	}
+}
+
+func extractResponsesText(payload map[string]any) string {
+	output, ok := payload["output"].([]any)
+	if !ok || len(output) == 0 {
+		return ""
+	}
+	first, ok := output[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	content, ok := first["content"].([]any)
+	if !ok || len(content) == 0 {
+		return ""
+	}
+	part, ok := content[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return toString(part["text"])
+}
+
+func mustResponsesDeltaEventRaw(t *testing.T, delta string) string {
+	t.Helper()
+	event := map[string]any{
+		"type":  "response.output_text.delta",
+		"delta": delta,
+	}
+	return mustMarshalJSON(t, event)
+}
+
+func mustMarshalJSON(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal json failed: %v", err)
+	}
+	return string(data)
+}
+
+func toString(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 func newImmersiveBufferForFlushTest(t *testing.T, apiURL string) (*ImmersiveBuffer, string) {

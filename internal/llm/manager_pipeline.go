@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	"github.com/dongwlin/nekomimi/internal/llm/model"
 	"github.com/dongwlin/nekomimi/internal/llm/toolloop"
@@ -88,6 +90,118 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 		Config: toolloop.RunConfig{
 			MaxSteps: state.toolLoopMaxStep,
 		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	reply, err := finalizeToolLoopResult(result)
+	if err != nil {
+		return "", err
+	}
+	if req.AppendTurn {
+		m.appendHistory(req.SessionKey, userContent, reply)
+	}
+	return reply, nil
+}
+
+func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineRequest, onEvent StreamEventHandler) (string, error) {
+	if m == nil {
+		return "", errors.New("manager is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	state := m.snapshotPipelineState()
+	if strings.TrimSpace(state.model) == "" {
+		return "", errors.New("model is not configured")
+	}
+
+	userContent := formatUserContent(req.UserInput, req.Speaker)
+	if strings.TrimSpace(userContent) == "" {
+		return "", errors.New("input is empty")
+	}
+
+	requestPrompt := composeSystemPrompt(state.systemPrompt, req.ExtraPrompt)
+	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, userContent)
+	if err != nil {
+		return "", err
+	}
+	if compressed {
+		m.incrementContextTrimCount(req.SessionKey)
+	}
+
+	var seq int64
+	emit := func(step int, message toolloop.StreamMessage) error {
+		if onEvent == nil {
+			return nil
+		}
+		current := atomic.AddInt64(&seq, 1)
+		return onEvent(mapToolLoopStreamEvent(current, step, message))
+	}
+
+	if !state.toolsEnabled || state.router == nil {
+		reply, err := m.generateStreamWithProvider(ctx, state.provider, state.model, requestPrompt, messages, llmclient.RequestOptions{
+			Source: req.Source,
+		}, func(delta string) error {
+			if strings.TrimSpace(delta) == "" {
+				return nil
+			}
+			return emit(0, toolloop.StreamMessage{
+				Version: toolloop.StreamProtocolVersion,
+				Type:    toolloop.MessageTypeDelta,
+				Delta: &toolloop.DeltaPayload{
+					Text: delta,
+				},
+			})
+		})
+		if err != nil {
+			return "", err
+		}
+		if err := emit(0, toolloop.StreamMessage{
+			Version: toolloop.StreamProtocolVersion,
+			Type:    toolloop.MessageTypeFinal,
+			Final: &toolloop.FinalPayload{
+				Content:    strings.TrimSpace(reply),
+				StopReason: toolloop.StopReasonFinal,
+			},
+		}); err != nil {
+			return "", err
+		}
+		if req.AppendTurn {
+			m.appendHistory(req.SessionKey, userContent, reply)
+		}
+		return reply, nil
+	}
+
+	toolDescriptors, err := state.router.ListTools(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list tools failed: %w", err)
+	}
+
+	runCtx := ctx
+	cancel := func() {}
+	if state.toolLoopTimeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, state.toolLoopTimeout)
+	}
+	defer cancel()
+
+	engine := toolloop.NewEngine(
+		state.router,
+		newManagerToolLoopDriver(m, state.provider, req.Source),
+		toolloop.EngineOptions{DefaultMaxSteps: state.toolLoopMaxStep},
+	)
+	result, err := engine.RunStream(runCtx, toolloop.RunRequest{
+		ModelName:    state.model,
+		SystemPrompt: requestPrompt,
+		Messages:     messages,
+		Tools:        toolDescriptors,
+		Config: toolloop.RunConfig{
+			MaxSteps: state.toolLoopMaxStep,
+		},
+	}, func(event toolloop.StreamEvent) error {
+		return emit(event.Step, event.Frame)
 	})
 	if err != nil {
 		return "", err
@@ -203,4 +317,38 @@ func protocolErrorMessage(trace []toolloop.Message) string {
 		}
 	}
 	return ""
+}
+
+func mapToolLoopStreamEvent(seq int64, step int, message toolloop.StreamMessage) StreamEvent {
+	event := StreamEvent{
+		Seq:  seq,
+		Step: step,
+	}
+	switch message.Type {
+	case toolloop.MessageTypeDelta:
+		event.Type = StreamEventDelta
+		if message.Delta != nil {
+			event.Delta = message.Delta.Text
+		}
+	case toolloop.MessageTypeToolCall:
+		event.Type = StreamEventToolCall
+		event.ToolCall = message.ToolCall
+	case toolloop.MessageTypeToolResult:
+		event.Type = StreamEventToolResult
+		event.ToolResult = message.ToolResult
+	case toolloop.MessageTypeFinal:
+		event.Type = StreamEventFinal
+		event.Final = message.Final
+	case toolloop.MessageTypeError:
+		event.Type = StreamEventError
+		event.Error = message.Error
+	default:
+		event.Type = StreamEventError
+		event.Error = &toolloop.ErrorPayload{
+			Code:      toolloop.ErrorCodeInvalidProtocol,
+			Message:   "unsupported stream event type",
+			Retryable: false,
+		}
+	}
+	return event
 }

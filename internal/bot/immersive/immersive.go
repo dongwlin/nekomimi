@@ -269,31 +269,42 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Msg("immersive reply recorded into timeline and llm history")
 	}
 
-	onDelta := func(delta string) error {
-		parsedDecision, bodyDelta, ready, err := headerParser.Consume(delta)
-		if err != nil {
-			return fmt.Errorf("%w: %w", errControlHeaderProtocol, err)
-		}
-		if !ready {
-			return nil
-		}
-		decision = parsedDecision
-		if parsedDecision.action != controlActionReply || bodyDelta == "" {
-			return nil
-		}
-		replyBuilder.WriteString(bodyDelta)
-		if ctx == nil || !b.cfg.ContinuousSpeech.Enabled {
-			return nil
-		}
-		chunks := acc.Append(bodyDelta)
-		for _, chunk := range chunks {
-			if sentMessages > 0 {
-				time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
+	onEvent := func(event llm.StreamEvent) error {
+		switch event.Type {
+		case llm.StreamEventDelta:
+			delta := event.Delta
+			parsedDecision, bodyDelta, ready, err := headerParser.Consume(delta)
+			if err != nil {
+				return fmt.Errorf("%w: %w", errControlHeaderProtocol, err)
 			}
-			ctx.Send(chunk)
-			sentReplyBuilder.WriteString(chunk)
-			sentMessages++
-			sentChars += len([]rune(chunk))
+			if !ready {
+				return nil
+			}
+			decision = parsedDecision
+			if parsedDecision.action != controlActionReply || bodyDelta == "" {
+				return nil
+			}
+			replyBuilder.WriteString(bodyDelta)
+			if ctx == nil || !b.cfg.ContinuousSpeech.Enabled {
+				return nil
+			}
+			chunks := acc.Append(bodyDelta)
+			for _, chunk := range chunks {
+				if sentMessages > 0 {
+					time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
+				}
+				ctx.Send(chunk)
+				sentReplyBuilder.WriteString(chunk)
+				sentMessages++
+				sentChars += len([]rune(chunk))
+			}
+		case llm.StreamEventToolCall, llm.StreamEventToolResult, llm.StreamEventFinal, llm.StreamEventError:
+			log.Debug().
+				Str("session", sessionKey).
+				Int64("stream_seq", event.Seq).
+				Int("stream_step", event.Step).
+				Str("stream_event_type", string(event.Type)).
+				Msg("immersive stream event")
 		}
 		return nil
 	}
@@ -306,7 +317,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		sessionKey,
 		"",
 		llmprompt.ImmersiveControlPrompt,
-		onDelta,
+		onEvent,
 	)
 	if streamErr == nil {
 		finalDecision, err := headerParser.Finalize()

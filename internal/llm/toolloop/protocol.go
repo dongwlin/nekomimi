@@ -9,16 +9,22 @@ import (
 )
 
 const ProtocolVersion = "v1"
+const StreamProtocolVersion = "v2"
 
 // MessageType is the stable protocol message kind.
 type MessageType string
 
 const (
+	MessageTypeDelta      MessageType = "delta"
 	MessageTypeToolCall   MessageType = "tool_call"
 	MessageTypeToolResult MessageType = "tool_result"
 	MessageTypeFinal      MessageType = "final"
 	MessageTypeError      MessageType = "error"
 )
+
+type DeltaPayload struct {
+	Text string `json:"text"`
+}
 
 // ErrorCode is the stable protocol error code set.
 type ErrorCode string
@@ -81,6 +87,17 @@ type Message struct {
 	Error      *ErrorPayload      `json:"error,omitempty"`
 }
 
+// StreamMessage is the v2 streaming frame shape.
+type StreamMessage struct {
+	Version    string             `json:"version"`
+	Type       MessageType        `json:"type"`
+	Delta      *DeltaPayload      `json:"delta,omitempty"`
+	ToolCall   *ToolCallPayload   `json:"tool_call,omitempty"`
+	ToolResult *ToolResultPayload `json:"tool_result,omitempty"`
+	Final      *FinalPayload      `json:"final,omitempty"`
+	Error      *ErrorPayload      `json:"error,omitempty"`
+}
+
 // RunConfig controls loop safety limits.
 type RunConfig struct {
 	MaxSteps int
@@ -107,7 +124,22 @@ type ModelDriver interface {
 	Next(ctx context.Context, req RunRequest, trace []Message) (Message, error)
 }
 
+type StreamFrameHandler func(frame StreamMessage) error
+
+// StreamModelDriver is the optional streaming participant for v2 protocol.
+type StreamModelDriver interface {
+	NextStream(ctx context.Context, req RunRequest, trace []Message, onFrame StreamFrameHandler) (Message, error)
+}
+
+type StreamEvent struct {
+	Step  int
+	Frame StreamMessage
+}
+
+type StreamEventHandler func(event StreamEvent) error
+
 // Engine drives tool-loop state transitions until termination.
 type Engine interface {
 	Run(ctx context.Context, req RunRequest) (RunResult, error)
+	RunStream(ctx context.Context, req RunRequest, onEvent StreamEventHandler) (RunResult, error)
 }
