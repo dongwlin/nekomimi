@@ -53,8 +53,7 @@ type sessionUsageStats struct {
 }
 
 func NewManager(cfg config.LLMConfig) *Manager {
-	basePrompt := composeSystemPrompt(llmprompt.DefaultSystemPrompt, llmprompt.SpeakerSystemPrompt)
-	systemPrompt := composeSystemPrompt(basePrompt, cfg.SystemPrompt)
+	basePrompt, systemPrompt := composeConfiguredSystemPrompt(cfg.SystemPrompt)
 	providerName := normalizeProvider(cfg.Provider)
 	apiURL := normalizeAPIURL(providerName, cfg.API)
 	contextMax := cfg.ContextMax
@@ -101,6 +100,15 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		toolLoopTimeout:  runtimeCfg.toolLoopTimeout,
 		sessionStats:     make(map[string]*sessionUsageStats),
 	}
+}
+
+func composeConfiguredSystemPrompt(configPrompt string) (basePrompt string, systemPrompt string) {
+	basePrompt = strings.TrimSpace(llmprompt.SpeakerSystemPrompt)
+	customPrompt := strings.TrimSpace(configPrompt)
+	if customPrompt == "" {
+		return basePrompt, composeSystemPrompt(basePrompt, llmprompt.DefaultSystemPrompt)
+	}
+	return basePrompt, composeSystemPrompt(basePrompt, customPrompt)
 }
 
 func (m *Manager) IsEnabled() bool {

@@ -10,7 +10,6 @@ import (
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	"github.com/dongwlin/nekomimi/internal/llm/diary"
-	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
 )
 
 // ReloadConfig refreshes runtime LLM settings without clearing in-memory history.
@@ -27,8 +26,7 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	if requestTimeout <= 0 {
 		requestTimeout = defaultRequestTimeout()
 	}
-	basePrompt := composeSystemPrompt(llmprompt.DefaultSystemPrompt, llmprompt.SpeakerSystemPrompt)
-	systemPrompt := composeSystemPrompt(basePrompt, cfg.SystemPrompt)
+	basePrompt, systemPrompt := composeConfiguredSystemPrompt(cfg.SystemPrompt)
 	contextMax := cfg.ContextMax
 	if contextMax < 0 {
 		contextMax = 0
