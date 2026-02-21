@@ -4,7 +4,6 @@
 package immersive
 
 import (
-	"context"
 	"sync"
 	"time"
 
@@ -42,19 +41,6 @@ type immersiveSession struct {
 	inFlight        bool
 	lastCtx         *zero.Ctx
 	waitRounds      int
-	pregen          preGenerateState
-}
-
-// preGenerateState tracks the lifecycle of a session pre-generated reply.
-type preGenerateState struct {
-	version     uint64
-	input       string
-	reply       string
-	err         error
-	done        chan struct{}
-	cancel      context.CancelFunc
-	running     bool
-	regenCount  int
 }
 
 // queuedMessage represents a single message in the buffer queue.
@@ -85,18 +71,4 @@ type queueMeta struct {
 	QuestionsCount int
 	LastSpeaker    string
 	TimeSpanMS     int64
-}
-
-// speakGateResult contains the decision result from the speak gate evaluation.
-type speakGateResult struct {
-	shouldSpeak       bool
-	waitMS            int
-	reason            string
-	assistantStatus   string
-	mentionsToBot     int
-	addressedToBot    int
-	questionsCount    int
-	directedQuestions int
-	messagesCount     int
-	participantsCount int
 }

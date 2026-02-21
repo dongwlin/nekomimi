@@ -13,7 +13,7 @@ func TestLoad_ResolveSystemPromptFileRef(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
 		t.Fatalf("mkdir prompt dir failed: %v", err)
 	}
-	if err := os.WriteFile(promptPath, []byte("你是测试猫娘。"), 0o644); err != nil {
+	if err := os.WriteFile(promptPath, []byte("system role prompt"), 0o644); err != nil {
 		t.Fatalf("write prompt file failed: %v", err)
 	}
 
@@ -33,21 +33,9 @@ llm:
   history_max: 10
   context_max: 1000
   immersive:
-    cooldown_min_ms: 100
-    cooldown_max_ms: 200
-    cooldown_base_ms: 150
-    private_base_ms: 100
-    window_ms: 5000
-    jitter_ms: 200
     max_batch_messages: 10
     max_batch_chars: 1000
     immediate_delay_ms: 100
-    speak_gate:
-      enabled: false
-      model: ""
-      prompt: ""
-      timeout_ms: 1000
-      fail_open: true
 driver:
   websocket:
     url: "ws://localhost:3001"
@@ -61,77 +49,8 @@ driver:
 	if err != nil {
 		t.Fatalf("load config failed: %v", err)
 	}
-	if cfg.LLM.SystemPrompt != "你是测试猫娘。" {
+	if cfg.LLM.SystemPrompt != "system role prompt" {
 		t.Fatalf("unexpected system prompt: %q", cfg.LLM.SystemPrompt)
-	}
-}
-
-func TestLoad_ResolveOtherPromptFileRefs(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	mainPromptPath := filepath.Join(tmpDir, "prompts", "role.txt")
-	speakGatePromptPath := filepath.Join(tmpDir, "prompts", "speak_gate_judge.txt")
-	for _, path := range []string{mainPromptPath, speakGatePromptPath} {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("mkdir prompt dir failed: %v", err)
-		}
-	}
-	if err := os.WriteFile(mainPromptPath, []byte("主提示词"), 0o644); err != nil {
-		t.Fatalf("write main prompt failed: %v", err)
-	}
-	if err := os.WriteFile(speakGatePromptPath, []byte("发言门控判定提示词"), 0o644); err != nil {
-		t.Fatalf("write speak-gate prompt failed: %v", err)
-	}
-
-	configPath := filepath.Join(tmpDir, "config.yml")
-	configContent := []byte(`
-nickname:
-  - "test"
-command_prefix: "/"
-super_users: []
-llm:
-  enabled: true
-  provider: "openai"
-  api: ""
-  key: ""
-  model: "x"
-  system_prompt: "{{file:prompts/role.txt}}"
-  history_max: 10
-  context_max: 1000
-  immersive:
-    cooldown_min_ms: 100
-    cooldown_max_ms: 200
-    cooldown_base_ms: 150
-    private_base_ms: 100
-    window_ms: 5000
-    jitter_ms: 200
-    max_batch_messages: 10
-    max_batch_chars: 1000
-    immediate_delay_ms: 100
-    speak_gate:
-      enabled: true
-      model: ""
-      prompt: "{{file:prompts/speak_gate_judge.txt}}"
-      timeout_ms: 1000
-      fail_open: true
-driver:
-  websocket:
-    url: "ws://localhost:3001"
-    token: "token"
-`)
-	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
-		t.Fatalf("write config failed: %v", err)
-	}
-
-	cfg, err := Load(configPath)
-	if err != nil {
-		t.Fatalf("load config failed: %v", err)
-	}
-	if cfg.LLM.SystemPrompt != "主提示词" {
-		t.Fatalf("unexpected system prompt: %q", cfg.LLM.SystemPrompt)
-	}
-	if cfg.LLM.Immersive.SpeakGate.Prompt != "发言门控判定提示词" {
-		t.Fatalf("unexpected speak gate judge prompt: %q", cfg.LLM.Immersive.SpeakGate.Prompt)
 	}
 }
 
@@ -159,21 +78,9 @@ llm:
   history_max: 10
   context_max: 1000
   immersive:
-    cooldown_min_ms: 100
-    cooldown_max_ms: 200
-    cooldown_base_ms: 150
-    private_base_ms: 100
-    window_ms: 5000
-    jitter_ms: 200
     max_batch_messages: 10
     max_batch_chars: 1000
     immediate_delay_ms: 100
-    speak_gate:
-      enabled: false
-      model: ""
-      prompt: ""
-      timeout_ms: 1000
-      fail_open: true
 driver:
   websocket:
     url: "ws://localhost:3001"
