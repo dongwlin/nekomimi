@@ -363,7 +363,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		decisionLog = decisionLog.Err(streamErr)
 	}
 	decisionLog.Msg("immersive control decision evaluated")
-	if streamErr != nil && ctx != nil && sentMessages > 0 {
+	if action == controlActionSkip && streamErr != nil && ctx != nil && sentMessages > 0 {
 		recordReply(sentReplyBuilder.String(), "partial_stream_recorded")
 	}
 
