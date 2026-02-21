@@ -36,6 +36,8 @@ const (
 	immersiveEmptyReplyFallback      = "..."
 )
 
+var errControlHeaderProtocol = errors.New("control header protocol")
+
 // NewImmersiveBuffer creates a new ImmersiveBuffer with the given configuration,
 // LLM manager, and bot nicknames.
 func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager *llm.Manager, nicknames []string) *ImmersiveBuffer {
@@ -254,14 +256,28 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	headerParser := newControlHeaderParser()
 	acc := newStreamChunkAccumulator(b.cfg.ContinuousSpeech)
 	var replyBuilder strings.Builder
+	var sentReplyBuilder strings.Builder
 	sentMessages := 0
 	sentChars := 0
 	decision := controlHeaderDecision{}
+	recordReply := func(reply, reason string) {
+		trimmed := strings.TrimSpace(reply)
+		if trimmed == "" {
+			return
+		}
+		b.recordAssistantUtterance(sessionKey, trimmed)
+		b.llm.AppendTurn(sessionKey, input, "", trimmed)
+		log.Info().
+			Str("session", sessionKey).
+			Str("reason", reason).
+			Int("reply_chars", len([]rune(trimmed))).
+			Msg("immersive reply recorded into timeline and llm history")
+	}
 
 	onDelta := func(delta string) error {
 		parsedDecision, bodyDelta, ready, err := headerParser.Consume(delta)
 		if err != nil {
-			return fmt.Errorf("control header protocol: %w", err)
+			return fmt.Errorf("%w: %w", errControlHeaderProtocol, err)
 		}
 		if !ready {
 			return nil
@@ -280,14 +296,17 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
 			}
 			ctx.Send(chunk)
+			sentReplyBuilder.WriteString(chunk)
 			sentMessages++
 			sentChars += len([]rune(chunk))
 		}
 		return nil
 	}
 
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	defer cancelStream()
 	_, streamErr := b.llm.ReplyStreamWithExtraPrompt(
-		context.Background(),
+		streamCtx,
 		input,
 		sessionKey,
 		"",
@@ -297,7 +316,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	if streamErr == nil {
 		finalDecision, err := headerParser.Finalize()
 		if err != nil {
-			streamErr = fmt.Errorf("control header protocol: %w", err)
+			streamErr = fmt.Errorf("%w: %w", errControlHeaderProtocol, err)
 		} else {
 			decision = finalDecision
 		}
@@ -344,6 +363,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		decisionLog = decisionLog.Err(streamErr)
 	}
 	decisionLog.Msg("immersive control decision evaluated")
+	if streamErr != nil && ctx != nil && sentMessages > 0 {
+		recordReply(sentReplyBuilder.String(), "partial_stream_recorded")
+	}
 
 	if action == controlActionWait {
 		waitDelay := time.Duration(waitMS) * time.Millisecond
@@ -374,6 +396,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 					time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
 				}
 				ctx.Send(chunk)
+				sentReplyBuilder.WriteString(chunk)
 				sentMessages++
 				sentChars += len([]rune(chunk))
 			}
@@ -390,6 +413,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		} else if b.cfg.ContinuousSpeech.Enabled {
 			if sentMessages == 0 {
 				ctx.Send(reply)
+				sentReplyBuilder.WriteString(reply)
 				sentMessages = 1
 				sentChars = len([]rune(reply))
 			}
@@ -401,6 +425,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				Msg("immersive continuous reply sent")
 		} else {
 			ctx.Send(reply)
+			sentReplyBuilder.WriteString(reply)
 			sentMessages = 1
 			sentChars = len([]rune(reply))
 			log.Info().
@@ -408,7 +433,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				Int("reply_chars", len([]rune(reply))).
 				Msg("immersive reply sent")
 		}
-		b.recordAssistantUtterance(sessionKey, reply)
+		recordReply(reply, "reply_action")
 	}
 
 	delay := time.Duration(b.cfg.ImmediateDelayMS) * time.Millisecond
@@ -437,43 +462,16 @@ func isControlHeaderProtocolError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, errControlHeaderProtocol) {
+		return true
+	}
 	if errors.Is(err, errControlHeaderTooLong) ||
 		errors.Is(err, errControlHeaderMissingNewline) ||
 		errors.Is(err, errControlHeaderInvalid) ||
 		errors.Is(err, errControlHeaderUnexpectedContent) {
 		return true
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "control header protocol")
-}
-
-func (b *ImmersiveBuffer) sendBufferedContinuousReply(ctx *zero.Ctx, sessionKey, reply string) {
-	acc := newStreamChunkAccumulator(b.cfg.ContinuousSpeech)
-	sentMessages := 0
-	sentChars := 0
-	chunks := acc.Append(reply)
-	for _, chunk := range chunks {
-		if sentMessages > 0 {
-			time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
-		}
-		ctx.Send(chunk)
-		sentMessages++
-		sentChars += len([]rune(chunk))
-	}
-	for _, chunk := range acc.FlushTail() {
-		if sentMessages > 0 {
-			time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
-		}
-		ctx.Send(chunk)
-		sentMessages++
-		sentChars += len([]rune(chunk))
-	}
-	log.Info().
-		Str("session", sessionKey).
-		Int("reply_chars", len([]rune(reply))).
-		Int("reply_messages", sentMessages).
-		Int("sent_chars", sentChars).
-		Msg("immersive continuous reply sent")
-	b.recordAssistantUtterance(sessionKey, reply)
+	return false
 }
 
 // session retrieves or creates the session state for the given session key.

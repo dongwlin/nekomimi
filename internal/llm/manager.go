@@ -263,7 +263,6 @@ func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, ses
 			Msg("llm assistant streaming reply failed")
 		return "", err
 	}
-	m.appendHistory(sessionKey, userContent, reply)
 	log.Info().
 		Str("request_source", "immersive_control_reply_stream").
 		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).

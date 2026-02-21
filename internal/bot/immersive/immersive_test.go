@@ -2,11 +2,15 @@ package immersive
 
 import (
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/llm"
 )
 
 func TestBuildCombinedInput_ContainsStructuredMeta(t *testing.T) {
@@ -55,11 +59,14 @@ func TestIsControlHeaderProtocolError(t *testing.T) {
 		t.Fatal("expected parser error to be treated as protocol error")
 	}
 
-	wrapped := errors.New("control header protocol: something wrong")
+	wrapped := fmt.Errorf("%w: %w", errControlHeaderProtocol, errControlHeaderMissingNewline)
 	if !isControlHeaderProtocolError(wrapped) {
-		t.Fatal("expected wrapped control header protocol message to be detected")
+		t.Fatal("expected wrapped control header protocol error to be detected")
 	}
 
+	if isControlHeaderProtocolError(errors.New("control header protocol: something wrong")) {
+		t.Fatal("expected plain string message to be rejected")
+	}
 	if isControlHeaderProtocolError(errors.New("network timeout")) {
 		t.Fatal("expected non-protocol error to be rejected")
 	}
@@ -87,4 +94,152 @@ func TestRecordTimelineEvent_AppendsWithoutQueueing(t *testing.T) {
 	if state.timeline[1].speaker != "assistant" {
 		t.Fatalf("unexpected second speaker: %q", state.timeline[1].speaker)
 	}
+}
+
+func TestFlush_ProtocolErrorFirstRoundWaitThenFollowupSkip(t *testing.T) {
+	t.Run("first round protocol error uses wait", func(t *testing.T) {
+		server := newResponsesSSEServer(t, []string{
+			`{"type":"response.output_text.delta","delta":"REPLY"}`,
+			`{"type":"response.completed"}`,
+		})
+		defer server.Close()
+
+		buffer, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses")
+		seedQueueForFlushTest(buffer, sessionKey, 0)
+
+		buffer.flush(sessionKey)
+
+		state := buffer.session(sessionKey)
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if got := len(state.queue); got != 1 {
+			t.Fatalf("expected queue to be requeued on wait, got %d", got)
+		}
+		if state.waitRounds != 1 {
+			t.Fatalf("expected waitRounds=1, got %d", state.waitRounds)
+		}
+		if state.timer == nil {
+			t.Fatal("expected wait timer to be scheduled")
+		}
+		state.timer.Stop()
+		state.timer = nil
+	})
+
+	t.Run("follow-up protocol error uses skip", func(t *testing.T) {
+		server := newResponsesSSEServer(t, []string{
+			`{"type":"response.output_text.delta","delta":"REPLY"}`,
+			`{"type":"response.completed"}`,
+		})
+		defer server.Close()
+
+		buffer, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses")
+		seedQueueForFlushTest(buffer, sessionKey, 1)
+
+		buffer.flush(sessionKey)
+
+		state := buffer.session(sessionKey)
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if got := len(state.queue); got != 0 {
+			t.Fatalf("expected queue to be dropped on skip, got %d", got)
+		}
+		if state.waitRounds != 0 {
+			t.Fatalf("expected waitRounds reset to 0 after skip, got %d", state.waitRounds)
+		}
+	})
+}
+
+func TestFlush_NonProtocolStreamErrorSkips(t *testing.T) {
+	server := newResponsesSSEServer(t, []string{
+		`{"type":"response.error","error":{"message":"boom"}}`,
+	})
+	defer server.Close()
+
+	buffer, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses")
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	buffer.flush(sessionKey)
+
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if got := len(state.queue); got != 0 {
+		t.Fatalf("expected queue to be dropped on non-protocol stream error, got %d", got)
+	}
+	if state.waitRounds != 0 {
+		t.Fatalf("expected waitRounds reset to 0, got %d", state.waitRounds)
+	}
+}
+
+func TestFlush_WaitRoundsLimitConvertsWaitToSkip(t *testing.T) {
+	server := newResponsesSSEServer(t, []string{
+		`{"type":"response.output_text.delta","delta":"WAIT:100\n"}`,
+		`{"type":"response.completed"}`,
+	})
+	defer server.Close()
+
+	buffer, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses")
+	seedQueueForFlushTest(buffer, sessionKey, maxImmersiveWaitRounds)
+
+	buffer.flush(sessionKey)
+
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if got := len(state.queue); got != 0 {
+		t.Fatalf("expected queue to be dropped when wait limit is reached, got %d", got)
+	}
+	if state.waitRounds != 0 {
+		t.Fatalf("expected waitRounds reset to 0 after limit skip, got %d", state.waitRounds)
+	}
+}
+
+func newResponsesSSEServer(t *testing.T, events []string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for _, event := range events {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", event)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+}
+
+func newImmersiveBufferForFlushTest(t *testing.T, apiURL string) (*ImmersiveBuffer, string) {
+	t.Helper()
+	sessionKey := "group:flush-test"
+	manager := llm.NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      apiURL,
+		Key:      "test-key",
+	})
+	manager.SetImmersive(sessionKey, true)
+	buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, manager, []string{"neko"})
+	return buffer, sessionKey
+}
+
+func seedQueueForFlushTest(buffer *ImmersiveBuffer, sessionKey string, waitRounds int) {
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.queue = []queuedMessage{
+		{
+			text:    "hello",
+			speaker: "name=alice",
+			ts:      time.Now(),
+			chars:   len([]rune("hello")),
+		},
+	}
+	state.queueChars = len([]rune("hello"))
+	state.waitRounds = waitRounds
+	state.lastCtx = nil
 }

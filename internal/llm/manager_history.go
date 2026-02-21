@@ -10,14 +10,14 @@ import (
 )
 
 type SessionContextUsage struct {
-	UsedTokens            int
-	MaxTokens             int
-	UsagePercent          float64
-	MessageCount          int
-	SessionStartedAt      time.Time
-	HistoryCompressCount  int
-	ContextCompressCount  int
-	TotalCompressCount    int
+	UsedTokens           int
+	MaxTokens            int
+	UsagePercent         float64
+	MessageCount         int
+	SessionStartedAt     time.Time
+	HistoryCompressCount int
+	ContextCompressCount int
+	TotalCompressCount   int
 }
 
 func (m *Manager) historySnapshot(sessionKey string) []Message {
@@ -42,6 +42,13 @@ func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) 
 		Message{Role: "user", Content: userContent},
 		Message{Role: "assistant", Content: assistantReply},
 	)
+}
+
+// AppendTurn appends a completed user-assistant turn into session history.
+// userInput/speaker are normalized using the same formatter as regular replies.
+func (m *Manager) AppendTurn(sessionKey, userInput, speaker, assistantReply string) {
+	userContent := formatUserContent(userInput, speaker)
+	m.appendHistory(sessionKey, userContent, assistantReply)
 }
 
 func (m *Manager) compressHistoryIfNeeded(ctx context.Context, provider, model, sessionKey string) {

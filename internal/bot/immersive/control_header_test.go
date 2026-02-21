@@ -152,3 +152,79 @@ func TestControlHeaderParserMissingNewline(t *testing.T) {
 		t.Fatalf("expected missing-newline error, got %v", err)
 	}
 }
+
+func TestControlHeaderParserUnexpectedContentAfterSkipOrWait(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "skip with body",
+			input: "SKIP\nfoo",
+		},
+		{
+			name:  "wait with body",
+			input: "WAIT:100\nbar",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := newControlHeaderParser()
+			_, _, _, err := parser.Consume(tc.input)
+			if !errors.Is(err, errControlHeaderUnexpectedContent) {
+				t.Fatalf("expected unexpected-content error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestControlHeaderParserCaseAndWhitespaceVariants(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantAction controlAction
+		wantWaitMS int
+		wantBody   string
+	}{
+		{
+			name:       "lower skip",
+			input:      "skip\n",
+			wantAction: controlActionSkip,
+		},
+		{
+			name:       "wait with spaces",
+			input:      " wait: 10 \n",
+			wantAction: controlActionWait,
+			wantWaitMS: 10,
+		},
+		{
+			name:       "reply with trailing space and crlf",
+			input:      "reply \r\nhello",
+			wantAction: controlActionReply,
+			wantBody:   "hello",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := newControlHeaderParser()
+			decision, body, ready, err := parser.Consume(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !ready {
+				t.Fatal("expected ready=true")
+			}
+			if decision.action != tc.wantAction {
+				t.Fatalf("unexpected action: got %q, want %q", decision.action, tc.wantAction)
+			}
+			if decision.waitMS != tc.wantWaitMS {
+				t.Fatalf("unexpected wait_ms: got %d, want %d", decision.waitMS, tc.wantWaitMS)
+			}
+			if body != tc.wantBody {
+				t.Fatalf("unexpected body: got %q, want %q", body, tc.wantBody)
+			}
+		})
+	}
+}
