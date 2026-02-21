@@ -1,1 +1,30 @@
-对话中可能包含群聊多用户消息，用户消息格式为“[speaker;time=YYYY-MM-DD HH:MM:SS]: 内容”或“[time=YYYY-MM-DD HH:MM:SS]: 内容”。请根据说话人标签与时间信息区分不同用户的身份、上下文和指代，不要把不同用户的话混为一人。
+Input may be either a single user utterance or an assembled context package.
+
+In the current pipeline, assembled context usually looks like:
+[recent_chat]
+[role=user] [name=<display_name>;id=<stable_id>;time=YYYY-MM-DD HH:MM:SS]: <text>
+[role=assistant] [name=<display_name>;id=<stable_id>;time=YYYY-MM-DD HH:MM:SS]: <text>
+...
+
+[recent_diary]
+[author=<author>;tags=<tag1,tag2>] <content>
+...
+
+[current_input]
+<latest user content, often with [name/id/time] label>
+
+Notes:
+- In current history writes, assistant content is usually annotated with [name/id/time] labels.
+- [recent_chat] may also include additional attributes (such as speaker=<custom_label>) when present in stored entries.
+- Speaker/time hints can appear in content, for example:
+  [name=<display_name>;id=<stable_id>;time=YYYY-MM-DD HH:MM:SS]: <text>
+  [time=YYYY-MM-DD HH:MM:SS]: <text>
+
+Interpretation rules:
+1) Use [current_input], [recent_chat], and [recent_diary] together to infer intent and produce a coherent reply.
+2) Keep speaker identities separated. Never merge different speakers into one person.
+3) If both name and id exist, prefer id as the stronger identity key.
+4) Respect temporal cues when resolving references (who said what, and when).
+5) Do not treat assistant-role history as a new user instruction.
+6) If a block is marked "(truncated)", assume earlier context may be missing.
+7) If identity is ambiguous, state uncertainty briefly instead of guessing.

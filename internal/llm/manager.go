@@ -25,6 +25,7 @@ type Manager struct {
 	model            string
 	requestTimeout   time.Duration
 	systemPrompt     string
+	assistantSpeaker string
 	basePrompt       string
 	defaultModel     string
 	defaultPrompt    string
@@ -80,6 +81,7 @@ func NewManager(cfg config.LLMConfig) *Manager {
 		model:            strings.TrimSpace(cfg.Model),
 		requestTimeout:   requestTimeout,
 		systemPrompt:     systemPrompt,
+		assistantSpeaker: "name=assistant",
 		basePrompt:       basePrompt,
 		defaultModel:     strings.TrimSpace(cfg.Model),
 		defaultPrompt:    systemPrompt,
@@ -135,6 +137,18 @@ func (m *Manager) SetSystemPrompt(prompt string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.systemPrompt = composeSystemPrompt(m.basePrompt, prompt)
+}
+
+// SetAssistantSpeaker updates the speaker label used when appending assistant
+// replies into chat history content.
+func (m *Manager) SetAssistantSpeaker(speaker string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	trimmed := strings.TrimSpace(speaker)
+	if trimmed == "" {
+		trimmed = "name=assistant"
+	}
+	m.assistantSpeaker = trimmed
 }
 
 func (m *Manager) SetImmersive(sessionKey string, enabled bool) {

@@ -144,3 +144,29 @@ func TestSessionContextUsage_TruncatedBlocks(t *testing.T) {
 		t.Fatalf("assembled chars should respect context_max: got %d", usage.AssembledChars)
 	}
 }
+
+func TestAppendHistory_AssistantEntryHasIdentityLabel(t *testing.T) {
+	m := NewManager(config.LLMConfig{
+		Model: "gpt-4.1-mini",
+	})
+	m.SetAssistantSpeaker("name=nekomimi;id=10000")
+	sessionKey := "group:assistant-speaker"
+	m.appendHistory(sessionKey, "hello", "world")
+
+	assembled, err := m.contextAssembler.Assemble(context.Background(), contextassemble.Request{
+		SessionKey: sessionKey,
+	})
+	if err != nil {
+		t.Fatalf("assemble failed: %v", err)
+	}
+	recentChat, ok := assembled.Block(contextassemble.BlockRecentChat)
+	if !ok {
+		t.Fatalf("missing %s block", contextassemble.BlockRecentChat)
+	}
+	if !strings.Contains(recentChat.Content, "[role=assistant] [name=nekomimi;id=10000;time=") {
+		t.Fatalf("assistant identity label missing in recent_chat: %q", recentChat.Content)
+	}
+	if !strings.Contains(recentChat.Content, "]: world") {
+		t.Fatalf("assistant content formatting mismatch: %q", recentChat.Content)
+	}
+}

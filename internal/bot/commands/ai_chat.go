@@ -17,6 +17,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 
 	zero.OnCommand("ai").Handle(func(ctx *zero.Ctx) {
 		engine.RefreshIdentityFromCtx(ctx)
+		llmManager.SetAssistantSpeaker(assistantLabel(ctx))
 		prompt := strings.TrimSpace(ctx.State["args"].(string))
 		if prompt == "" {
 			ctx.Send("用法: /ai 你的问题")
@@ -192,6 +193,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 
 	zero.On("notice/notify/poke").Handle(func(ctx *zero.Ctx) {
 		engine.RefreshIdentityFromCtx(ctx)
+		llmManager.SetAssistantSpeaker(assistantLabel(ctx))
 		if ctx == nil || ctx.Event == nil || !ctx.Event.IsToMe {
 			return
 		}

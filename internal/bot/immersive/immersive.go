@@ -211,9 +211,11 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 	state.mu.Unlock()
 
-	input := buildCombinedInput(timeline, b.currentIdentity())
+	identity := b.currentIdentity()
+	b.llm.SetAssistantSpeaker(assistantSpeakerLabel(identity))
+	input := buildCombinedInput(timeline, identity)
 	if strings.TrimSpace(input) == "" {
-		input = buildCombinedInput(queue, b.currentIdentity())
+		input = buildCombinedInput(queue, identity)
 	}
 	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(queue)
 	if repeatText != "" && ctx != nil {
@@ -531,6 +533,34 @@ func (b *ImmersiveBuffer) botPrimaryName() string {
 		return trimmed
 	}
 	return "bot"
+}
+
+func assistantSpeakerLabel(identity botIdentity) string {
+	name := "assistant"
+	for _, candidate := range identity.ConfigNicknames {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed != "" {
+			name = trimmed
+			break
+		}
+	}
+	if name == "assistant" {
+		if nick := strings.TrimSpace(identity.AccountNickname); nick != "" {
+			name = nick
+		}
+	}
+	var id string
+	for _, candidate := range identity.AccountIDs {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed != "" {
+			id = trimmed
+			break
+		}
+	}
+	if id == "" {
+		return "name=" + name
+	}
+	return "name=" + name + ";id=" + id
 }
 
 // RefreshIdentityFromCtx updates runtime bot identity data from event context.

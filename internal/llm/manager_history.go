@@ -52,14 +52,22 @@ func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) 
 	m.ensureSessionStarted(session)
 	m.mu.RLock()
 	store := m.chatStore
+	assistantSpeaker := strings.TrimSpace(m.assistantSpeaker)
 	m.mu.RUnlock()
 	if store == nil {
+		return
+	}
+	if assistantSpeaker == "" {
+		assistantSpeaker = "name=assistant"
+	}
+	assistantContent := formatUserContent(assistantReply, assistantSpeaker)
+	if strings.TrimSpace(assistantContent) == "" {
 		return
 	}
 
 	if err := store.Append(context.Background(), session,
 		chatlog.Entry{Role: chatlog.RoleUser, Content: userContent},
-		chatlog.Entry{Role: chatlog.RoleAssistant, Content: assistantReply},
+		chatlog.Entry{Role: chatlog.RoleAssistant, Content: assistantContent},
 	); err != nil {
 		log.Warn().Err(err).Str("session", session).Msg("append chat history failed")
 	}
