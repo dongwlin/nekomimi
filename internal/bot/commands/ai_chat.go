@@ -245,26 +245,32 @@ func sendContextUsage(ctx *zero.Ctx, llmManager *llm.Manager) {
 	}
 	if usage.MaxTokens <= 0 {
 		ctx.Send(fmt.Sprintf(
-			"当前会话上下文估算:\n会话开始: %s\n已使用: %d tokens\n上限: 未设置（context_max <= 0）\n占比: 未启用\n历史消息: %d 条\n压缩次数: %d（历史: %d, 上下文: %d）",
+			"当前会话上下文（新链路）:\n会话开始: %s\n估算 tokens: %d\ntoken 上限: 未设置（context_max <= 0）\n占比: 未启用\nrecent_chat: %d/%d\nrecent_diary: %d/%d\n组装字符数: %d\n截断块数: %d\n累计截断轮次: %d",
 			sessionStart,
 			usage.UsedTokens,
-			usage.MessageCount,
-			usage.TotalCompressCount,
-			usage.HistoryCompressCount,
-			usage.ContextCompressCount,
+			usage.RecentChatCount,
+			usage.RecentChatLimit,
+			usage.RecentDiaryCount,
+			usage.RecentDiaryLimit,
+			usage.AssembledChars,
+			usage.TruncatedBlockCount,
+			usage.ContextTrimCount,
 		))
 		return
 	}
 	ctx.Send(fmt.Sprintf(
-		"当前会话上下文估算:\n会话开始: %s\n已使用: %d/%d tokens\n占比: %.1f%%\n历史消息: %d 条\n压缩次数: %d（历史: %d, 上下文: %d）",
+		"当前会话上下文（新链路）:\n会话开始: %s\n估算 tokens: %d/%d\n占比: %.1f%%\nrecent_chat: %d/%d\nrecent_diary: %d/%d\n组装字符数: %d\n截断块数: %d\n累计截断轮次: %d",
 		sessionStart,
 		usage.UsedTokens,
 		usage.MaxTokens,
 		usage.UsagePercent,
-		usage.MessageCount,
-		usage.TotalCompressCount,
-		usage.HistoryCompressCount,
-		usage.ContextCompressCount,
+		usage.RecentChatCount,
+		usage.RecentChatLimit,
+		usage.RecentDiaryCount,
+		usage.RecentDiaryLimit,
+		usage.AssembledChars,
+		usage.TruncatedBlockCount,
+		usage.ContextTrimCount,
 	))
 }
 

@@ -98,10 +98,7 @@ func TestRecordTimelineEvent_AppendsWithoutQueueing(t *testing.T) {
 
 func TestFlush_ProtocolErrorFirstRoundWaitThenFollowupSkip(t *testing.T) {
 	t.Run("first round protocol error uses wait", func(t *testing.T) {
-		server := newResponsesSSEServer(t, []string{
-			`{"type":"response.output_text.delta","delta":"REPLY"}`,
-			`{"type":"response.completed"}`,
-		})
+		server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"REPLY"}]}]}`)
 		defer server.Close()
 
 		buffer, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses")
@@ -126,10 +123,7 @@ func TestFlush_ProtocolErrorFirstRoundWaitThenFollowupSkip(t *testing.T) {
 	})
 
 	t.Run("follow-up protocol error uses skip", func(t *testing.T) {
-		server := newResponsesSSEServer(t, []string{
-			`{"type":"response.output_text.delta","delta":"REPLY"}`,
-			`{"type":"response.completed"}`,
-		})
+		server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"REPLY"}]}]}`)
 		defer server.Close()
 
 		buffer, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses")
@@ -149,10 +143,8 @@ func TestFlush_ProtocolErrorFirstRoundWaitThenFollowupSkip(t *testing.T) {
 	})
 }
 
-func TestFlush_NonProtocolStreamErrorSkips(t *testing.T) {
-	server := newResponsesSSEServer(t, []string{
-		`{"type":"response.error","error":{"message":"boom"}}`,
-	})
+func TestFlush_NonProtocolModelErrorSkips(t *testing.T) {
+	server := newResponsesJSONServer(t, http.StatusOK, `{"error":{"message":"boom"}}`)
 	defer server.Close()
 
 	buffer, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses")
@@ -164,7 +156,7 @@ func TestFlush_NonProtocolStreamErrorSkips(t *testing.T) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if got := len(state.queue); got != 0 {
-		t.Fatalf("expected queue to be dropped on non-protocol stream error, got %d", got)
+		t.Fatalf("expected queue to be dropped on non-protocol model error, got %d", got)
 	}
 	if state.waitRounds != 0 {
 		t.Fatalf("expected waitRounds reset to 0, got %d", state.waitRounds)
@@ -172,10 +164,7 @@ func TestFlush_NonProtocolStreamErrorSkips(t *testing.T) {
 }
 
 func TestFlush_WaitRoundsLimitConvertsWaitToSkip(t *testing.T) {
-	server := newResponsesSSEServer(t, []string{
-		`{"type":"response.output_text.delta","delta":"WAIT:100\n"}`,
-		`{"type":"response.completed"}`,
-	})
+	server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"WAIT:100\n"}]}]}`)
 	defer server.Close()
 
 	buffer, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses")
@@ -194,21 +183,23 @@ func TestFlush_WaitRoundsLimitConvertsWaitToSkip(t *testing.T) {
 	}
 }
 
-func newResponsesSSEServer(t *testing.T, events []string) *httptest.Server {
+func newResponsesJSONServer(t *testing.T, statusCode int, responseBody string) *httptest.Server {
 	t.Helper()
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
+	body := strings.TrimSpace(responseBody)
+	if body == "" {
+		body = `{"output":[{"content":[{"type":"output_text","text":"REPLY\nok"}]}]}`
+	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
-		for _, event := range events {
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", event)
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		_, _ = fmt.Fprint(w, body)
 	}))
 }
 

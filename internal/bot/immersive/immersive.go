@@ -22,8 +22,6 @@ const (
 	defaultImmediateDelayMS          = 120
 	defaultTimelineMaxMessages       = 200
 	defaultTimelineOverflowMessages  = 50
-	defaultTimelineCompressBatch     = 100
-	timelineFallbackSummaryLen       = 1000
 	defaultContinuousMinChars        = 12
 	defaultContinuousMaxChars        = 80
 	defaultContinuousMinMS           = 300
@@ -138,7 +136,6 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	state.queue = nil
 	state.queueChars = 0
 	state.timeline = nil
-	state.timelineSummary = ""
 	state.waitRounds = 0
 	if state.timer != nil {
 		state.timer.Stop()
@@ -186,7 +183,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	timeline := make([]queuedMessage, len(state.timeline))
 	copy(timeline, state.timeline)
 	timelineSnapshotLen := len(timeline)
-	timelineSummary := strings.TrimSpace(state.timelineSummary)
 	state.queue = nil
 	state.queueChars = 0
 	state.inFlight = true
@@ -201,7 +197,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Int("wait_rounds", waitRounds).
 		Msg("immersive flush started")
 
-	timeline, timelineSummary = b.compactTimelineSnapshot(timeline, timelineSummary)
+	timeline = trimTimelineTail(timeline, b.timelineLimit())
 	state.mu.Lock()
 	if len(state.timeline) > timelineSnapshotLen {
 		tail := make([]queuedMessage, len(state.timeline)-timelineSnapshotLen)
@@ -213,10 +209,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	} else {
 		state.timeline = trimTimelineTail(timeline, b.timelineLimit())
 	}
-	state.timelineSummary = timelineSummary
 	state.mu.Unlock()
 
-	input := buildCombinedInputWithSummary(timeline, timelineSummary, b.currentIdentity())
+	input := buildCombinedInput(timeline, b.currentIdentity())
 	if strings.TrimSpace(input) == "" {
 		input = buildCombinedInput(queue, b.currentIdentity())
 	}
@@ -511,70 +506,6 @@ func (b *ImmersiveBuffer) RecordTimelineEvent(sessionKey, text, speaker string) 
 		chars:   len([]rune(strings.TrimSpace(text))),
 	}
 	state.timeline = appendTimelineMessage(state.timeline, msg, b.timelineLimit())
-}
-
-func (b *ImmersiveBuffer) compactTimelineSnapshot(timeline []queuedMessage, summary string) ([]queuedMessage, string) {
-	trimmedSummary := strings.TrimSpace(summary)
-	working := make([]queuedMessage, len(timeline))
-	copy(working, timeline)
-	changed := false
-	maxMessages := b.cfg.Timeline.MaxMessages
-	compressBatch := b.cfg.Timeline.CompressBatch
-	limit := b.timelineLimit()
-	for len(working) >= maxMessages {
-		if len(working) < compressBatch {
-			break
-		}
-		chunk := make([]queuedMessage, compressBatch)
-		copy(chunk, working[:compressBatch])
-		nextSummary := b.summarizeTimelineChunk(trimmedSummary, chunk)
-		if strings.TrimSpace(nextSummary) == "" {
-			// Keep recent context if summarization is unavailable.
-			break
-		}
-		trimmedSummary = strings.TrimSpace(nextSummary)
-		working = working[compressBatch:]
-		changed = true
-	}
-	if !changed && len(working) <= limit {
-		return working, trimmedSummary
-	}
-	working = trimTimelineTail(working, limit)
-	return working, trimmedSummary
-}
-
-func (b *ImmersiveBuffer) summarizeTimelineChunk(previousSummary string, chunk []queuedMessage) string {
-	if len(chunk) == 0 {
-		return strings.TrimSpace(previousSummary)
-	}
-	messages := make([]llm.Message, 0, len(chunk))
-	botName := strings.ToLower(strings.TrimSpace(b.botPrimaryName()))
-	for _, msg := range chunk {
-		content := strings.TrimSpace(msg.text)
-		if content == "" {
-			continue
-		}
-		role := "user"
-		speaker := strings.TrimSpace(msg.speaker)
-		normalizedSpeaker := strings.ToLower(speaker)
-		if speaker != "" && (normalizedSpeaker == botName || normalizedSpeaker == "assistant" || normalizedSpeaker == "bot") {
-			role = "assistant"
-		}
-		text := content
-		if speaker != "" {
-			text = "[" + speaker + "]: " + content
-		}
-		messages = append(messages, llm.Message{Role: role, Content: text})
-	}
-	if len(messages) == 0 {
-		return strings.TrimSpace(previousSummary)
-	}
-	if b.llm != nil {
-		if summary := b.llm.SummarizeImmersiveTimeline(context.Background(), previousSummary, messages); strings.TrimSpace(summary) != "" {
-			return strings.TrimSpace(summary)
-		}
-	}
-	return buildTimelineFallbackSummary(previousSummary, chunk, timelineFallbackSummaryLen)
 }
 
 func (b *ImmersiveBuffer) botPrimaryName() string {

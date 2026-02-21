@@ -32,15 +32,14 @@ type botIdentity struct {
 
 // immersiveSession holds the state for a single conversation session.
 type immersiveSession struct {
-	mu              sync.Mutex
-	queue           []queuedMessage
-	queueChars      int
-	timeline        []queuedMessage
-	timelineSummary string
-	timer           *time.Timer
-	inFlight        bool
-	lastCtx         *zero.Ctx
-	waitRounds      int
+	mu         sync.Mutex
+	queue      []queuedMessage
+	queueChars int
+	timeline   []queuedMessage
+	timer      *time.Timer
+	inFlight   bool
+	lastCtx    *zero.Ctx
+	waitRounds int
 }
 
 // queuedMessage represents a single message in the buffer queue.

@@ -15,8 +15,21 @@ llm:
   thinking_type: "" # enabled | disabled | auto
   show_reasoning: false
   system_prompt: "your custom prompt appended after built-in system prompt"
-  history_max: 10
   context_max: 8000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  tools:
+    enabled: true
+    max_result_chars: 4000
+  mcp:
+    enabled: false
+    default_timeout_ms: 10000
+    max_payload_bytes: 262144
+    servers: []
+  tool_loop:
+    max_steps: 8
+    timeout_ms: 45000
   immersive:
     max_batch_messages: 10
     max_batch_chars: 1200
@@ -24,7 +37,6 @@ llm:
     timeline:
       max_messages: 200
       overflow_messages: 50
-      compress_batch: 100
     continuous_speech:
       enabled: true
       min_chunk_chars: 12
