@@ -156,6 +156,47 @@ func TestReplyStream_ToolsEnabled_EmitsToolEvents(t *testing.T) {
 	}
 }
 
+func TestReplyStream_ToolsEnabled_PlainTextFallbackPreservesLineBreaks(t *testing.T) {
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		return []string{
+			mustResponsesDeltaEvent(t, "REPLY\n"),
+			mustResponsesDeltaEvent(t, "ok"),
+			`{"type":"response.completed"}`,
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+		Tools: config.ToolsConfig{
+			Enabled: true,
+		},
+	})
+
+	deltas := make([]string, 0, 2)
+	reply, err := manager.ReplyStream(context.Background(), "hello", "session-tools-plaintext", "alice", func(event StreamEvent) error {
+		if event.Type == StreamEventDelta {
+			deltas = append(deltas, event.Delta)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reply stream failed: %v", err)
+	}
+
+	const want = "REPLY\nok"
+	if reply != want {
+		t.Fatalf("reply mismatch: got %q, want %q", reply, want)
+	}
+	if got := strings.Join(deltas, ""); got != want {
+		t.Fatalf("delta stream mismatch: got %q, want %q", got, want)
+	}
+}
+
 func TestReplyStream_AppendsAtomicEventsWithAnchor(t *testing.T) {
 	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
 		return []string{

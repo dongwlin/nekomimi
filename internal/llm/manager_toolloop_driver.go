@@ -80,6 +80,7 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 	parser := toolloop.NewNDJSONParser()
 	var terminal *toolloop.Message
 	var deltaBuilder strings.Builder
+	fallbackLineCount := 0
 	consume := func(items []toolloop.NDJSONItem) error {
 		for _, item := range items {
 			if item.Frame != nil {
@@ -110,17 +111,21 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 				continue
 			}
 
-			text := strings.TrimSpace(item.Text)
-			if text == "" {
+			if item.Text == "" {
 				continue
 			}
-			deltaBuilder.WriteString(text)
+			deltaText := item.Text
+			if fallbackLineCount > 0 {
+				deltaText = "\n" + deltaText
+			}
+			deltaBuilder.WriteString(deltaText)
+			fallbackLineCount++
 			if onFrame != nil {
 				if err := onFrame(toolloop.StreamMessage{
 					Version: toolloop.StreamProtocolVersion,
 					Type:    toolloop.MessageTypeDelta,
 					Delta: &toolloop.DeltaPayload{
-						Text: text,
+						Text: deltaText,
 					},
 				}); err != nil {
 					return err
@@ -155,8 +160,8 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 		return *terminal, nil
 	}
 
-	fallback := strings.TrimSpace(deltaBuilder.String())
-	if fallback != "" {
+	fallback := deltaBuilder.String()
+	if strings.TrimSpace(fallback) != "" {
 		return toolloop.Message{
 			Version: toolloop.ProtocolVersion,
 			Type:    toolloop.MessageTypeFinal,
