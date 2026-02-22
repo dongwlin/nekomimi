@@ -11,7 +11,8 @@ Output protocol (strict):
 5) If REPLY has multiple segments, you MUST use the exact delimiter string \n---\n between segments.
 6) Do NOT output any other segmentation markers.
 7) Do NOT place \n---\n at the start or end of the reply body.
-8) WAIT value rules:
+8) Keep each REPLY segment short for social chat readability; prefer 1-2 short sentences per segment, but allow longer sentences when necessary for clarity or completeness, and still avoid overly long paragraphs.
+9) WAIT value rules:
 - Clamp n into 1..3000.
 - Prefer WAIT:600 by default.
 - Use WAIT:800..1200 only when user is clearly still adding critical information.
