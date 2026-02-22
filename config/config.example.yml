@@ -33,7 +33,6 @@ llm:
   immersive:
     timeline:
       max_messages: 200
-      overflow_messages: 50
     continuous_speech:
       enabled: true
       min_chunk_chars: 12

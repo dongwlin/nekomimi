@@ -18,9 +18,6 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 	if cfg.Timeline.MaxMessages <= 0 {
 		cfg.Timeline.MaxMessages = defaultTimelineMaxMessages
 	}
-	if cfg.Timeline.OverflowMessages <= 0 {
-		cfg.Timeline.OverflowMessages = defaultTimelineOverflowMessages
-	}
 	if cfg.ContinuousSpeech.MinChunkChars <= 0 {
 		cfg.ContinuousSpeech.MinChunkChars = defaultContinuousMinChars
 	}

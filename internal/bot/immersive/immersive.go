@@ -18,7 +18,6 @@ import (
 // Default configuration values for the immersive buffer.
 const (
 	defaultTimelineMaxMessages       = 200
-	defaultTimelineOverflowMessages  = 50
 	defaultContinuousMinChars        = 12
 	defaultContinuousMaxChars        = 80
 	defaultContinuousMinMS           = 300
@@ -625,5 +624,5 @@ func (b *ImmersiveBuffer) currentIdentity() botIdentity {
 }
 
 func (b *ImmersiveBuffer) runtimeBufferLimit() int {
-	return b.cfg.Timeline.MaxMessages + b.cfg.Timeline.OverflowMessages
+	return b.cfg.Timeline.MaxMessages
 }

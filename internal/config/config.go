@@ -69,8 +69,7 @@ type ImmersiveConfig struct {
 }
 
 type TimelineConfig struct {
-	MaxMessages      int `yaml:"max_messages"`
-	OverflowMessages int `yaml:"overflow_messages"`
+	MaxMessages int `yaml:"max_messages"`
 }
 
 type ContinuousSpeechConfig struct {
