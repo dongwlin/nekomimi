@@ -176,7 +176,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 		reply, err := m.generateStreamWithProvider(ctx, state.provider, state.model, requestPrompt, messages, llmclient.RequestOptions{
 			Source: req.Source,
 		}, func(delta string) error {
-			if strings.TrimSpace(delta) == "" {
+			if delta == "" {
 				return nil
 			}
 			return emit(0, toolloop.StreamMessage{

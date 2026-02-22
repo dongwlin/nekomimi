@@ -55,6 +55,45 @@ func TestReplyStream_ToolsDisabled_UsesProviderStreaming(t *testing.T) {
 	}
 }
 
+func TestReplyStream_ToolsDisabled_PreservesWhitespaceOnlyDelta(t *testing.T) {
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		return []string{
+			mustResponsesDeltaEvent(t, "REPLY"),
+			mustResponsesDeltaEvent(t, "\n"),
+			mustResponsesDeltaEvent(t, "ok"),
+			`{"type":"response.completed"}`,
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+	})
+
+	deltas := make([]string, 0, 4)
+	reply, err := manager.ReplyStream(context.Background(), "hello", "session-tools-off-whitespace", "alice", func(event StreamEvent) error {
+		if event.Type == StreamEventDelta {
+			deltas = append(deltas, event.Delta)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reply stream failed: %v", err)
+	}
+
+	const want = "REPLY\nok"
+	if reply != want {
+		t.Fatalf("reply mismatch: got %q, want %q", reply, want)
+	}
+	if got := strings.Join(deltas, ""); got != want {
+		t.Fatalf("delta stream mismatch: got %q, want %q", got, want)
+	}
+}
+
 func TestReplyStreamWithExtraPrompt_DoesNotAppendHistory(t *testing.T) {
 	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
 		return []string{
@@ -126,6 +165,45 @@ func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
 	}
 	if !strings.Contains(reply, `"type":"tool_call"`) {
 		t.Fatalf("expected raw streamed content without tool-loop handling, got %q", reply)
+	}
+}
+
+func TestReplyStreamWithExtraPrompt_PreservesWhitespaceOnlyDelta(t *testing.T) {
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		return []string{
+			mustResponsesDeltaEvent(t, "REPLY"),
+			mustResponsesDeltaEvent(t, "\n"),
+			mustResponsesDeltaEvent(t, "ok"),
+			`{"type":"response.completed"}`,
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+	})
+
+	deltas := make([]string, 0, 4)
+	reply, err := manager.ReplyStreamWithExtraPrompt(context.Background(), "hello", "session-extra-whitespace", "alice", "extra", func(event StreamEvent) error {
+		if event.Type == StreamEventDelta {
+			deltas = append(deltas, event.Delta)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reply stream with extra prompt failed: %v", err)
+	}
+
+	const want = "REPLY\nok"
+	if reply != want {
+		t.Fatalf("reply mismatch: got %q, want %q", reply, want)
+	}
+	if got := strings.Join(deltas, ""); got != want {
+		t.Fatalf("delta stream mismatch: got %q, want %q", got, want)
 	}
 }
 

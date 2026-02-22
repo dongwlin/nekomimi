@@ -521,7 +521,7 @@ func (c *Client) GenerateResponsesStream(ctx context.Context, modelName, systemP
 		if eventErr != nil {
 			return eventErr
 		}
-		if done || strings.TrimSpace(delta) == "" {
+		if done || delta == "" {
 			return nil
 		}
 		replyBuilder.WriteString(delta)
