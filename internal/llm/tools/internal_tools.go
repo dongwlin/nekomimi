@@ -14,6 +14,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
 	"github.com/dongwlin/nekomimi/internal/llm/diary"
+	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 )
 
 var (
@@ -332,7 +333,7 @@ func decodeObject(raw json.RawMessage, out any) error {
 		return errors.New("output target is required")
 	}
 
-	source := normalizeArguments(raw)
+	source := jsonutil.NormalizeObjectArguments(raw)
 	decoder := json.NewDecoder(bytes.NewReader(source))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(out); err != nil {

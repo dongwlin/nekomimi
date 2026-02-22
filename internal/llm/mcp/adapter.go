@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
 )
 
@@ -113,7 +113,7 @@ func (a *adapter) ListTools(ctx context.Context) ([]tools.Descriptor, error) {
 				Name:        fullName,
 				Description: strings.TrimSpace(remoteTool.Description),
 				Source:      tools.SourceMCP,
-				InputSchema: cloneRawMessage(remoteTool.InputSchema),
+				InputSchema: jsonutil.CloneRawMessage(remoteTool.InputSchema),
 			})
 		}
 	}
@@ -150,7 +150,7 @@ func (a *adapter) CallTool(ctx context.Context, req tools.CallRequest) (tools.Ca
 		return callError(fullName, tools.ErrorCodeNotFound, "tool not found", false), nil
 	}
 
-	arguments := normalizeArguments(req.Arguments)
+	arguments := jsonutil.NormalizeObjectArguments(req.Arguments)
 	maxPayloadBytes := a.resolveMaxPayload(server.MaxPayloadBytes)
 	if exceeded(arguments, maxPayloadBytes) {
 		return callError(fullName, tools.ErrorCodeInvalidArguments, fmt.Sprintf(payloadLimitErrorFormat, maxPayloadBytes), false), nil
@@ -176,7 +176,7 @@ func (a *adapter) CallTool(ctx context.Context, req tools.CallRequest) (tools.Ca
 	return tools.CallResult{
 		Name:       fullName,
 		Content:    toPromptContent(rawResult),
-		Structured: compactJSON(rawResult),
+		Structured: jsonutil.CompactRawMessage(rawResult),
 	}, nil
 }
 
@@ -249,34 +249,6 @@ func parseToolName(name string) (serverName string, toolName string, ok bool) {
 		return "", "", false
 	}
 	return serverName, toolName, true
-}
-
-func normalizeArguments(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage(`{}`)
-	}
-	if strings.TrimSpace(string(raw)) == "" {
-		return json.RawMessage(`{}`)
-	}
-	return raw
-}
-
-func cloneRawMessage(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return nil
-	}
-	return append(json.RawMessage(nil), raw...)
-}
-
-func compactJSON(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage(`{}`)
-	}
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, raw); err != nil {
-		return cloneRawMessage(raw)
-	}
-	return append(json.RawMessage(nil), buf.Bytes()...)
 }
 
 func toPromptContent(raw json.RawMessage) string {

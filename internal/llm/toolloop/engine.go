@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
 )
 
@@ -312,7 +313,7 @@ func (e *loopEngine) executeTool(ctx context.Context, call ToolCallPayload) (Mes
 	name := strings.TrimSpace(call.Name)
 	result, err := e.router.CallTool(ctx, tools.CallRequest{
 		Name:      name,
-		Arguments: cloneRawJSON(call.Arguments),
+		Arguments: jsonutil.CloneRawMessage(call.Arguments),
 	})
 	if err != nil {
 		if isTimeout(err) || isTimeout(ctx.Err()) {
@@ -532,15 +533,6 @@ func isJSONObject(raw json.RawMessage) bool {
 	}
 	_, ok := decoded.(map[string]any)
 	return ok
-}
-
-func cloneRawJSON(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return nil
-	}
-	cloned := make([]byte, len(raw))
-	copy(cloned, raw)
-	return json.RawMessage(cloned)
 }
 
 func copyTrace(trace []Message) []Message {

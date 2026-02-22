@@ -3,6 +3,8 @@ package toolloop
 import (
 	"fmt"
 	"strings"
+
+	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 )
 
 func validateModelStreamFrame(frame StreamMessage) *ErrorPayload {
@@ -179,7 +181,7 @@ func cloneToolCallPayload(value *ToolCallPayload) *ToolCallPayload {
 	return &ToolCallPayload{
 		CallID:    strings.TrimSpace(value.CallID),
 		Name:      strings.TrimSpace(value.Name),
-		Arguments: cloneRawJSON(value.Arguments),
+		Arguments: jsonutil.CloneRawMessage(value.Arguments),
 	}
 }
 

@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
 	"github.com/dongwlin/nekomimi/internal/llm/diary"
+	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 )
 
 const (
@@ -111,7 +111,7 @@ func (p *internalProvider) CallTool(ctx context.Context, req CallRequest) (CallR
 		return errorResult(name, ErrorCodeNotFound, "tool not found", false), nil
 	}
 
-	result, err := callable.Call(ctx, normalizeArguments(req.Arguments))
+	result, err := callable.Call(ctx, jsonutil.NormalizeObjectArguments(req.Arguments))
 	if err != nil {
 		return mapCallFailure(name, err), nil
 	}
@@ -137,17 +137,6 @@ func (p *internalProvider) register(callable Callable) {
 	p.tools[name] = callable
 	p.toolNames = append(p.toolNames, name)
 	sort.Strings(p.toolNames)
-}
-
-func normalizeArguments(arguments json.RawMessage) json.RawMessage {
-	if len(arguments) == 0 {
-		return json.RawMessage(`{}`)
-	}
-	trimmed := strings.TrimSpace(string(arguments))
-	if trimmed == "" {
-		return json.RawMessage(`{}`)
-	}
-	return arguments
 }
 
 func normalizeCallResultError(result *CallResult) {
