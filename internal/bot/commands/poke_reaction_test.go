@@ -83,9 +83,8 @@ func TestBuildPokeReplyPrompt_ContainsKeyConstraints(t *testing.T) {
 	for _, token := range []string{
 		"连续被戳了 4 次",
 		"轻微烦躁",
-		"想和你对话",
 		"优先 1-3 句",
-		"像在和网友聊天",
+		"\\n---\\n",
 	} {
 		if !strings.Contains(prompt, token) {
 			t.Fatalf("prompt missing token %q: %s", token, prompt)

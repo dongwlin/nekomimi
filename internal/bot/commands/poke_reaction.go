@@ -98,10 +98,13 @@ func buildPokeReplyPrompt(count int, tier pokeMoodTier) string {
 	default:
 		moodRule = "语气建议：自然、像网友、愿意接话。"
 	}
+
+	segmentRule := "如需多段输出，请使用精确分隔符 \\n---\\n；不要在开头或结尾输出分隔符；不要使用其他分段标记。"
 	return fmt.Sprintf(
-		"你在当前会话最近窗口内已经连续被戳了 %d 次，这代表有人想和你对话。请用中文自然回复，优先 1-3 句，像在和网友聊天，带互动感并尽量接上当前语境。不要使用引号。%s",
+		"你在当前会话最近窗口内已经连续被戳了 %d 次，这代表有人想和你对话。请用中文自然回复，优先 1-3 句，像在和网友聊天，带互动感并尽量接上当前语境。不要使用引号。%s %s",
 		count,
 		moodRule,
+		segmentRule,
 	)
 }
 
@@ -110,7 +113,7 @@ func pokeFallbackReplies(tier pokeMoodTier) []string {
 	case pokeMoodAnnoyed:
 		return []string{
 			"别连戳啦，有话直接说~",
-			"我知道你在啦，直接聊嘛",
+			"我知道你在啦，直接开聊吧",
 			"再戳我就要生气了，先说事",
 		}
 	case pokeMoodMild:

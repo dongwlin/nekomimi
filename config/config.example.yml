@@ -33,13 +33,6 @@ llm:
   immersive:
     timeline:
       max_messages: 200
-    continuous_speech:
-      enabled: true
-      min_chunk_chars: 12
-      max_chunk_chars: 80
-      min_interval_ms: 300
-      max_interval_ms: 900
-      require_stream: false
     poke_reaction:
       window_ms: 180000
       mild_threshold: 3

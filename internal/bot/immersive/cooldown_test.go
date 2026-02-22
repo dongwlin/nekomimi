@@ -9,20 +9,8 @@ import (
 func TestNormalizeImmersiveConfig_DefaultValues(t *testing.T) {
 	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{})
 
-	if !cfg.ContinuousSpeech.Enabled {
-		t.Errorf("expected ContinuousSpeech.Enabled true by default")
-	}
-	if cfg.ContinuousSpeech.MinChunkChars != defaultContinuousMinChars {
-		t.Errorf("expected MinChunkChars %d, got %d", defaultContinuousMinChars, cfg.ContinuousSpeech.MinChunkChars)
-	}
-	if cfg.ContinuousSpeech.MaxChunkChars != defaultContinuousMaxChars {
-		t.Errorf("expected MaxChunkChars %d, got %d", defaultContinuousMaxChars, cfg.ContinuousSpeech.MaxChunkChars)
-	}
-	if cfg.ContinuousSpeech.MinIntervalMS != defaultContinuousMinMS {
-		t.Errorf("expected MinIntervalMS %d, got %d", defaultContinuousMinMS, cfg.ContinuousSpeech.MinIntervalMS)
-	}
-	if cfg.ContinuousSpeech.MaxIntervalMS != defaultContinuousMaxMS {
-		t.Errorf("expected MaxIntervalMS %d, got %d", defaultContinuousMaxMS, cfg.ContinuousSpeech.MaxIntervalMS)
+	if cfg.Timeline.MaxMessages != defaultTimelineMaxMessages {
+		t.Errorf("expected Timeline.MaxMessages %d, got %d", defaultTimelineMaxMessages, cfg.Timeline.MaxMessages)
 	}
 	if cfg.PokeReaction.WindowMS != defaultPokeReactionWindowMS {
 		t.Errorf("expected PokeReaction.WindowMS %d, got %d", defaultPokeReactionWindowMS, cfg.PokeReaction.WindowMS)
@@ -37,13 +25,8 @@ func TestNormalizeImmersiveConfig_DefaultValues(t *testing.T) {
 
 func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{
-		ContinuousSpeech: config.ContinuousSpeechConfig{
-			Enabled:       false,
-			MinChunkChars: 16,
-			MaxChunkChars: 64,
-			MinIntervalMS: 350,
-			MaxIntervalMS: 1000,
-			RequireStream: true,
+		Timeline: config.TimelineConfig{
+			MaxMessages: 123,
 		},
 		PokeReaction: config.PokeReactionConfig{
 			WindowMS:         60000,
@@ -52,23 +35,8 @@ func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 		},
 	})
 
-	if cfg.ContinuousSpeech.Enabled {
-		t.Errorf("expected ContinuousSpeech.Enabled false, got true")
-	}
-	if cfg.ContinuousSpeech.MinChunkChars != 16 {
-		t.Errorf("expected MinChunkChars 16, got %d", cfg.ContinuousSpeech.MinChunkChars)
-	}
-	if cfg.ContinuousSpeech.MaxChunkChars != 64 {
-		t.Errorf("expected MaxChunkChars 64, got %d", cfg.ContinuousSpeech.MaxChunkChars)
-	}
-	if cfg.ContinuousSpeech.MinIntervalMS != 350 {
-		t.Errorf("expected MinIntervalMS 350, got %d", cfg.ContinuousSpeech.MinIntervalMS)
-	}
-	if cfg.ContinuousSpeech.MaxIntervalMS != 1000 {
-		t.Errorf("expected MaxIntervalMS 1000, got %d", cfg.ContinuousSpeech.MaxIntervalMS)
-	}
-	if !cfg.ContinuousSpeech.RequireStream {
-		t.Errorf("expected RequireStream true, got false")
+	if cfg.Timeline.MaxMessages != 123 {
+		t.Errorf("expected Timeline.MaxMessages 123, got %d", cfg.Timeline.MaxMessages)
 	}
 	if cfg.PokeReaction.WindowMS != 60000 {
 		t.Errorf("expected PokeReaction.WindowMS 60000, got %d", cfg.PokeReaction.WindowMS)

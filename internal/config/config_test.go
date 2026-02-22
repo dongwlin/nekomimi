@@ -141,3 +141,52 @@ driver:
 		t.Fatalf("unexpected annoyed_threshold: %d", cfg.LLM.Immersive.PokeReaction.AnnoyedThreshold)
 	}
 }
+
+func TestLoad_IgnoreLegacyImmersiveContinuousSpeech(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+    continuous_speech:
+      enabled: true
+      min_chunk_chars: 12
+      max_chunk_chars: 80
+      min_interval_ms: 300
+      max_interval_ms: 900
+      require_stream: false
+    poke_reaction:
+      window_ms: 60000
+      mild_threshold: 4
+      annoyed_threshold: 8
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if cfg.LLM.Immersive.PokeReaction.WindowMS != 60000 {
+		t.Fatalf("unexpected window_ms: %d", cfg.LLM.Immersive.PokeReaction.WindowMS)
+	}
+}

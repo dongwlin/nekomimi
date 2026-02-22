@@ -189,6 +189,33 @@ func TestFlush_MissingNewlineReplyUsesFallbackParser(t *testing.T) {
 	}
 }
 
+func TestFlush_ReplyDelimiterSegmentsAreSentWithoutControlMarker(t *testing.T) {
+	server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"REPLY\n第一段\n---\n第二段"}]}]}`)
+	defer server.Close()
+
+	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	buffer.flush(sessionKey)
+
+	entries := mustListChatEvents(t, manager, sessionKey, 20)
+	foundAssistant := false
+	for _, entry := range entries {
+		if entry.Role != chatlog.RoleAssistant {
+			continue
+		}
+		if strings.Contains(entry.Content, "---") {
+			t.Fatalf("assistant history should not contain delimiter marker: %q", entry.Content)
+		}
+		if strings.Contains(entry.Content, "第一段") && strings.Contains(entry.Content, "第二段") {
+			foundAssistant = true
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected segmented assistant reply in history, entries=%+v", entries)
+	}
+}
+
 func TestFlush_NonProtocolModelErrorSkips(t *testing.T) {
 	server := newResponsesJSONServer(t, http.StatusOK, `{"error":{"message":"boom"}}`)
 	defer server.Close()

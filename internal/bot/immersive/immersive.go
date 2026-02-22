@@ -18,10 +18,6 @@ import (
 // Default configuration values for the immersive buffer.
 const (
 	defaultTimelineMaxMessages       = 200
-	defaultContinuousMinChars        = 12
-	defaultContinuousMaxChars        = 80
-	defaultContinuousMinMS           = 300
-	defaultContinuousMaxMS           = 900
 	defaultPokeReactionWindowMS      = 180000
 	defaultPokeReactionMildThresh    = 3
 	defaultPokeReactionAnnoyedThresh = 6
@@ -274,12 +270,31 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Msg("immersive control llm input prepared")
 
 	headerParser := newControlHeaderParser()
-	acc := newStreamChunkAccumulator(b.cfg.ContinuousSpeech)
-	var replyBuilder strings.Builder
+	segmentAcc := NewReplySegmentAccumulator()
+	replyParts := make([]string, 0, 4)
 	var sentReplyBuilder strings.Builder
 	sentMessages := 0
 	sentChars := 0
 	decision := controlHeaderDecision{}
+	emitSegment := func(segment string) {
+		trimmed := strings.TrimSpace(segment)
+		if trimmed == "" {
+			return
+		}
+		replyParts = append(replyParts, trimmed)
+		if ctx != nil {
+			if sentMessages > 0 {
+				time.Sleep(NextReplySegmentDelay(trimmed))
+			}
+			ctx.Send(trimmed)
+			if sentReplyBuilder.Len() > 0 {
+				sentReplyBuilder.WriteString("\n")
+			}
+			sentReplyBuilder.WriteString(trimmed)
+			sentMessages++
+			sentChars += len([]rune(trimmed))
+		}
+	}
 	recordReply := func(reply, reason string) {
 		trimmed := strings.TrimSpace(reply)
 		if trimmed == "" {
@@ -310,19 +325,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			if parsedDecision.action != controlActionReply || bodyDelta == "" {
 				return nil
 			}
-			replyBuilder.WriteString(bodyDelta)
-			if ctx == nil || !b.cfg.ContinuousSpeech.Enabled {
-				return nil
-			}
-			chunks := acc.Append(bodyDelta)
-			for _, chunk := range chunks {
-				if sentMessages > 0 {
-					time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
-				}
-				ctx.Send(chunk)
-				sentReplyBuilder.WriteString(chunk)
-				sentMessages++
-				sentChars += len([]rune(chunk))
+			segments := segmentAcc.Append(bodyDelta)
+			for _, segment := range segments {
+				emitSegment(segment)
 			}
 		case llm.StreamEventToolCall, llm.StreamEventToolResult, llm.StreamEventFinal, llm.StreamEventError:
 			log.Debug().
@@ -360,7 +365,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			if fallbackDecision, fallbackBody, ok := parseControlHeaderFallback(streamReply); ok {
 				decision = fallbackDecision
 				if fallbackDecision.action == controlActionReply && strings.TrimSpace(fallbackBody) != "" {
-					replyBuilder.WriteString(fallbackBody)
+					for _, segment := range SplitReplySegments(fallbackBody) {
+						emitSegment(segment)
+					}
 				}
 				log.Warn().
 					Str("session", sessionKey).
@@ -444,18 +451,10 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 
 	if action == controlActionReply {
-		if ctx != nil && b.cfg.ContinuousSpeech.Enabled {
-			for _, chunk := range acc.FlushTail() {
-				if sentMessages > 0 {
-					time.Sleep(nextContinuousSpeechDelay(b.cfg.ContinuousSpeech))
-				}
-				ctx.Send(chunk)
-				sentReplyBuilder.WriteString(chunk)
-				sentMessages++
-				sentChars += len([]rune(chunk))
-			}
+		for _, segment := range segmentAcc.FlushTail() {
+			emitSegment(segment)
 		}
-		reply := strings.TrimSpace(replyBuilder.String())
+		reply := strings.TrimSpace(strings.Join(replyParts, "\n"))
 		if reply == "" {
 			reply = immersiveEmptyReplyFallback
 		}
@@ -464,7 +463,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				Str("session", sessionKey).
 				Int("reply_chars", len([]rune(reply))).
 				Msg("immersive reply prepared without ctx")
-		} else if b.cfg.ContinuousSpeech.Enabled {
+		} else {
 			if sentMessages == 0 {
 				ctx.Send(reply)
 				sentReplyBuilder.WriteString(reply)
@@ -476,15 +475,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				Int("reply_chars", len([]rune(reply))).
 				Int("reply_messages", sentMessages).
 				Int("sent_chars", sentChars).
-				Msg("immersive continuous reply sent")
-		} else {
-			ctx.Send(reply)
-			sentReplyBuilder.WriteString(reply)
-			sentMessages = 1
-			sentChars = len([]rune(reply))
-			log.Info().
-				Str("session", sessionKey).
-				Int("reply_chars", len([]rune(reply))).
 				Msg("immersive reply sent")
 		}
 		recordReply(reply, "reply_action")

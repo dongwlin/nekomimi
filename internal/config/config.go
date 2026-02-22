@@ -63,22 +63,12 @@ type ToolLoopConfig struct {
 }
 
 type ImmersiveConfig struct {
-	Timeline         TimelineConfig         `yaml:"timeline"`
-	ContinuousSpeech ContinuousSpeechConfig `yaml:"continuous_speech"`
-	PokeReaction     PokeReactionConfig     `yaml:"poke_reaction"`
+	Timeline     TimelineConfig     `yaml:"timeline"`
+	PokeReaction PokeReactionConfig `yaml:"poke_reaction"`
 }
 
 type TimelineConfig struct {
 	MaxMessages int `yaml:"max_messages"`
-}
-
-type ContinuousSpeechConfig struct {
-	Enabled       bool `yaml:"enabled"`
-	MinChunkChars int  `yaml:"min_chunk_chars"`
-	MaxChunkChars int  `yaml:"max_chunk_chars"`
-	MinIntervalMS int  `yaml:"min_interval_ms"`
-	MaxIntervalMS int  `yaml:"max_interval_ms"`
-	RequireStream bool `yaml:"require_stream"`
 }
 
 type PokeReactionConfig struct {
