@@ -74,10 +74,7 @@ func (e *loopEngine) Run(ctx context.Context, req RunRequest) (RunResult, error)
 				return finalize(trace, StopReasonTimeout), nil
 			}
 			trace = append(trace, errorMessage(ErrorCodeModelResponse, err.Error(), false))
-			return RunResult{
-				StopReason: StopReasonError,
-				Trace:      trace,
-			}, nil
+			continue
 		}
 
 		if protocolErr := validateModelMessage(next); protocolErr != nil {
@@ -86,10 +83,7 @@ func (e *loopEngine) Run(ctx context.Context, req RunRequest) (RunResult, error)
 				Type:    MessageTypeError,
 				Error:   protocolErr,
 			})
-			return RunResult{
-				StopReason: StopReasonError,
-				Trace:      trace,
-			}, nil
+			continue
 		}
 
 		next.Version = ProtocolVersion
@@ -235,10 +229,7 @@ func (e *loopEngine) RunStream(ctx context.Context, req RunRequest, onEvent Stre
 			if emitErr := emitEvent(onEvent, step, errorFrame); emitErr != nil {
 				return RunResult{}, emitErr
 			}
-			return RunResult{
-				StopReason: StopReasonError,
-				Trace:      trace,
-			}, nil
+			continue
 		}
 
 		if protocolErr := validateModelMessage(next); protocolErr != nil {
@@ -251,10 +242,7 @@ func (e *loopEngine) RunStream(ctx context.Context, req RunRequest, onEvent Stre
 			if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
 				return RunResult{}, emitErr
 			}
-			return RunResult{
-				StopReason: StopReasonError,
-				Trace:      trace,
-			}, nil
+			continue
 		}
 
 		next.Version = ProtocolVersion

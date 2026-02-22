@@ -143,7 +143,7 @@ func TestEngine_Run_MaxStepsSafetyExit(t *testing.T) {
 	}
 }
 
-func TestEngine_Run_InvalidProtocolTerminatesSafely(t *testing.T) {
+func TestEngine_Run_InvalidProtocolInjectedThenFinal(t *testing.T) {
 	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
 		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
 	})
@@ -156,25 +156,49 @@ func TestEngine_Run_InvalidProtocolTerminatesSafely(t *testing.T) {
 					Type:    MessageTypeToolCall,
 				},
 			},
+			{
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeFinal,
+					Final: &FinalPayload{
+						Content:    "recovered",
+						StopReason: StopReasonFinal,
+					},
+				},
+				assertTrace: func(t *testing.T, trace []Message) {
+					if len(trace) != 1 {
+						t.Fatalf("second model step should see one injected error, got %d", len(trace))
+					}
+					if trace[0].Type != MessageTypeError || trace[0].Error == nil {
+						t.Fatalf("expected injected protocol error in trace")
+					}
+					if trace[0].Error.Code != ErrorCodeInvalidProtocol {
+						t.Fatalf("error code mismatch: got %q, want %q", trace[0].Error.Code, ErrorCodeInvalidProtocol)
+					}
+				},
+			},
 		},
 	}
 
 	engine := NewEngine(router, driver, EngineOptions{})
-	result, err := engine.Run(context.Background(), RunRequest{Config: RunConfig{MaxSteps: 2}})
+	result, err := engine.Run(context.Background(), RunRequest{Config: RunConfig{MaxSteps: 3}})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if result.StopReason != StopReasonError {
-		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonError)
+	if result.StopReason != StopReasonFinal {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonFinal)
 	}
-	if len(result.Trace) != 1 {
-		t.Fatalf("trace length mismatch: got %d, want 1", len(result.Trace))
+	if result.FinalMessage != "recovered" {
+		t.Fatalf("final message mismatch: got %q", result.FinalMessage)
+	}
+	if len(result.Trace) != 2 {
+		t.Fatalf("trace length mismatch: got %d, want 2", len(result.Trace))
 	}
 	if result.Trace[0].Type != MessageTypeError || result.Trace[0].Error == nil {
-		t.Fatalf("expected terminal error message in trace")
+		t.Fatalf("expected injected protocol error in trace")
 	}
-	if result.Trace[0].Error.Code != ErrorCodeInvalidProtocol {
-		t.Fatalf("error code mismatch: got %q, want %q", result.Trace[0].Error.Code, ErrorCodeInvalidProtocol)
+	if result.Trace[1].Type != MessageTypeFinal {
+		t.Fatalf("expected final message in trace tail, got %q", result.Trace[1].Type)
 	}
 }
 
@@ -290,7 +314,7 @@ func TestEngine_Run_ToolErrorInjectionThenFinal(t *testing.T) {
 	}
 }
 
-func TestEngine_Run_ModelDriverError(t *testing.T) {
+func TestEngine_Run_ModelDriverErrorInjectedThenFinal(t *testing.T) {
 	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
 		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
 	})
@@ -300,28 +324,52 @@ func TestEngine_Run_ModelDriverError(t *testing.T) {
 			{
 				err: errors.New("model unavailable"),
 			},
+			{
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeFinal,
+					Final: &FinalPayload{
+						Content:    "recovered",
+						StopReason: StopReasonFinal,
+					},
+				},
+				assertTrace: func(t *testing.T, trace []Message) {
+					if len(trace) != 1 {
+						t.Fatalf("second model step should see one injected error, got %d", len(trace))
+					}
+					if trace[0].Type != MessageTypeError || trace[0].Error == nil {
+						t.Fatalf("expected injected model error in trace")
+					}
+					if trace[0].Error.Code != ErrorCodeModelResponse {
+						t.Fatalf("error code mismatch: got %q, want %q", trace[0].Error.Code, ErrorCodeModelResponse)
+					}
+					if !strings.Contains(trace[0].Error.Message, "model unavailable") {
+						t.Fatalf("error message should include driver error detail, got %q", trace[0].Error.Message)
+					}
+				},
+			},
 		},
 	}
 
 	engine := NewEngine(router, driver, EngineOptions{})
-	result, err := engine.Run(context.Background(), RunRequest{Config: RunConfig{MaxSteps: 2}})
+	result, err := engine.Run(context.Background(), RunRequest{Config: RunConfig{MaxSteps: 3}})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if result.StopReason != StopReasonError {
-		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonError)
+	if result.StopReason != StopReasonFinal {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonFinal)
 	}
-	if len(result.Trace) != 1 {
-		t.Fatalf("trace length mismatch: got %d, want 1", len(result.Trace))
+	if result.FinalMessage != "recovered" {
+		t.Fatalf("final message mismatch: got %q", result.FinalMessage)
+	}
+	if len(result.Trace) != 2 {
+		t.Fatalf("trace length mismatch: got %d, want 2", len(result.Trace))
 	}
 	if result.Trace[0].Type != MessageTypeError || result.Trace[0].Error == nil {
-		t.Fatalf("expected terminal model error frame")
+		t.Fatalf("expected injected model error frame")
 	}
-	if result.Trace[0].Error.Code != ErrorCodeModelResponse {
-		t.Fatalf("error code mismatch: got %q, want %q", result.Trace[0].Error.Code, ErrorCodeModelResponse)
-	}
-	if !strings.Contains(result.Trace[0].Error.Message, "model unavailable") {
-		t.Fatalf("error message should include driver error detail, got %q", result.Trace[0].Error.Message)
+	if result.Trace[1].Type != MessageTypeFinal {
+		t.Fatalf("expected final frame in trace tail, got %q", result.Trace[1].Type)
 	}
 }
 
@@ -500,6 +548,146 @@ func TestEngine_RunStream_CallbackError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "event failed") {
 		t.Fatalf("callback error detail missing: %v", err)
+	}
+}
+
+func TestEngine_RunStream_InvalidProtocolInjectedThenFinal(t *testing.T) {
+	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
+		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
+	})
+	driver := &scriptedStreamDriver{
+		t: t,
+		steps: []streamDriverStep{
+			{
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeToolCall,
+				},
+			},
+			{
+				frames: []StreamMessage{
+					{
+						Version: StreamProtocolVersion,
+						Type:    MessageTypeDelta,
+						Delta:   &DeltaPayload{Text: "done"},
+					},
+				},
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeFinal,
+					Final: &FinalPayload{
+						Content:    "done",
+						StopReason: StopReasonFinal,
+					},
+				},
+				assertTrace: func(t *testing.T, trace []Message) {
+					if len(trace) != 1 {
+						t.Fatalf("second model step should see one injected error, got %d", len(trace))
+					}
+					if trace[0].Type != MessageTypeError || trace[0].Error == nil {
+						t.Fatalf("expected injected protocol error in trace")
+					}
+					if trace[0].Error.Code != ErrorCodeInvalidProtocol {
+						t.Fatalf("error code mismatch: got %q, want %q", trace[0].Error.Code, ErrorCodeInvalidProtocol)
+					}
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(router, driver, EngineOptions{})
+	events := make([]StreamEvent, 0, 4)
+	result, err := engine.RunStream(context.Background(), RunRequest{
+		Config: RunConfig{MaxSteps: 3},
+	}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("run stream failed: %v", err)
+	}
+	if result.StopReason != StopReasonFinal {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonFinal)
+	}
+	if result.FinalMessage != "done" {
+		t.Fatalf("final message mismatch: got %q", result.FinalMessage)
+	}
+	if len(events) != 3 {
+		t.Fatalf("event count mismatch: got %d, want 3", len(events))
+	}
+	if events[0].Frame.Type != MessageTypeError {
+		t.Fatalf("events[0] should be error, got %q", events[0].Frame.Type)
+	}
+	if events[1].Frame.Type != MessageTypeDelta {
+		t.Fatalf("events[1] should be delta, got %q", events[1].Frame.Type)
+	}
+	if events[2].Frame.Type != MessageTypeFinal {
+		t.Fatalf("events[2] should be final, got %q", events[2].Frame.Type)
+	}
+}
+
+func TestEngine_RunStream_ModelDriverErrorInjectedThenFinal(t *testing.T) {
+	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
+		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
+	})
+	driver := &scriptedStreamDriver{
+		t: t,
+		steps: []streamDriverStep{
+			{
+				err: errors.New("stream parser failed"),
+			},
+			{
+				msg: Message{
+					Version: ProtocolVersion,
+					Type:    MessageTypeFinal,
+					Final: &FinalPayload{
+						Content:    "recovered",
+						StopReason: StopReasonFinal,
+					},
+				},
+				assertTrace: func(t *testing.T, trace []Message) {
+					if len(trace) != 1 {
+						t.Fatalf("second model step should see one injected error, got %d", len(trace))
+					}
+					if trace[0].Type != MessageTypeError || trace[0].Error == nil {
+						t.Fatalf("expected injected model error in trace")
+					}
+					if trace[0].Error.Code != ErrorCodeModelResponse {
+						t.Fatalf("error code mismatch: got %q, want %q", trace[0].Error.Code, ErrorCodeModelResponse)
+					}
+					if !strings.Contains(trace[0].Error.Message, "stream parser failed") {
+						t.Fatalf("error message should include driver error detail, got %q", trace[0].Error.Message)
+					}
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(router, driver, EngineOptions{})
+	events := make([]StreamEvent, 0, 3)
+	result, err := engine.RunStream(context.Background(), RunRequest{
+		Config: RunConfig{MaxSteps: 3},
+	}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("run stream failed: %v", err)
+	}
+	if result.StopReason != StopReasonFinal {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonFinal)
+	}
+	if result.FinalMessage != "recovered" {
+		t.Fatalf("final message mismatch: got %q", result.FinalMessage)
+	}
+	if len(events) != 2 {
+		t.Fatalf("event count mismatch: got %d, want 2", len(events))
+	}
+	if events[0].Frame.Type != MessageTypeError {
+		t.Fatalf("events[0] should be error, got %q", events[0].Frame.Type)
+	}
+	if events[1].Frame.Type != MessageTypeFinal {
+		t.Fatalf("events[1] should be final, got %q", events[1].Frame.Type)
 	}
 }
 
