@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,6 +11,13 @@ import (
 	"github.com/dongwlin/nekomimi/internal/llm/diary"
 	"github.com/dongwlin/nekomimi/internal/llm/token"
 	"github.com/rs/zerolog/log"
+)
+
+const (
+	metaEventTime         = "event_time"
+	metaCausalSeq         = "causal_seq"
+	metaReplyToCutoffSeq  = "reply_to_cutoff_seq"
+	defaultAssistantLabel = "name=assistant"
 )
 
 type SessionContextUsage struct {
@@ -49,28 +57,11 @@ func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) 
 		return
 	}
 
-	m.ensureSessionStarted(session)
-	m.mu.RLock()
-	store := m.chatStore
-	assistantSpeaker := strings.TrimSpace(m.assistantSpeaker)
-	m.mu.RUnlock()
-	if store == nil {
+	cutoffSeq, ok := m.appendUserEventFormatted(session, userContent, time.Now())
+	if !ok {
 		return
 	}
-	if assistantSpeaker == "" {
-		assistantSpeaker = "name=assistant"
-	}
-	assistantContent := formatUserContent(assistantReply, assistantSpeaker)
-	if strings.TrimSpace(assistantContent) == "" {
-		return
-	}
-
-	if err := store.Append(context.Background(), session,
-		chatlog.Entry{Role: chatlog.RoleUser, Content: userContent},
-		chatlog.Entry{Role: chatlog.RoleAssistant, Content: assistantContent},
-	); err != nil {
-		log.Warn().Err(err).Str("session", session).Msg("append chat history failed")
-	}
+	_ = m.appendAssistantEventFormatted(session, assistantReply, time.Now(), cutoffSeq)
 }
 
 // AppendTurn appends a completed user-assistant turn into session history.
@@ -78,6 +69,138 @@ func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) 
 func (m *Manager) AppendTurn(sessionKey, userInput, speaker, assistantReply string) {
 	userContent := formatUserContent(userInput, speaker)
 	m.appendHistory(sessionKey, userContent, assistantReply)
+}
+
+// AppendUserEvent appends one user atomic event and returns its causal sequence.
+func (m *Manager) AppendUserEvent(sessionKey, userInput, speaker string) (int64, bool) {
+	return m.AppendUserEventAt(sessionKey, userInput, speaker, time.Now())
+}
+
+// AppendUserEventAt appends one user atomic event with explicit event time.
+func (m *Manager) AppendUserEventAt(sessionKey, userInput, speaker string, eventTime time.Time) (int64, bool) {
+	at := normalizeEventTime(eventTime)
+	content := formatUserContentAt(userInput, speaker, at)
+	return m.appendUserEventFormatted(sessionKey, content, at)
+}
+
+// AppendAssistantEvent appends one assistant atomic event with a causal cutoff anchor.
+func (m *Manager) AppendAssistantEvent(sessionKey, assistantReply string, replyToCutoffSeq int64) bool {
+	return m.AppendAssistantEventAt(sessionKey, assistantReply, replyToCutoffSeq, time.Now())
+}
+
+// AppendAssistantEventAt appends one assistant atomic event with explicit event time.
+func (m *Manager) AppendAssistantEventAt(sessionKey, assistantReply string, replyToCutoffSeq int64, eventTime time.Time) bool {
+	return m.appendAssistantEventFormatted(sessionKey, assistantReply, eventTime, replyToCutoffSeq)
+}
+
+func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime time.Time) (int64, bool) {
+	session := strings.TrimSpace(sessionKey)
+	content = strings.TrimSpace(content)
+	if session == "" || content == "" {
+		return 0, false
+	}
+
+	m.ensureSessionStarted(session)
+	m.mu.RLock()
+	store := m.chatStore
+	m.mu.RUnlock()
+	if store == nil {
+		return 0, false
+	}
+
+	at := normalizeEventTime(eventTime)
+	seq := m.nextCausalSeq(session)
+	metadata := map[string]string{
+		metaEventTime: at.Format(time.RFC3339Nano),
+		metaCausalSeq: strconv.FormatInt(seq, 10),
+	}
+
+	if err := store.Append(context.Background(), session, chatlog.Entry{
+		Role:      chatlog.RoleUser,
+		Content:   content,
+		CreatedAt: at,
+		Metadata:  metadata,
+	}); err != nil {
+		log.Warn().Err(err).Str("session", session).Msg("append user chat event failed")
+		return 0, false
+	}
+	return seq, true
+}
+
+func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply string, eventTime time.Time, replyToCutoffSeq int64) bool {
+	session := strings.TrimSpace(sessionKey)
+	reply := strings.TrimSpace(assistantReply)
+	if session == "" || reply == "" {
+		return false
+	}
+
+	m.ensureSessionStarted(session)
+	m.mu.RLock()
+	store := m.chatStore
+	assistantSpeaker := strings.TrimSpace(m.assistantSpeaker)
+	m.mu.RUnlock()
+	if store == nil {
+		return false
+	}
+	if assistantSpeaker == "" {
+		assistantSpeaker = defaultAssistantLabel
+	}
+
+	at := normalizeEventTime(eventTime)
+	assistantContent := formatUserContentAt(reply, assistantSpeaker, at)
+	if strings.TrimSpace(assistantContent) == "" {
+		return false
+	}
+
+	seq := m.nextCausalSeq(session)
+	metadata := map[string]string{
+		metaEventTime: at.Format(time.RFC3339Nano),
+		metaCausalSeq: strconv.FormatInt(seq, 10),
+	}
+	if replyToCutoffSeq > 0 {
+		metadata[metaReplyToCutoffSeq] = strconv.FormatInt(replyToCutoffSeq, 10)
+	}
+
+	if err := store.Append(context.Background(), session, chatlog.Entry{
+		Role:      chatlog.RoleAssistant,
+		Content:   assistantContent,
+		CreatedAt: at,
+		Metadata:  metadata,
+	}); err != nil {
+		log.Warn().Err(err).Str("session", session).Msg("append assistant chat event failed")
+		return false
+	}
+	return true
+}
+
+func normalizeEventTime(at time.Time) time.Time {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return at.UTC()
+}
+
+func (m *Manager) nextCausalSeq(sessionKey string) int64 {
+	session := strings.TrimSpace(sessionKey)
+	if session == "" {
+		return 0
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessionStats == nil {
+		m.sessionStats = make(map[string]*sessionUsageStats)
+	}
+	stats, ok := m.sessionStats[session]
+	if !ok {
+		stats = &sessionUsageStats{startedAt: time.Now()}
+		m.sessionStats[session] = stats
+	}
+	if stats.startedAt.IsZero() {
+		stats.startedAt = time.Now()
+	}
+	stats.causalSeq++
+	return stats.causalSeq
 }
 
 func (m *Manager) ClearHistory(sessionKey string) {
@@ -92,6 +215,21 @@ func (m *Manager) ClearHistory(sessionKey string) {
 		_ = store.Clear(context.Background(), session)
 	}
 	m.clearSessionStats(session)
+}
+
+// ListChatEvents returns raw chatlog events for observability/debugging.
+func (m *Manager) ListChatEvents(sessionKey string, opts chatlog.ListOptions) (chatlog.ListResult, error) {
+	session := strings.TrimSpace(sessionKey)
+	if session == "" {
+		return chatlog.ListResult{}, chatlog.ErrEmptySessionKey
+	}
+	m.mu.RLock()
+	store := m.chatStore
+	m.mu.RUnlock()
+	if store == nil {
+		return chatlog.ListResult{}, nil
+	}
+	return store.List(context.Background(), session, opts)
 }
 
 func (m *Manager) SessionContextUsage(sessionKey string) SessionContextUsage {
@@ -185,17 +323,7 @@ func countTruncatedBlocks(blocks []contextassemble.Block) int {
 }
 
 func renderUsageAssembledBlocks(blocks []contextassemble.Block) string {
-	if len(blocks) == 0 {
-		return ""
-	}
-	filtered := make([]contextassemble.Block, 0, len(blocks))
-	for _, block := range blocks {
-		if block.Name == contextassemble.BlockCurrentInput && strings.TrimSpace(block.Content) == "" {
-			continue
-		}
-		filtered = append(filtered, block)
-	}
-	return renderAssembledBlocks(filtered)
+	return renderAssembledBlocks(blocks)
 }
 
 func (m *Manager) ensureSessionStarted(sessionKey string) {
@@ -209,9 +337,7 @@ func (m *Manager) ensureSessionStarted(sessionKey string) {
 	}
 	stats, ok := m.sessionStats[sessionKey]
 	if !ok {
-		m.sessionStats[sessionKey] = &sessionUsageStats{
-			startedAt: time.Now(),
-		}
+		m.sessionStats[sessionKey] = &sessionUsageStats{startedAt: time.Now()}
 		return
 	}
 	if stats.startedAt.IsZero() {

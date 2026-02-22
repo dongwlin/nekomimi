@@ -2,11 +2,13 @@ package llm
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
 	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	"github.com/dongwlin/nekomimi/internal/llm/diary"
 	"github.com/dongwlin/nekomimi/internal/llm/token"
@@ -168,5 +170,96 @@ func TestAppendHistory_AssistantEntryHasIdentityLabel(t *testing.T) {
 	}
 	if !strings.Contains(recentChat.Content, "]: world") {
 		t.Fatalf("assistant content formatting mismatch: %q", recentChat.Content)
+	}
+}
+
+func TestAppendEvents_MetadataAndReplyAnchor(t *testing.T) {
+	m := NewManager(config.LLMConfig{
+		Model: "gpt-4.1-mini",
+	})
+	sessionKey := "group:event-metadata"
+	userAt := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	replyAt := userAt.Add(2 * time.Second)
+
+	cutoffSeq, ok := m.AppendUserEventAt(sessionKey, "hello", "name=alice", userAt)
+	if !ok {
+		t.Fatal("append user event failed")
+	}
+	if cutoffSeq <= 0 {
+		t.Fatalf("invalid cutoff seq: %d", cutoffSeq)
+	}
+	if !m.AppendAssistantEventAt(sessionKey, "world", cutoffSeq, replyAt) {
+		t.Fatal("append assistant event failed")
+	}
+
+	result, err := m.ListChatEvents(sessionKey, chatlog.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list chat events failed: %v", err)
+	}
+	if len(result.Entries) != 2 {
+		t.Fatalf("event count mismatch: got %d, want %d", len(result.Entries), 2)
+	}
+
+	assistant := result.Entries[0]
+	user := result.Entries[1]
+	if user.Role != chatlog.RoleUser {
+		t.Fatalf("unexpected user role: %q", user.Role)
+	}
+	if assistant.Role != chatlog.RoleAssistant {
+		t.Fatalf("unexpected assistant role: %q", assistant.Role)
+	}
+
+	userSeq, err := strconv.ParseInt(user.Metadata["causal_seq"], 10, 64)
+	if err != nil || userSeq <= 0 {
+		t.Fatalf("invalid user causal_seq: %q", user.Metadata["causal_seq"])
+	}
+	assistantSeq, err := strconv.ParseInt(assistant.Metadata["causal_seq"], 10, 64)
+	if err != nil || assistantSeq <= userSeq {
+		t.Fatalf("invalid assistant causal_seq: user=%d assistant=%q", userSeq, assistant.Metadata["causal_seq"])
+	}
+	if strings.TrimSpace(user.Metadata["event_time"]) == "" {
+		t.Fatalf("missing user event_time metadata")
+	}
+	if strings.TrimSpace(assistant.Metadata["event_time"]) == "" {
+		t.Fatalf("missing assistant event_time metadata")
+	}
+	if assistant.Metadata["reply_to_cutoff_seq"] != strconv.FormatInt(cutoffSeq, 10) {
+		t.Fatalf("reply_to_cutoff_seq mismatch: got %q, want %q", assistant.Metadata["reply_to_cutoff_seq"], strconv.FormatInt(cutoffSeq, 10))
+	}
+}
+
+func TestAssemble_OrderStableWhenEventTimeSkews(t *testing.T) {
+	m := NewManager(config.LLMConfig{
+		Model: "gpt-4.1-mini",
+	})
+	sessionKey := "group:causal-stable"
+	firstAt := time.Date(2026, 2, 22, 12, 1, 0, 0, time.UTC)
+	secondAt := firstAt.Add(-5 * time.Minute)
+
+	firstSeq, ok := m.AppendUserEventAt(sessionKey, "first-message", "name=alice", firstAt)
+	if !ok || firstSeq == 0 {
+		t.Fatal("append first user event failed")
+	}
+	if !m.AppendAssistantEventAt(sessionKey, "second-message", firstSeq, secondAt) {
+		t.Fatal("append second assistant event failed")
+	}
+
+	assembled, err := m.contextAssembler.Assemble(context.Background(), contextassemble.Request{
+		SessionKey: sessionKey,
+	})
+	if err != nil {
+		t.Fatalf("assemble failed: %v", err)
+	}
+	recentChat, ok := assembled.Block(contextassemble.BlockRecentChat)
+	if !ok {
+		t.Fatalf("missing %s block", contextassemble.BlockRecentChat)
+	}
+	firstPos := strings.Index(recentChat.Content, "first-message")
+	secondPos := strings.Index(recentChat.Content, "second-message")
+	if firstPos < 0 || secondPos < 0 {
+		t.Fatalf("recent_chat missing expected messages: %q", recentChat.Content)
+	}
+	if firstPos > secondPos {
+		t.Fatalf("recent_chat order should follow causal append order, got: %q", recentChat.Content)
 	}
 }

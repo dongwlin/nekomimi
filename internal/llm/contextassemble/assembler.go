@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -17,7 +18,7 @@ const (
 	DefaultRecentDiaryLimit = 50
 	BlockRecentChat         = "recent_chat"
 	BlockRecentDiary        = "recent_diary"
-	BlockCurrentInput       = "current_input"
+	BlockMeta               = "meta"
 )
 
 var (
@@ -33,9 +34,16 @@ type Options struct {
 }
 
 type Request struct {
-	SessionKey   string
-	CurrentInput string
-	MaxChars     int
+	SessionKey string
+	Meta       Meta
+	MaxChars   int
+}
+
+type Meta struct {
+	Now               string
+	AssistantIdentity string
+	BotConfigNames    []string
+	SessionType       string
 }
 
 type Block struct {
@@ -110,8 +118,8 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 			Content: formatDiaryEntries(diaryResult.Entries),
 		},
 		{
-			Name:    BlockCurrentInput,
-			Content: strings.TrimSpace(req.CurrentInput),
+			Name:    BlockMeta,
+			Content: formatMeta(req.Meta),
 		},
 	}
 
@@ -216,7 +224,7 @@ func clipBlocks(blocks []Block, maxChars int) []Block {
 	if overflow <= 0 {
 		return blocks
 	}
-	order := []string{BlockRecentChat, BlockRecentDiary, BlockCurrentInput}
+	order := []string{BlockMeta, BlockRecentDiary, BlockRecentChat}
 	for _, name := range order {
 		if overflow <= 0 {
 			break
@@ -240,6 +248,60 @@ func clipBlocks(blocks []Block, maxChars int) []Block {
 		overflow = totalChars(blocks) - maxChars
 	}
 	return blocks
+}
+
+func formatMeta(meta Meta) string {
+	now := strings.TrimSpace(meta.Now)
+	if now == "" {
+		now = "unknown"
+	}
+
+	assistantIdentity := strings.TrimSpace(meta.AssistantIdentity)
+	if assistantIdentity == "" {
+		assistantIdentity = "unknown"
+	}
+
+	sessionType := strings.TrimSpace(strings.ToLower(meta.SessionType))
+	if sessionType == "" {
+		sessionType = "unknown"
+	}
+
+	configNames := normalizeMetaNames(meta.BotConfigNames)
+	if len(configNames) == 0 {
+		configNames = []string{"unknown"}
+	}
+
+	var builder strings.Builder
+	builder.WriteString("now=")
+	builder.WriteString(now)
+	builder.WriteString("\nassistant_identity=")
+	builder.WriteString(assistantIdentity)
+	builder.WriteString("\nbot_config_names=[")
+	builder.WriteString(strings.Join(configNames, ","))
+	builder.WriteString("]\nsession_type=")
+	builder.WriteString(sessionType)
+	return builder.String()
+}
+
+func normalizeMetaNames(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func findBlockIndex(blocks []Block, name string) int {

@@ -22,17 +22,19 @@ type pipelineRequest struct {
 	ExtraPrompt string
 	Source      string
 	AppendTurn  bool
+	Meta        contextassemble.Meta
 }
 
 type pipelineState struct {
-	provider        string
-	model           string
-	systemPrompt    string
-	assembler       *contextassemble.Assembler
-	router          tools.Router
-	toolsEnabled    bool
-	toolLoopMaxStep int
-	toolLoopTimeout time.Duration
+	provider         string
+	model            string
+	systemPrompt     string
+	assistantSpeaker string
+	assembler        *contextassemble.Assembler
+	router           tools.Router
+	toolsEnabled     bool
+	toolLoopMaxStep  int
+	toolLoopTimeout  time.Duration
 }
 
 func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (string, error) {
@@ -48,13 +50,27 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 		return "", errors.New("model is not configured")
 	}
 
-	userContent := formatUserContent(req.UserInput, req.Speaker)
-	if strings.TrimSpace(userContent) == "" {
+	eventTime := time.Now()
+	userContent := formatUserContentAt(req.UserInput, req.Speaker, eventTime)
+	if req.AppendTurn && strings.TrimSpace(userContent) == "" {
+		return "", errors.New("input is empty")
+	}
+	if !req.AppendTurn && strings.TrimSpace(userContent) == "" && strings.TrimSpace(req.SessionKey) == "" {
 		return "", errors.New("input is empty")
 	}
 
+	var replyCutoffSeq int64
+	if req.AppendTurn {
+		var ok bool
+		replyCutoffSeq, ok = m.AppendUserEventAt(req.SessionKey, req.UserInput, req.Speaker, eventTime)
+		if !ok {
+			return "", errors.New("append user event failed")
+		}
+	}
+
 	requestPrompt := composeSystemPrompt(state.systemPrompt, req.ExtraPrompt)
-	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, userContent)
+	meta := buildPipelineMeta(req.SessionKey, state.assistantSpeaker, req.Meta)
+	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent)
 	if err != nil {
 		return "", err
 	}
@@ -100,7 +116,7 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 		return "", err
 	}
 	if req.AppendTurn {
-		m.appendHistory(req.SessionKey, userContent, reply)
+		_ = m.AppendAssistantEvent(req.SessionKey, reply, replyCutoffSeq)
 	}
 	return reply, nil
 }
@@ -118,13 +134,27 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 		return "", errors.New("model is not configured")
 	}
 
-	userContent := formatUserContent(req.UserInput, req.Speaker)
-	if strings.TrimSpace(userContent) == "" {
+	eventTime := time.Now()
+	userContent := formatUserContentAt(req.UserInput, req.Speaker, eventTime)
+	if req.AppendTurn && strings.TrimSpace(userContent) == "" {
+		return "", errors.New("input is empty")
+	}
+	if !req.AppendTurn && strings.TrimSpace(userContent) == "" && strings.TrimSpace(req.SessionKey) == "" {
 		return "", errors.New("input is empty")
 	}
 
+	var replyCutoffSeq int64
+	if req.AppendTurn {
+		var ok bool
+		replyCutoffSeq, ok = m.AppendUserEventAt(req.SessionKey, req.UserInput, req.Speaker, eventTime)
+		if !ok {
+			return "", errors.New("append user event failed")
+		}
+	}
+
 	requestPrompt := composeSystemPrompt(state.systemPrompt, req.ExtraPrompt)
-	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, userContent)
+	meta := buildPipelineMeta(req.SessionKey, state.assistantSpeaker, req.Meta)
+	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent)
 	if err != nil {
 		return "", err
 	}
@@ -170,7 +200,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 			return "", err
 		}
 		if req.AppendTurn {
-			m.appendHistory(req.SessionKey, userContent, reply)
+			_ = m.AppendAssistantEvent(req.SessionKey, reply, replyCutoffSeq)
 		}
 		return reply, nil
 	}
@@ -212,7 +242,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 		return "", err
 	}
 	if req.AppendTurn {
-		m.appendHistory(req.SessionKey, userContent, reply)
+		_ = m.AppendAssistantEvent(req.SessionKey, reply, replyCutoffSeq)
 	}
 	return reply, nil
 }
@@ -221,26 +251,31 @@ func (m *Manager) snapshotPipelineState() pipelineState {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return pipelineState{
-		provider:        m.provider,
-		model:           m.model,
-		systemPrompt:    m.systemPrompt,
-		assembler:       m.contextAssembler,
-		router:          m.toolRouter,
-		toolsEnabled:    m.toolsEnabled,
-		toolLoopMaxStep: m.toolLoopMaxSteps,
-		toolLoopTimeout: m.toolLoopTimeout,
+		provider:         m.provider,
+		model:            m.model,
+		systemPrompt:     m.systemPrompt,
+		assistantSpeaker: m.assistantSpeaker,
+		assembler:        m.contextAssembler,
+		router:           m.toolRouter,
+		toolsEnabled:     m.toolsEnabled,
+		toolLoopMaxStep:  m.toolLoopMaxSteps,
+		toolLoopTimeout:  m.toolLoopTimeout,
 	}
 }
 
-func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contextassemble.Assembler, sessionKey, userContent string) ([]model.Message, bool, error) {
+func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contextassemble.Assembler, sessionKey string, meta contextassemble.Meta, fallbackContent string) ([]model.Message, bool, error) {
 	session := strings.TrimSpace(sessionKey)
 	if assembler == nil || session == "" {
-		return []model.Message{{Role: "user", Content: userContent}}, false, nil
+		content := strings.TrimSpace(fallbackContent)
+		if content == "" {
+			return nil, false, errors.New("input is empty")
+		}
+		return []model.Message{{Role: "user", Content: content}}, false, nil
 	}
 
 	assembled, err := assembler.Assemble(ctx, contextassemble.Request{
-		SessionKey:   session,
-		CurrentInput: userContent,
+		SessionKey: session,
+		Meta:       meta,
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("assemble context: %w", err)
@@ -256,7 +291,10 @@ func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contexta
 
 	content := renderAssembledBlocks(assembled.Blocks)
 	if strings.TrimSpace(content) == "" {
-		content = userContent
+		content = strings.TrimSpace(fallbackContent)
+	}
+	if strings.TrimSpace(content) == "" {
+		return nil, false, errors.New("input is empty")
 	}
 	return []model.Message{{Role: "user", Content: content}}, compressed, nil
 }
@@ -351,4 +389,91 @@ func mapToolLoopStreamEvent(seq int64, step int, message toolloop.StreamMessage)
 		}
 	}
 	return event
+}
+
+func buildPipelineMeta(sessionKey, assistantSpeaker string, override contextassemble.Meta) contextassemble.Meta {
+	meta := contextassemble.Meta{
+		Now:               time.Now().Format("2006-01-02 15:04:05"),
+		AssistantIdentity: strings.TrimSpace(assistantSpeaker),
+		BotConfigNames:    extractBotConfigNames(assistantSpeaker),
+		SessionType:       inferSessionType(sessionKey),
+	}
+
+	if trimmed := strings.TrimSpace(override.Now); trimmed != "" {
+		meta.Now = trimmed
+	}
+	if trimmed := strings.TrimSpace(override.AssistantIdentity); trimmed != "" {
+		meta.AssistantIdentity = trimmed
+	}
+	if cleaned := cleanStringSlice(override.BotConfigNames); len(cleaned) > 0 {
+		meta.BotConfigNames = cleaned
+	}
+	if trimmed := strings.TrimSpace(strings.ToLower(override.SessionType)); trimmed != "" {
+		meta.SessionType = trimmed
+	}
+	return meta
+}
+
+func inferSessionType(sessionKey string) string {
+	session := strings.TrimSpace(strings.ToLower(sessionKey))
+	if session == "" {
+		return "unknown"
+	}
+	if strings.HasPrefix(session, "group:") {
+		return "group"
+	}
+	if strings.HasPrefix(session, "private:") {
+		return "private"
+	}
+	if parts := strings.SplitN(session, ":", 2); len(parts) > 1 && strings.TrimSpace(parts[0]) != "" {
+		return strings.TrimSpace(parts[0])
+	}
+	return "unknown"
+}
+
+func extractBotConfigNames(assistantSpeaker string) []string {
+	trimmed := strings.TrimSpace(assistantSpeaker)
+	if trimmed == "" {
+		return nil
+	}
+	for _, part := range strings.Split(trimmed, ";") {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(strings.ToLower(key)) != "name" {
+			continue
+		}
+		if name := strings.TrimSpace(value); name != "" {
+			return []string{name}
+		}
+	}
+	if strings.Contains(trimmed, "=") {
+		return nil
+	}
+	return []string{trimmed}
+}
+
+func cleanStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
 }

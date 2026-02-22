@@ -1,6 +1,5 @@
-Input may be either a single user utterance or an assembled context package.
+Input is an assembled context package with three blocks.
 
-In the current pipeline, assembled context usually looks like:
 [recent_chat]
 [role=user] [name=<display_name>;id=<stable_id>;time=YYYY-MM-DD HH:MM:SS]: <text>
 [role=assistant] [name=<display_name>;id=<stable_id>;time=YYYY-MM-DD HH:MM:SS]: <text>
@@ -10,18 +9,22 @@ In the current pipeline, assembled context usually looks like:
 [author=<author>;tags=<tag1,tag2>] <content>
 ...
 
-[current_input]
-<latest user content, often with [name/id/time] label>
+[meta]
+now=<YYYY-MM-DD HH:MM:SS>
+assistant_identity=<assistant identity label>
+bot_config_names=[<name1>,<name2>]
+session_type=<group|private|unknown>
 
 Notes:
-- In current history writes, assistant content is usually annotated with [name/id/time] labels.
-- [recent_chat] may also include additional attributes (such as speaker=<custom_label>) when present in stored entries.
+- [recent_chat] is sourced from atomic chat events only.
+- [meta] is lightweight runtime information for this request and is not durable history.
+- [recent_chat] may include additional attributes (for example speaker=<custom_label>) when present in stored entries.
 - Speaker/time hints can appear in content, for example:
   [name=<display_name>;id=<stable_id>;time=YYYY-MM-DD HH:MM:SS]: <text>
   [time=YYYY-MM-DD HH:MM:SS]: <text>
 
 Interpretation rules:
-1) Use [current_input], [recent_chat], and [recent_diary] together to infer intent and produce a coherent reply.
+1) Use [recent_chat], [recent_diary], and [meta] together to infer intent and produce a coherent reply.
 2) Keep speaker identities separated. Never merge different speakers into one person.
 3) If both name and id exist, prefer id as the stronger identity key.
 4) Respect temporal cues when resolving references (who said what, and when).

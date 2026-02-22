@@ -42,18 +42,23 @@ func TestAssembler_AssembleBuilds50Plus50Windows(t *testing.T) {
 	}
 
 	result, err := assembler.Assemble(context.Background(), Request{
-		SessionKey:   sessionKey,
-		CurrentInput: "  current-input  ",
+		SessionKey: sessionKey,
+		Meta: Meta{
+			Now:               " 2026-02-21 08:00:00 ",
+			AssistantIdentity: " name=neko;id=10000 ",
+			BotConfigNames:    []string{"neko", "mimi", "neko"},
+			SessionType:       " group ",
+		},
 	})
 	if err != nil {
 		t.Fatalf("assemble failed: %v", err)
 	}
 
-	assertBlockNames(t, result.Blocks, []string{BlockRecentChat, BlockRecentDiary, BlockCurrentInput})
+	assertBlockNames(t, result.Blocks, []string{BlockRecentChat, BlockRecentDiary, BlockMeta})
 
 	recentChat := mustBlock(t, result, BlockRecentChat)
 	recentDiary := mustBlock(t, result, BlockRecentDiary)
-	currentInput := mustBlock(t, result, BlockCurrentInput)
+	meta := mustBlock(t, result, BlockMeta)
 
 	chatLines := nonEmptyLines(recentChat.Content)
 	if len(chatLines) != 50 {
@@ -77,10 +82,19 @@ func TestAssembler_AssembleBuilds50Plus50Windows(t *testing.T) {
 		t.Fatalf("recent_diary should end with latest entry diary-55, got last line %q", diaryLines[len(diaryLines)-1])
 	}
 
-	if currentInput.Content != "current-input" {
-		t.Fatalf("current_input should be trimmed: got %q, want %q", currentInput.Content, "current-input")
+	if !strings.Contains(meta.Content, "now=2026-02-21 08:00:00") {
+		t.Fatalf("meta now mismatch: %q", meta.Content)
 	}
-	if recentChat.Truncated || recentDiary.Truncated || currentInput.Truncated {
+	if !strings.Contains(meta.Content, "assistant_identity=name=neko;id=10000") {
+		t.Fatalf("meta assistant_identity mismatch: %q", meta.Content)
+	}
+	if !strings.Contains(meta.Content, "bot_config_names=[mimi,neko]") {
+		t.Fatalf("meta bot_config_names mismatch: %q", meta.Content)
+	}
+	if !strings.Contains(meta.Content, "session_type=group") {
+		t.Fatalf("meta session_type mismatch: %q", meta.Content)
+	}
+	if recentChat.Truncated || recentDiary.Truncated || meta.Truncated {
 		t.Fatalf("no block should be truncated when max chars is not set")
 	}
 	if result.TotalChars != totalChars(result.Blocks) {
@@ -101,63 +115,79 @@ func TestAssembler_AssemblePredictableClipping(t *testing.T) {
 		t.Fatalf("write diary failed: %v", err)
 	}
 
+	metaReq := Meta{
+		Now:               "2026-02-22 10:00:00",
+		AssistantIdentity: "name=assistant;id=1",
+		BotConfigNames:    []string{"neko"},
+		SessionType:       "group",
+	}
+	base, err := assembler.Assemble(context.Background(), Request{
+		SessionKey: sessionKey,
+		Meta:       metaReq,
+	})
+	if err != nil {
+		t.Fatalf("assemble baseline failed: %v", err)
+	}
+	baseChat := mustBlock(t, base, BlockRecentChat).Content
+	baseDiary := mustBlock(t, base, BlockRecentDiary).Content
+	baseMeta := mustBlock(t, base, BlockMeta).Content
+	baseTotal := base.TotalChars
+	chatChars := charCount(baseChat)
+	diaryChars := charCount(baseDiary)
+	metaChars := charCount(baseMeta)
+
 	tests := []struct {
-		name           string
-		maxChars       int
-		wantChat       string
-		wantDiary      string
-		wantInput      string
-		wantChatCut    bool
-		wantDiaryCut   bool
-		wantCurrentCut bool
-		wantTotalChars int
+		name         string
+		maxChars     int
+		wantChat     string
+		wantDiary    string
+		wantMeta     string
+		wantChatCut  bool
+		wantDiaryCut bool
+		wantMetaCut  bool
 	}{
 		{
-			name:           "no clipping",
-			maxChars:       30,
-			wantChat:       "AAAAAAAAAA",
-			wantDiary:      "BBBBBBBBBB",
-			wantInput:      "CCCCCCCCCC",
-			wantTotalChars: 30,
+			name:      "no clipping",
+			maxChars:  baseTotal,
+			wantChat:  baseChat,
+			wantDiary: baseDiary,
+			wantMeta:  baseMeta,
 		},
 		{
-			name:           "clip recent_chat first",
-			maxChars:       25,
-			wantChat:       "AAAAA",
-			wantDiary:      "BBBBBBBBBB",
-			wantInput:      "CCCCCCCCCC",
-			wantChatCut:    true,
-			wantTotalChars: 25,
+			name:        "clip meta first",
+			maxChars:    baseTotal - 2,
+			wantChat:    baseChat,
+			wantDiary:   baseDiary,
+			wantMeta:    truncateByChars(baseMeta, metaChars-2),
+			wantMetaCut: true,
 		},
 		{
-			name:           "clip recent_chat then recent_diary",
-			maxChars:       18,
-			wantChat:       "",
-			wantDiary:      "BBBBBBBB",
-			wantInput:      "CCCCCCCCCC",
-			wantChatCut:    true,
-			wantDiaryCut:   true,
-			wantTotalChars: 18,
+			name:         "clip meta then recent_diary",
+			maxChars:     chatChars + diaryChars - 1,
+			wantChat:     baseChat,
+			wantDiary:    truncateByChars(baseDiary, diaryChars-1),
+			wantMeta:     "",
+			wantDiaryCut: true,
+			wantMetaCut:  true,
 		},
 		{
-			name:           "clip all blocks in order",
-			maxChars:       5,
-			wantChat:       "",
-			wantDiary:      "",
-			wantInput:      "CCCCC",
-			wantChatCut:    true,
-			wantDiaryCut:   true,
-			wantCurrentCut: true,
-			wantTotalChars: 5,
+			name:         "clip all blocks in order",
+			maxChars:     chatChars - 1,
+			wantChat:     truncateByChars(baseChat, chatChars-1),
+			wantDiary:    "",
+			wantMeta:     "",
+			wantChatCut:  true,
+			wantDiaryCut: true,
+			wantMetaCut:  true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := assembler.Assemble(context.Background(), Request{
-				SessionKey:   sessionKey,
-				CurrentInput: strings.Repeat("C", 10),
-				MaxChars:     tc.maxChars,
+				SessionKey: sessionKey,
+				Meta:       metaReq,
+				MaxChars:   tc.maxChars,
 			})
 			if err != nil {
 				t.Fatalf("assemble failed: %v", err)
@@ -165,7 +195,7 @@ func TestAssembler_AssemblePredictableClipping(t *testing.T) {
 
 			recentChat := mustBlock(t, result, BlockRecentChat)
 			recentDiary := mustBlock(t, result, BlockRecentDiary)
-			currentInput := mustBlock(t, result, BlockCurrentInput)
+			meta := mustBlock(t, result, BlockMeta)
 
 			if recentChat.Content != tc.wantChat {
 				t.Fatalf("recent_chat mismatch: got %q, want %q", recentChat.Content, tc.wantChat)
@@ -173,8 +203,8 @@ func TestAssembler_AssemblePredictableClipping(t *testing.T) {
 			if recentDiary.Content != tc.wantDiary {
 				t.Fatalf("recent_diary mismatch: got %q, want %q", recentDiary.Content, tc.wantDiary)
 			}
-			if currentInput.Content != tc.wantInput {
-				t.Fatalf("current_input mismatch: got %q, want %q", currentInput.Content, tc.wantInput)
+			if meta.Content != tc.wantMeta {
+				t.Fatalf("meta mismatch: got %q, want %q", meta.Content, tc.wantMeta)
 			}
 			if recentChat.Truncated != tc.wantChatCut {
 				t.Fatalf("recent_chat truncated mismatch: got %v, want %v", recentChat.Truncated, tc.wantChatCut)
@@ -182,11 +212,8 @@ func TestAssembler_AssemblePredictableClipping(t *testing.T) {
 			if recentDiary.Truncated != tc.wantDiaryCut {
 				t.Fatalf("recent_diary truncated mismatch: got %v, want %v", recentDiary.Truncated, tc.wantDiaryCut)
 			}
-			if currentInput.Truncated != tc.wantCurrentCut {
-				t.Fatalf("current_input truncated mismatch: got %v, want %v", currentInput.Truncated, tc.wantCurrentCut)
-			}
-			if result.TotalChars != tc.wantTotalChars {
-				t.Fatalf("total chars mismatch: got %d, want %d", result.TotalChars, tc.wantTotalChars)
+			if meta.Truncated != tc.wantMetaCut {
+				t.Fatalf("meta truncated mismatch: got %v, want %v", meta.Truncated, tc.wantMetaCut)
 			}
 			if result.TotalChars > tc.maxChars {
 				t.Fatalf("total chars should not exceed max: got %d, max %d", result.TotalChars, tc.maxChars)
@@ -221,8 +248,13 @@ func TestAssembler_AssembleValidationAndRequestOverride(t *testing.T) {
 	}
 
 	clipped, err := assembler.Assemble(context.Background(), Request{
-		SessionKey:   sessionKey,
-		CurrentInput: strings.Repeat("C", 10),
+		SessionKey: sessionKey,
+		Meta: Meta{
+			Now:               strings.Repeat("C", 10),
+			AssistantIdentity: "assistant",
+			BotConfigNames:    []string{"neko"},
+			SessionType:       "group",
+		},
 	})
 	if err != nil {
 		t.Fatalf("assemble with default max chars failed: %v", err)
@@ -232,9 +264,14 @@ func TestAssembler_AssembleValidationAndRequestOverride(t *testing.T) {
 	}
 
 	overridden, err := assembler.Assemble(context.Background(), Request{
-		SessionKey:   sessionKey,
-		CurrentInput: strings.Repeat("C", 10),
-		MaxChars:     30,
+		SessionKey: sessionKey,
+		Meta: Meta{
+			Now:               strings.Repeat("C", 10),
+			AssistantIdentity: "assistant",
+			BotConfigNames:    []string{"neko"},
+			SessionType:       "group",
+		},
+		MaxChars: 30,
 	})
 	if err != nil {
 		t.Fatalf("assemble with request max chars failed: %v", err)

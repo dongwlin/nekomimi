@@ -177,7 +177,7 @@ func prependMessages(head, tail []queuedMessage) []queuedMessage {
 	return next
 }
 
-// appendTimelineMessage appends one message into timeline with bounded length.
+// appendTimelineMessage appends one message into runtime buffer with bounded length.
 func appendTimelineMessage(timeline []queuedMessage, msg queuedMessage, maxMessages int) []queuedMessage {
 	timeline = append(timeline, msg)
 	if maxMessages <= 0 || len(timeline) <= maxMessages {

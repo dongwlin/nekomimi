@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
 )
 
 func TestReplyStream_ToolsDisabled_UsesProviderStreaming(t *testing.T) {
@@ -150,6 +153,63 @@ func TestReplyStream_ToolsEnabled_EmitsToolEvents(t *testing.T) {
 		if types[i] != want {
 			t.Fatalf("event type mismatch at index %d: got %q, want %q", i, types[i], want)
 		}
+	}
+}
+
+func TestReplyStream_AppendsAtomicEventsWithAnchor(t *testing.T) {
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		return []string{
+			mustResponsesDeltaEvent(t, "ok"),
+			`{"type":"response.completed"}`,
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+	})
+	sessionKey := "session-stream-atomic"
+	_, err := manager.ReplyStream(context.Background(), "hello-stream", sessionKey, "name=alice", func(event StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reply stream failed: %v", err)
+	}
+
+	result, err := manager.ListChatEvents(sessionKey, chatlog.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list chat events failed: %v", err)
+	}
+	if len(result.Entries) != 2 {
+		t.Fatalf("event count mismatch: got %d, want %d", len(result.Entries), 2)
+	}
+
+	assistant := result.Entries[0]
+	user := result.Entries[1]
+	if assistant.Role != chatlog.RoleAssistant || user.Role != chatlog.RoleUser {
+		t.Fatalf("unexpected event roles: assistant=%q user=%q", assistant.Role, user.Role)
+	}
+	if strings.Contains(user.Content, "batch_meta:") || strings.Contains(user.Content, "transcript:") {
+		t.Fatalf("user content should be atomic message, got %q", user.Content)
+	}
+	if strings.TrimSpace(user.Metadata["event_time"]) == "" || strings.TrimSpace(assistant.Metadata["event_time"]) == "" {
+		t.Fatalf("event_time metadata should exist on both events")
+	}
+
+	userSeq, err := strconv.ParseInt(user.Metadata["causal_seq"], 10, 64)
+	if err != nil || userSeq <= 0 {
+		t.Fatalf("invalid user causal_seq: %q", user.Metadata["causal_seq"])
+	}
+	assistantSeq, err := strconv.ParseInt(assistant.Metadata["causal_seq"], 10, 64)
+	if err != nil || assistantSeq <= userSeq {
+		t.Fatalf("assistant causal_seq should be > user causal_seq, got user=%d assistant=%q", userSeq, assistant.Metadata["causal_seq"])
+	}
+	if assistant.Metadata["reply_to_cutoff_seq"] != strconv.FormatInt(userSeq, 10) {
+		t.Fatalf("reply_to_cutoff_seq mismatch: got %q, want %d", assistant.Metadata["reply_to_cutoff_seq"], userSeq)
 	}
 }
 

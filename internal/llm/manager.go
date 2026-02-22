@@ -50,6 +50,7 @@ type Manager struct {
 type sessionUsageStats struct {
 	startedAt        time.Time
 	contextTrimCount int
+	causalSeq        int64
 }
 
 func NewManager(cfg config.LLMConfig) *Manager {
