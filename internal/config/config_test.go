@@ -182,7 +182,7 @@ driver:
 	}
 }
 
-func TestLoad_ParseLegacyImmersiveTimeline(t *testing.T) {
+func TestLoad_IgnoreLegacyImmersiveTimeline(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yml")
 	configContent := []byte(`
@@ -217,8 +217,8 @@ driver:
 	if err != nil {
 		t.Fatalf("load config failed: %v", err)
 	}
-	if cfg.LLM.Immersive.Timeline.MaxMessages != 222 {
-		t.Fatalf("unexpected timeline.max_messages: %d", cfg.LLM.Immersive.Timeline.MaxMessages)
+	if cfg.LLM.Immersive.RuntimeBuffer.MaxMessages != 0 {
+		t.Fatalf("legacy timeline should not map into runtime_buffer, got %d", cfg.LLM.Immersive.RuntimeBuffer.MaxMessages)
 	}
 }
 

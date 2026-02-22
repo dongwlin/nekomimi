@@ -64,16 +64,10 @@ type ToolLoopConfig struct {
 
 type ImmersiveConfig struct {
 	RuntimeBuffer RuntimeBufferConfig `yaml:"runtime_buffer"`
-	// Timeline is a deprecated alias kept for backward compatibility.
-	Timeline     TimelineConfig     `yaml:"timeline"`
-	PokeReaction PokeReactionConfig `yaml:"poke_reaction"`
+	PokeReaction  PokeReactionConfig  `yaml:"poke_reaction"`
 }
 
 type RuntimeBufferConfig struct {
-	MaxMessages int `yaml:"max_messages"`
-}
-
-type TimelineConfig struct {
 	MaxMessages int `yaml:"max_messages"`
 }
 
