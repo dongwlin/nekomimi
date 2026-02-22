@@ -11,19 +11,55 @@ type Config struct {
 }
 
 type LLMConfig struct {
-	Enabled         bool            `yaml:"enabled"`
-	Provider        string          `yaml:"provider"`
-	API             string          `yaml:"api"`
-	Key             string          `yaml:"key"`
-	Model           string          `yaml:"model"`
-	TimeoutMS       int             `yaml:"timeout_ms"`
-	ReasoningEffort string          `yaml:"reasoning_effort"`
-	ThinkingType    string          `yaml:"thinking_type"`
-	ShowReasoning   bool            `yaml:"show_reasoning"`
-	SystemPrompt    string          `yaml:"system_prompt"`
-	HistoryMax      int             `yaml:"history_max"`
-	ContextMax      int             `yaml:"context_max"`
-	Immersive       ImmersiveConfig `yaml:"immersive"`
+	Enabled         bool                  `yaml:"enabled"`
+	Provider        string                `yaml:"provider"`
+	API             string                `yaml:"api"`
+	Key             string                `yaml:"key"`
+	Model           string                `yaml:"model"`
+	TimeoutMS       int                   `yaml:"timeout_ms"`
+	ReasoningEffort string                `yaml:"reasoning_effort"`
+	ThinkingType    string                `yaml:"thinking_type"`
+	ShowReasoning   bool                  `yaml:"show_reasoning"`
+	SystemPrompt    string                `yaml:"system_prompt"`
+	ContextMax      int                   `yaml:"context_max"`
+	ContextAssembly ContextAssemblyConfig `yaml:"context_assembly"`
+	Tools           ToolsConfig           `yaml:"tools"`
+	MCP             MCPConfig             `yaml:"mcp"`
+	ToolLoop        ToolLoopConfig        `yaml:"tool_loop"`
+	Immersive       ImmersiveConfig       `yaml:"immersive"`
+}
+
+type ContextAssemblyConfig struct {
+	RecentChatLimit  int `yaml:"recent_chat_limit"`
+	RecentDiaryLimit int `yaml:"recent_diary_limit"`
+}
+
+type ToolsConfig struct {
+	Enabled        bool `yaml:"enabled"`
+	MaxResultChars int  `yaml:"max_result_chars"`
+}
+
+type MCPConfig struct {
+	Enabled          bool              `yaml:"enabled"`
+	DefaultTimeoutMS int               `yaml:"default_timeout_ms"`
+	MaxPayloadBytes  int               `yaml:"max_payload_bytes"`
+	Servers          []MCPServerConfig `yaml:"servers"`
+}
+
+type MCPServerConfig struct {
+	Name       string            `yaml:"name"`
+	Transport  string            `yaml:"transport"`
+	URL        string            `yaml:"url"`
+	Command    string            `yaml:"command"`
+	Args       []string          `yaml:"args"`
+	Headers    map[string]string `yaml:"headers"`
+	AllowTools []string          `yaml:"allow_tools"`
+	TimeoutMS  int               `yaml:"timeout_ms"`
+}
+
+type ToolLoopConfig struct {
+	MaxSteps  int `yaml:"max_steps"`
+	TimeoutMS int `yaml:"timeout_ms"`
 }
 
 type ImmersiveConfig struct {
@@ -38,7 +74,6 @@ type ImmersiveConfig struct {
 type TimelineConfig struct {
 	MaxMessages      int `yaml:"max_messages"`
 	OverflowMessages int `yaml:"overflow_messages"`
-	CompressBatch    int `yaml:"compress_batch"`
 }
 
 type ContinuousSpeechConfig struct {

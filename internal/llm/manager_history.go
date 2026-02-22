@@ -2,33 +2,53 @@ package llm
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/dongwlin/nekomimi/internal/llm/summarizer"
+	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
+	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/llm/diary"
 	"github.com/dongwlin/nekomimi/internal/llm/token"
+	"github.com/rs/zerolog/log"
+)
+
+const (
+	metaEventTime         = "event_time"
+	metaCausalSeq         = "causal_seq"
+	metaReplyToCutoffSeq  = "reply_to_cutoff_seq"
+	defaultAssistantLabel = "name=assistant"
 )
 
 type SessionContextUsage struct {
-	UsedTokens           int
-	MaxTokens            int
-	UsagePercent         float64
-	MessageCount         int
-	SessionStartedAt     time.Time
-	HistoryCompressCount int
-	ContextCompressCount int
-	TotalCompressCount   int
+	UsedTokens          int
+	MaxTokens           int
+	UsagePercent        float64
+	SessionStartedAt    time.Time
+	RecentChatCount     int
+	RecentChatLimit     int
+	RecentDiaryCount    int
+	RecentDiaryLimit    int
+	AssembledChars      int
+	TruncatedBlockCount int
+	ContextTrimCount    int
 }
 
-func (m *Manager) historySnapshot(sessionKey string) []Message {
-	if strings.TrimSpace(sessionKey) == "" {
-		return nil
-	}
-	return m.historyStore.Snapshot(sessionKey)
+type sessionContextUsageState struct {
+	chatStore        chatlog.Store
+	diaryStore       diary.Store
+	assembler        *contextassemble.Assembler
+	systemPrompt     string
+	contextMax       int
+	recentChatLimit  int
+	recentDiaryLimit int
+	startedAt        time.Time
+	contextTrimCount int
 }
 
 func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) {
-	if strings.TrimSpace(sessionKey) == "" {
+	session := strings.TrimSpace(sessionKey)
+	if session == "" {
 		return
 	}
 	userContent = strings.TrimSpace(userContent)
@@ -36,12 +56,12 @@ func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) 
 	if userContent == "" || assistantReply == "" {
 		return
 	}
-	m.ensureSessionStarted(sessionKey)
-	m.historyStore.Append(
-		sessionKey,
-		Message{Role: "user", Content: userContent},
-		Message{Role: "assistant", Content: assistantReply},
-	)
+
+	cutoffSeq, ok := m.appendUserEventFormatted(session, userContent, time.Now())
+	if !ok {
+		return
+	}
+	_ = m.appendAssistantEventFormatted(session, assistantReply, time.Now(), cutoffSeq)
 }
 
 // AppendTurn appends a completed user-assistant turn into session history.
@@ -51,89 +71,259 @@ func (m *Manager) AppendTurn(sessionKey, userInput, speaker, assistantReply stri
 	m.appendHistory(sessionKey, userContent, assistantReply)
 }
 
-func (m *Manager) compressHistoryIfNeeded(ctx context.Context, provider, model, sessionKey string) {
-	if strings.TrimSpace(sessionKey) == "" || m.historyMax <= 0 {
-		return
-	}
-	history := m.historyStore.Snapshot(sessionKey)
-	if len(history) < m.historyMax*2 {
-		return
-	}
-	oldRounds := m.historyMax / 2
-	if oldRounds < 1 {
-		oldRounds = 1
-	}
-	oldMsgCount := oldRounds * 2
-	if len(history) <= oldMsgCount {
-		return
-	}
-	summarySrc := make([]Message, oldMsgCount)
-	copy(summarySrc, history[:oldMsgCount])
+// AppendUserEvent appends one user atomic event and returns its causal sequence.
+func (m *Manager) AppendUserEvent(sessionKey, userInput, speaker string) (int64, bool) {
+	return m.AppendUserEventAt(sessionKey, userInput, speaker, time.Now())
+}
 
-	summary := m.summarizeWithProvider(ctx, provider, model, summarizer.ModeFull, summarySrc, 600)
-	if strings.TrimSpace(summary) == "" {
-		return
-	}
-	summaryMsg := Message{
-		Role:    "system",
-		Content: "对话摘要（历史压缩）: " + summary,
+// AppendUserEventAt appends one user atomic event with explicit event time.
+func (m *Manager) AppendUserEventAt(sessionKey, userInput, speaker string, eventTime time.Time) (int64, bool) {
+	at := normalizeEventTime(eventTime)
+	content := formatUserContentAt(userInput, speaker, at)
+	return m.appendUserEventFormatted(sessionKey, content, at)
+}
+
+// AppendAssistantEvent appends one assistant atomic event with a causal cutoff anchor.
+func (m *Manager) AppendAssistantEvent(sessionKey, assistantReply string, replyToCutoffSeq int64) bool {
+	return m.AppendAssistantEventAt(sessionKey, assistantReply, replyToCutoffSeq, time.Now())
+}
+
+// AppendAssistantEventAt appends one assistant atomic event with explicit event time.
+func (m *Manager) AppendAssistantEventAt(sessionKey, assistantReply string, replyToCutoffSeq int64, eventTime time.Time) bool {
+	return m.appendAssistantEventFormatted(sessionKey, assistantReply, eventTime, replyToCutoffSeq)
+}
+
+func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime time.Time) (int64, bool) {
+	session := strings.TrimSpace(sessionKey)
+	content = strings.TrimSpace(content)
+	if session == "" || content == "" {
+		return 0, false
 	}
 
-	latest := m.historyStore.Snapshot(sessionKey)
-	if len(latest) < m.historyMax*2 || len(latest) <= oldMsgCount {
-		return
+	m.ensureSessionStarted(session)
+	m.mu.RLock()
+	store := m.chatStore
+	m.mu.RUnlock()
+	if store == nil {
+		return 0, false
 	}
-	tail := make([]Message, len(latest)-oldMsgCount)
-	copy(tail, latest[oldMsgCount:])
-	compressed := make([]Message, 0, len(tail)+1)
-	compressed = append(compressed, summaryMsg)
-	compressed = append(compressed, tail...)
-	m.historyStore.Replace(sessionKey, compressed)
-	m.incrementHistoryCompressCount(sessionKey)
+
+	at := normalizeEventTime(eventTime)
+	seq := m.nextCausalSeq(session)
+	metadata := map[string]string{
+		metaEventTime: at.Format(time.RFC3339Nano),
+		metaCausalSeq: strconv.FormatInt(seq, 10),
+	}
+
+	if err := store.Append(context.Background(), session, chatlog.Entry{
+		Role:      chatlog.RoleUser,
+		Content:   content,
+		CreatedAt: at,
+		Metadata:  metadata,
+	}); err != nil {
+		log.Warn().Err(err).Str("session", session).Msg("append user chat event failed")
+		return 0, false
+	}
+	return seq, true
+}
+
+func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply string, eventTime time.Time, replyToCutoffSeq int64) bool {
+	session := strings.TrimSpace(sessionKey)
+	reply := strings.TrimSpace(assistantReply)
+	if session == "" || reply == "" {
+		return false
+	}
+
+	m.ensureSessionStarted(session)
+	m.mu.RLock()
+	store := m.chatStore
+	assistantSpeaker := strings.TrimSpace(m.assistantSpeaker)
+	m.mu.RUnlock()
+	if store == nil {
+		return false
+	}
+	if assistantSpeaker == "" {
+		assistantSpeaker = defaultAssistantLabel
+	}
+
+	at := normalizeEventTime(eventTime)
+	assistantContent := formatUserContentAt(reply, assistantSpeaker, at)
+	if strings.TrimSpace(assistantContent) == "" {
+		return false
+	}
+
+	seq := m.nextCausalSeq(session)
+	metadata := map[string]string{
+		metaEventTime: at.Format(time.RFC3339Nano),
+		metaCausalSeq: strconv.FormatInt(seq, 10),
+	}
+	if replyToCutoffSeq > 0 {
+		metadata[metaReplyToCutoffSeq] = strconv.FormatInt(replyToCutoffSeq, 10)
+	}
+
+	if err := store.Append(context.Background(), session, chatlog.Entry{
+		Role:      chatlog.RoleAssistant,
+		Content:   assistantContent,
+		CreatedAt: at,
+		Metadata:  metadata,
+	}); err != nil {
+		log.Warn().Err(err).Str("session", session).Msg("append assistant chat event failed")
+		return false
+	}
+	return true
+}
+
+func normalizeEventTime(at time.Time) time.Time {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return at.UTC()
+}
+
+func (m *Manager) nextCausalSeq(sessionKey string) int64 {
+	session := strings.TrimSpace(sessionKey)
+	if session == "" {
+		return 0
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessionStats == nil {
+		m.sessionStats = make(map[string]*sessionUsageStats)
+	}
+	stats, ok := m.sessionStats[session]
+	if !ok {
+		stats = &sessionUsageStats{startedAt: time.Now()}
+		m.sessionStats[session] = stats
+	}
+	if stats.startedAt.IsZero() {
+		stats.startedAt = time.Now()
+	}
+	stats.causalSeq++
+	return stats.causalSeq
 }
 
 func (m *Manager) ClearHistory(sessionKey string) {
-	if strings.TrimSpace(sessionKey) == "" {
+	session := strings.TrimSpace(sessionKey)
+	if session == "" {
 		return
 	}
-	m.historyStore.Clear(sessionKey)
-	m.clearSessionStats(sessionKey)
+	m.mu.RLock()
+	store := m.chatStore
+	m.mu.RUnlock()
+	if store != nil {
+		_ = store.Clear(context.Background(), session)
+	}
+	m.clearSessionStats(session)
+}
+
+// ListChatEvents returns raw chatlog events for observability/debugging.
+func (m *Manager) ListChatEvents(sessionKey string, opts chatlog.ListOptions) (chatlog.ListResult, error) {
+	session := strings.TrimSpace(sessionKey)
+	if session == "" {
+		return chatlog.ListResult{}, chatlog.ErrEmptySessionKey
+	}
+	m.mu.RLock()
+	store := m.chatStore
+	m.mu.RUnlock()
+	if store == nil {
+		return chatlog.ListResult{}, nil
+	}
+	return store.List(context.Background(), session, opts)
 }
 
 func (m *Manager) SessionContextUsage(sessionKey string) SessionContextUsage {
-	if strings.TrimSpace(sessionKey) == "" {
+	session := strings.TrimSpace(sessionKey)
+	if session == "" {
 		return SessionContextUsage{}
 	}
-	history := m.historySnapshot(sessionKey)
-	m.mu.RLock()
-	systemPrompt := m.systemPrompt
-	contextMax := m.contextMax
-	stats := m.sessionStats[sessionKey]
-	m.mu.RUnlock()
 
-	used := token.EstimateContextTokens(systemPrompt, history)
-	percent := 0.0
-	startedAt := time.Time{}
-	historyCompressCount := 0
-	contextCompressCount := 0
-	if stats != nil {
-		startedAt = stats.startedAt
-		historyCompressCount = stats.historyCompressCount
-		contextCompressCount = stats.contextCompressCount
+	state := m.snapshotSessionContextUsage(session)
+	usage := SessionContextUsage{
+		MaxTokens:        state.contextMax,
+		SessionStartedAt: state.startedAt,
+		RecentChatLimit:  state.recentChatLimit,
+		RecentDiaryLimit: state.recentDiaryLimit,
+		ContextTrimCount: state.contextTrimCount,
 	}
-	if contextMax > 0 {
-		percent = float64(used) * 100 / float64(contextMax)
+
+	if state.chatStore != nil {
+		result, err := state.chatStore.List(context.Background(), session, chatlog.ListOptions{Limit: state.recentChatLimit})
+		if err == nil {
+			usage.RecentChatCount = len(result.Entries)
+		}
 	}
-	return SessionContextUsage{
-		UsedTokens:           used,
-		MaxTokens:            contextMax,
-		UsagePercent:         percent,
-		MessageCount:         len(history),
-		SessionStartedAt:     startedAt,
-		HistoryCompressCount: historyCompressCount,
-		ContextCompressCount: contextCompressCount,
-		TotalCompressCount:   historyCompressCount + contextCompressCount,
+	if state.diaryStore != nil {
+		result, err := state.diaryStore.List(context.Background(), session, diary.ListOptions{Limit: state.recentDiaryLimit})
+		if err == nil {
+			usage.RecentDiaryCount = len(result.Entries)
+		}
 	}
+
+	if state.assembler != nil {
+		assembled, err := state.assembler.Assemble(context.Background(), contextassemble.Request{
+			SessionKey: session,
+		})
+		if err == nil {
+			usage.AssembledChars = assembled.TotalChars
+			usage.TruncatedBlockCount = countTruncatedBlocks(assembled.Blocks)
+			assembledContent := renderUsageAssembledBlocks(assembled.Blocks)
+			if strings.TrimSpace(assembledContent) == "" {
+				usage.UsedTokens = token.EstimateContextTokens(state.systemPrompt, nil)
+			} else {
+				usage.UsedTokens = token.EstimateContextTokens(state.systemPrompt, []Message{
+					{Role: "user", Content: assembledContent},
+				})
+			}
+		}
+	}
+	if usage.UsedTokens == 0 {
+		usage.UsedTokens = token.EstimateContextTokens(state.systemPrompt, nil)
+	}
+	if usage.MaxTokens > 0 {
+		usage.UsagePercent = float64(usage.UsedTokens) * 100 / float64(usage.MaxTokens)
+	}
+	return usage
+}
+
+func (m *Manager) snapshotSessionContextUsage(sessionKey string) sessionContextUsageState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	state := sessionContextUsageState{
+		chatStore:        m.chatStore,
+		diaryStore:       m.diaryStore,
+		assembler:        m.contextAssembler,
+		systemPrompt:     m.systemPrompt,
+		contextMax:       m.contextMax,
+		recentChatLimit:  m.recentChatLimit,
+		recentDiaryLimit: m.recentDiaryLimit,
+	}
+	if state.recentChatLimit <= 0 {
+		state.recentChatLimit = contextassemble.DefaultRecentChatLimit
+	}
+	if state.recentDiaryLimit <= 0 {
+		state.recentDiaryLimit = contextassemble.DefaultRecentDiaryLimit
+	}
+	if stats := m.sessionStats[sessionKey]; stats != nil {
+		state.startedAt = stats.startedAt
+		state.contextTrimCount = stats.contextTrimCount
+	}
+	return state
+}
+
+func countTruncatedBlocks(blocks []contextassemble.Block) int {
+	count := 0
+	for _, block := range blocks {
+		if block.Truncated {
+			count++
+		}
+	}
+	return count
+}
+
+func renderUsageAssembledBlocks(blocks []contextassemble.Block) string {
+	return renderAssembledBlocks(blocks)
 }
 
 func (m *Manager) ensureSessionStarted(sessionKey string) {
@@ -147,9 +337,7 @@ func (m *Manager) ensureSessionStarted(sessionKey string) {
 	}
 	stats, ok := m.sessionStats[sessionKey]
 	if !ok {
-		m.sessionStats[sessionKey] = &sessionUsageStats{
-			startedAt: time.Now(),
-		}
+		m.sessionStats[sessionKey] = &sessionUsageStats{startedAt: time.Now()}
 		return
 	}
 	if stats.startedAt.IsZero() {
@@ -157,7 +345,7 @@ func (m *Manager) ensureSessionStarted(sessionKey string) {
 	}
 }
 
-func (m *Manager) incrementHistoryCompressCount(sessionKey string) {
+func (m *Manager) incrementContextTrimCount(sessionKey string) {
 	if strings.TrimSpace(sessionKey) == "" {
 		return
 	}
@@ -174,27 +362,7 @@ func (m *Manager) incrementHistoryCompressCount(sessionKey string) {
 	if stats.startedAt.IsZero() {
 		stats.startedAt = time.Now()
 	}
-	stats.historyCompressCount++
-}
-
-func (m *Manager) incrementContextCompressCount(sessionKey string) {
-	if strings.TrimSpace(sessionKey) == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.sessionStats == nil {
-		m.sessionStats = make(map[string]*sessionUsageStats)
-	}
-	stats, ok := m.sessionStats[sessionKey]
-	if !ok {
-		stats = &sessionUsageStats{startedAt: time.Now()}
-		m.sessionStats[sessionKey] = stats
-	}
-	if stats.startedAt.IsZero() {
-		stats.startedAt = time.Now()
-	}
-	stats.contextCompressCount++
+	stats.contextTrimCount++
 }
 
 func (m *Manager) clearSessionStats(sessionKey string) {

@@ -84,22 +84,6 @@ func buildCombinedInput(queue []queuedMessage, identity botIdentity) string {
 	return strings.TrimSpace(builder.String())
 }
 
-func buildCombinedInputWithSummary(queue []queuedMessage, summary string, identity botIdentity) string {
-	base := buildCombinedInput(queue, identity)
-	trimmedSummary := strings.TrimSpace(summary)
-	if trimmedSummary == "" {
-		return base
-	}
-	var builder strings.Builder
-	builder.WriteString("history_summary: ")
-	builder.WriteString(sanitizeInline(trimmedSummary))
-	if strings.TrimSpace(base) != "" {
-		builder.WriteString("\n")
-		builder.WriteString(base)
-	}
-	return strings.TrimSpace(builder.String())
-}
-
 // formatQueuedMessage formats a single queued message as a transcript line
 // with speaker label and optional timestamp.
 func formatQueuedMessage(msg queuedMessage) string {
@@ -193,7 +177,7 @@ func prependMessages(head, tail []queuedMessage) []queuedMessage {
 	return next
 }
 
-// appendTimelineMessage appends one message into timeline with bounded length.
+// appendTimelineMessage appends one message into runtime buffer with bounded length.
 func appendTimelineMessage(timeline []queuedMessage, msg queuedMessage, maxMessages int) []queuedMessage {
 	timeline = append(timeline, msg)
 	if maxMessages <= 0 || len(timeline) <= maxMessages {

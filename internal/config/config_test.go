@@ -30,8 +30,10 @@ llm:
   key: ""
   model: "x"
   system_prompt: "{{file:prompts/role.txt}}"
-  history_max: 10
   context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
   immersive:
     max_batch_messages: 10
     max_batch_chars: 1000
@@ -75,8 +77,10 @@ llm:
   key: ""
   model: "x"
   system_prompt: "{{file:../outside.txt}}"
-  history_max: 10
   context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
   immersive:
     max_batch_messages: 10
     max_batch_chars: 1000
@@ -111,8 +115,10 @@ llm:
   key: ""
   model: "x"
   system_prompt: ""
-  history_max: 10
   context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
   immersive:
     max_batch_messages: 10
     max_batch_chars: 1000

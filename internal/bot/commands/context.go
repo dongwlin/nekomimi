@@ -72,3 +72,37 @@ func speakerNameAndID(ctx *zero.Ctx) (string, string) {
 	}
 	return name, speakerID
 }
+
+func assistantLabel(ctx *zero.Ctx) string {
+	if ctx == nil {
+		return "name=assistant"
+	}
+
+	var name string
+	var speakerID string
+	if ctx.Event != nil {
+		if ctx.Event.SelfTinyID != "" {
+			speakerID = strings.TrimSpace(ctx.Event.SelfTinyID)
+		} else if ctx.Event.SelfID != 0 {
+			speakerID = fmt.Sprintf("%d", ctx.Event.SelfID)
+		}
+	}
+
+	info := ctx.GetLoginInfo()
+	if nick := strings.TrimSpace(info.Get("nickname").String()); nick != "" {
+		name = nick
+	}
+	if speakerID == "" {
+		if id := strings.TrimSpace(info.Get("user_id").String()); id != "" {
+			speakerID = id
+		}
+	}
+
+	if name == "" {
+		name = "assistant"
+	}
+	if speakerID == "" {
+		return "name=" + name
+	}
+	return "name=" + name + ";id=" + speakerID
+}

@@ -30,13 +30,15 @@ type botIdentity struct {
 	AccountIDs      []string
 }
 
-// immersiveSession holds the state for a single conversation session.
+// immersiveSession holds the runtime scheduling buffer for one conversation session.
+// nextBatch/processingBatch are short-lived flush buffers, while runtimeBuffer is an
+// in-memory prompt aid and not a durable history source.
 type immersiveSession struct {
 	mu              sync.Mutex
-	queue           []queuedMessage
-	queueChars      int
-	timeline        []queuedMessage
-	timelineSummary string
+	nextBatch       []queuedMessage
+	nextBatchChars  int
+	processingBatch []queuedMessage
+	runtimeBuffer   []queuedMessage
 	timer           *time.Timer
 	inFlight        bool
 	lastCtx         *zero.Ctx
@@ -49,6 +51,8 @@ type queuedMessage struct {
 	speaker          string
 	ts               time.Time
 	chars            int
+	persisted        bool
+	causalSeq        int64
 	isMentionBot     bool
 	isQuestion       bool
 	isAddressedToBot bool

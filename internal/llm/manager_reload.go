@@ -6,9 +6,10 @@ import (
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
-	"github.com/dongwlin/nekomimi/internal/llm/history"
-	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
+	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/llm/diary"
 )
 
 // ReloadConfig refreshes runtime LLM settings without clearing in-memory history.
@@ -18,20 +19,19 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	}
 	providerName := normalizeProvider(cfg.Provider)
 	if providerName == llmProviderGemini {
-		return errors.New("gemini 尚未接入")
+		return errors.New("gemini is not implemented")
 	}
 	apiURL := normalizeAPIURL(providerName, cfg.API)
 	requestTimeout := time.Duration(cfg.TimeoutMS) * time.Millisecond
 	if requestTimeout <= 0 {
 		requestTimeout = defaultRequestTimeout()
 	}
-	basePrompt := composeSystemPrompt(llmprompt.DefaultSystemPrompt, llmprompt.SpeakerSystemPrompt)
-	systemPrompt := composeSystemPrompt(basePrompt, cfg.SystemPrompt)
-	historyMax := cfg.HistoryMax
+	basePrompt, systemPrompt := composeConfiguredSystemPrompt(cfg.SystemPrompt)
 	contextMax := cfg.ContextMax
 	if contextMax < 0 {
 		contextMax = 0
 	}
+	runtimeCfg := normalizeRuntimeConfig(cfg, requestTimeout, contextMax)
 
 	m.mu.Lock()
 	m.enabled = cfg.Enabled
@@ -44,8 +44,21 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	m.defaultPrompt = systemPrompt
 	m.defaultAPI = apiURL
 	m.defaultProv = providerName
-	m.historyMax = historyMax
 	m.contextMax = contextMax
+	m.recentChatLimit = runtimeCfg.recentChatLimit
+	m.recentDiaryLimit = runtimeCfg.recentDiaryLimit
+	m.toolsEnabled = runtimeCfg.toolsEnabled
+	m.toolLoopMaxSteps = runtimeCfg.toolLoopMaxSteps
+	m.toolLoopTimeout = runtimeCfg.toolLoopTimeout
+
+	if m.chatStore == nil {
+		m.chatStore = chatlog.NewMemoryStore()
+	}
+	if m.diaryStore == nil {
+		m.diaryStore = diary.NewMemoryStore()
+	}
+	m.contextAssembler = contextassemble.New(m.chatStore, m.diaryStore, runtimeCfg.assemblyOptions)
+	m.toolRouter = buildToolRouter(m.chatStore, m.diaryStore, runtimeCfg)
 	m.mu.Unlock()
 
 	m.client.SetAPIURL(apiURL)
@@ -53,9 +66,6 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	m.client.SetReasoningEffort(cfg.ReasoningEffort)
 	m.client.SetThinkingType(cfg.ThinkingType)
 	m.client.SetShowReasoning(cfg.ShowReasoning)
-	if store, ok := m.historyStore.(*history.MemoryStore); ok {
-		store.SetMaxRounds(historyMax)
-	}
 	return nil
 }
 
