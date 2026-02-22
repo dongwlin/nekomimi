@@ -168,6 +168,82 @@ func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
 	}
 }
 
+func TestReplyStreamWithExtraPromptAllowTools_UsesToolLoop(t *testing.T) {
+	var observedCall int64
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		atomic.StoreInt64(&observedCall, call)
+		switch call {
+		case 1:
+			return []string{
+				mustResponsesDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"thinking"}}`+"\n"),
+				mustResponsesDeltaEvent(t, `{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"session-extra-tools-on","limit":1}}}`+"\n"),
+				`{"type":"response.completed"}`,
+			}
+		case 2:
+			return []string{
+				mustResponsesDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"done"}}`+"\n"),
+				mustResponsesDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"answer","stop_reason":"final"}}`+"\n"),
+				`{"type":"response.completed"}`,
+			}
+		default:
+			return []string{
+				mustResponsesDeltaEvent(t, `{"version":"v2","type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
+				`{"type":"response.completed"}`,
+			}
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+		Tools: config.ToolsConfig{
+			Enabled: true,
+		},
+	})
+
+	events := make([]StreamEvent, 0, 8)
+	reply, err := manager.ReplyStreamWithExtraPromptAllowTools(context.Background(), "hello", "session-extra-tools-on", "alice", "extra", func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reply stream with extra prompt allow tools failed: %v", err)
+	}
+	if reply != "answer" {
+		t.Fatalf("reply mismatch: got %q, want %q", reply, "answer")
+	}
+	if atomic.LoadInt64(&observedCall) != 2 {
+		t.Fatalf("expected two provider calls, got %d", atomic.LoadInt64(&observedCall))
+	}
+
+	seenToolCall := false
+	seenToolResult := false
+	seenFinal := false
+	for _, event := range events {
+		switch event.Type {
+		case StreamEventToolCall:
+			seenToolCall = true
+		case StreamEventToolResult:
+			seenToolResult = true
+		case StreamEventFinal:
+			seenFinal = true
+		}
+	}
+	if !seenToolCall {
+		t.Fatal("expected tool_call event")
+	}
+	if !seenToolResult {
+		t.Fatal("expected tool_result event")
+	}
+	if !seenFinal {
+		t.Fatal("expected final event")
+	}
+}
+
 func TestReplyStreamWithExtraPrompt_PreservesWhitespaceOnlyDelta(t *testing.T) {
 	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
 		return []string{

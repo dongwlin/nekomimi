@@ -254,6 +254,14 @@ func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speake
 }
 
 func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error) {
+	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, true)
+}
+
+func (m *Manager) ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error) {
+	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, false)
+}
+
+func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, disableTools bool) (string, error) {
 	startedAt := time.Now()
 	reply, err := m.replyStreamWithPipeline(ctx, pipelineRequest{
 		UserInput:    userInput,
@@ -262,7 +270,7 @@ func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, ses
 		ExtraPrompt:  extraPrompt,
 		Source:       "immersive_control_reply_stream",
 		AppendTurn:   false,
-		DisableTools: true,
+		DisableTools: disableTools,
 	}, onEvent)
 	if err != nil {
 		log.Warn().

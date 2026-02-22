@@ -189,6 +189,88 @@ func TestFlush_MissingNewlineReplyUsesFallbackParser(t *testing.T) {
 	}
 }
 
+func TestFlush_ToolLoopDeltaNoiseFallsBackToFinalControlHeader(t *testing.T) {
+	sessionKey := "group:flush-tools-noise"
+	var callCount int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = r.Body.Close()
+
+		call := atomic.AddInt64(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		switch call {
+		case 1:
+			_, _ = fmt.Fprintf(
+				w,
+				"data: %s\n\n",
+				mustResponsesDeltaEventRaw(t, `{"version":"v2","type":"delta","delta":{"text":"thinking\n"}}`+"\n"),
+			)
+			_, _ = fmt.Fprintf(
+				w,
+				"data: %s\n\n",
+				mustResponsesDeltaEventRaw(
+					t,
+					fmt.Sprintf(`{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"%s","limit":1}}}`+"\n", sessionKey),
+				),
+			)
+		case 2:
+			_, _ = fmt.Fprintf(
+				w,
+				"data: %s\n\n",
+				mustResponsesDeltaEventRaw(t, `{"version":"v2","type":"final","final":{"content":"REPLY\nok","stop_reason":"final"}}`+"\n"),
+			)
+		default:
+			_, _ = fmt.Fprintf(
+				w,
+				"data: %s\n\n",
+				mustResponsesDeltaEventRaw(t, `{"version":"v2","type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
+			)
+		}
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.completed"}`)
+	}))
+	defer server.Close()
+
+	manager := llm.NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+		Tools: config.ToolsConfig{
+			Enabled: true,
+		},
+	})
+	manager.SetImmersive(sessionKey, true)
+	buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, manager, []string{"neko"})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	buffer.flush(sessionKey)
+
+	if atomic.LoadInt64(&callCount) != 2 {
+		t.Fatalf("expected two provider calls for tool loop, got %d", atomic.LoadInt64(&callCount))
+	}
+
+	entries := mustListChatEvents(t, manager, sessionKey, 20)
+	foundAssistant := false
+	for _, entry := range entries {
+		if entry.Role != chatlog.RoleAssistant {
+			continue
+		}
+		if strings.Contains(entry.Content, "ok") {
+			foundAssistant = true
+			break
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected assistant reply 'ok' in history, entries=%+v", entries)
+	}
+}
+
 func TestFlush_ReplyDelimiterSegmentsAreSentWithoutControlMarker(t *testing.T) {
 	server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"REPLY\n第一段\n---\n第二段"}]}]}`)
 	defer server.Close()
