@@ -9,15 +9,6 @@ import (
 func TestNormalizeImmersiveConfig_DefaultValues(t *testing.T) {
 	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{})
 
-	if cfg.MaxBatchMessages != defaultMaxBatchMessages {
-		t.Errorf("expected MaxBatchMessages %d, got %d", defaultMaxBatchMessages, cfg.MaxBatchMessages)
-	}
-	if cfg.MaxBatchChars != defaultMaxBatchChars {
-		t.Errorf("expected MaxBatchChars %d, got %d", defaultMaxBatchChars, cfg.MaxBatchChars)
-	}
-	if cfg.ImmediateDelayMS != defaultImmediateDelayMS {
-		t.Errorf("expected ImmediateDelayMS %d, got %d", defaultImmediateDelayMS, cfg.ImmediateDelayMS)
-	}
 	if !cfg.ContinuousSpeech.Enabled {
 		t.Errorf("expected ContinuousSpeech.Enabled true by default")
 	}
@@ -46,9 +37,6 @@ func TestNormalizeImmersiveConfig_DefaultValues(t *testing.T) {
 
 func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 	cfg := normalizeImmersiveConfig(config.ImmersiveConfig{
-		MaxBatchMessages: 20,
-		MaxBatchChars:    2000,
-		ImmediateDelayMS: 200,
 		ContinuousSpeech: config.ContinuousSpeechConfig{
 			Enabled:       false,
 			MinChunkChars: 16,
@@ -64,15 +52,6 @@ func TestNormalizeImmersiveConfig_PreservesValidValues(t *testing.T) {
 		},
 	})
 
-	if cfg.MaxBatchMessages != 20 {
-		t.Errorf("expected MaxBatchMessages 20, got %d", cfg.MaxBatchMessages)
-	}
-	if cfg.MaxBatchChars != 2000 {
-		t.Errorf("expected MaxBatchChars 2000, got %d", cfg.MaxBatchChars)
-	}
-	if cfg.ImmediateDelayMS != 200 {
-		t.Errorf("expected ImmediateDelayMS 200, got %d", cfg.ImmediateDelayMS)
-	}
 	if cfg.ContinuousSpeech.Enabled {
 		t.Errorf("expected ContinuousSpeech.Enabled false, got true")
 	}

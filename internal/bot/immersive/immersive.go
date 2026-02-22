@@ -17,9 +17,6 @@ import (
 
 // Default configuration values for the immersive buffer.
 const (
-	defaultMaxBatchMessages          = 10
-	defaultMaxBatchChars             = 1200
-	defaultImmediateDelayMS          = 120
 	defaultTimelineMaxMessages       = 200
 	defaultTimelineOverflowMessages  = 50
 	defaultContinuousMinChars        = 12
@@ -31,6 +28,7 @@ const (
 	defaultPokeReactionAnnoyedThresh = 6
 	maxImmersiveWaitRounds           = 2
 	defaultProtocolErrorWaitMS       = 600
+	defaultPendingFlushDelayMS       = 120
 	immersiveEmptyReplyFallback      = "..."
 )
 
@@ -154,7 +152,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state.mu.Lock()
 	if state.inFlight {
 		if len(state.nextBatch) > 0 {
-			delay := time.Duration(b.cfg.ImmediateDelayMS) * time.Millisecond
+			delay := time.Duration(defaultPendingFlushDelayMS) * time.Millisecond
 			if state.timer != nil {
 				state.timer.Stop()
 			}
@@ -466,7 +464,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		recordReply(reply, "reply_action")
 	}
 
-	delay := time.Duration(b.cfg.ImmediateDelayMS) * time.Millisecond
+	delay := time.Duration(defaultPendingFlushDelayMS) * time.Millisecond
 	state.mu.Lock()
 	state.inFlight = false
 	state.processingBatch = nil

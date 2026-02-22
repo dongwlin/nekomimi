@@ -35,9 +35,6 @@ llm:
     recent_chat_limit: 50
     recent_diary_limit: 50
   immersive:
-    max_batch_messages: 10
-    max_batch_chars: 1000
-    immediate_delay_ms: 100
 driver:
   websocket:
     url: "ws://localhost:3001"
@@ -82,9 +79,6 @@ llm:
     recent_chat_limit: 50
     recent_diary_limit: 50
   immersive:
-    max_batch_messages: 10
-    max_batch_chars: 1000
-    immediate_delay_ms: 100
 driver:
   websocket:
     url: "ws://localhost:3001"
@@ -120,9 +114,6 @@ llm:
     recent_chat_limit: 50
     recent_diary_limit: 50
   immersive:
-    max_batch_messages: 10
-    max_batch_chars: 1000
-    immediate_delay_ms: 100
     poke_reaction:
       window_ms: 60000
       mild_threshold: 4

@@ -15,15 +15,6 @@ func normalizeImmersiveConfig(cfg config.ImmersiveConfig) config.ImmersiveConfig
 		!cfg.ContinuousSpeech.RequireStream {
 		cfg.ContinuousSpeech.Enabled = true
 	}
-	if cfg.MaxBatchMessages <= 0 {
-		cfg.MaxBatchMessages = defaultMaxBatchMessages
-	}
-	if cfg.MaxBatchChars <= 0 {
-		cfg.MaxBatchChars = defaultMaxBatchChars
-	}
-	if cfg.ImmediateDelayMS <= 0 {
-		cfg.ImmediateDelayMS = defaultImmediateDelayMS
-	}
 	if cfg.Timeline.MaxMessages <= 0 {
 		cfg.Timeline.MaxMessages = defaultTimelineMaxMessages
 	}

@@ -31,9 +31,6 @@ llm:
     max_steps: 8
     timeout_ms: 45000
   immersive:
-    max_batch_messages: 10
-    max_batch_chars: 1200
-    immediate_delay_ms: 120
     timeline:
       max_messages: 200
       overflow_messages: 50

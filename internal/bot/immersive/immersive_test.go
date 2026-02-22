@@ -306,7 +306,7 @@ func TestFlush_InFlightMessagesGoToNextBatchAndAnchorCutoff(t *testing.T) {
 	}))
 	defer server.Close()
 
-	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{ImmediateDelayMS: 1000})
+	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
 	seedQueueForFlushTest(buffer, sessionKey, 0,
 		queuedMessage{text: "m1", speaker: "name=alice", ts: time.Now(), chars: len([]rune("m1"))},
 	)
@@ -326,6 +326,13 @@ func TestFlush_InFlightMessagesGoToNextBatchAndAnchorCutoff(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("first flush did not complete in time")
 	}
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	if state.timer != nil {
+		state.timer.Stop()
+		state.timer = nil
+	}
+	state.mu.Unlock()
 
 	entriesAfterFirst := mustListChatEvents(t, manager, sessionKey, 20)
 	if hasUserContent(entriesAfterFirst, "m2") {

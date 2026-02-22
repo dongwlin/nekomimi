@@ -63,9 +63,6 @@ type ToolLoopConfig struct {
 }
 
 type ImmersiveConfig struct {
-	MaxBatchMessages int                    `yaml:"max_batch_messages"`
-	MaxBatchChars    int                    `yaml:"max_batch_chars"`
-	ImmediateDelayMS int                    `yaml:"immediate_delay_ms"`
 	Timeline         TimelineConfig         `yaml:"timeline"`
 	ContinuousSpeech ContinuousSpeechConfig `yaml:"continuous_speech"`
 	PokeReaction     PokeReactionConfig     `yaml:"poke_reaction"`
