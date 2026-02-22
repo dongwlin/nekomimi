@@ -29,6 +29,7 @@ const (
 	defaultProtocolErrorWaitMS       = 600
 	defaultPendingFlushDelayMS       = 120
 	immersiveEmptyReplyFallback      = "..."
+	immersiveLogPreviewChars         = 600
 )
 
 var errControlHeaderProtocol = errors.New("control header protocol")
@@ -266,6 +267,11 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		}
 		return
 	}
+	log.Info().
+		Str("session", sessionKey).
+		Int("input_chars", len([]rune(input))).
+		Str("input_preview", previewForLog(input, immersiveLogPreviewChars)).
+		Msg("immersive control llm input prepared")
 
 	headerParser := newControlHeaderParser()
 	acc := newStreamChunkAccumulator(b.cfg.ContinuousSpeech)
@@ -339,6 +345,15 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		llmprompt.ImmersiveControlPrompt,
 		onEvent,
 	)
+	rawOutputLog := log.Info().
+		Str("session", sessionKey).
+		Int("output_chars", len([]rune(streamReply))).
+		Str("output_first_line", firstLineForLog(streamReply)).
+		Str("output_preview", previewForLog(streamReply, immersiveLogPreviewChars))
+	if streamErr != nil {
+		rawOutputLog = rawOutputLog.Err(streamErr)
+	}
+	rawOutputLog.Msg("immersive control llm raw output captured")
 	if streamErr == nil {
 		finalDecision, err := headerParser.Finalize()
 		if err != nil {
@@ -637,4 +652,26 @@ func (b *ImmersiveBuffer) currentIdentity() botIdentity {
 
 func (b *ImmersiveBuffer) runtimeBufferLimit() int {
 	return b.cfg.Timeline.MaxMessages
+}
+
+func previewForLog(text string, maxChars int) string {
+	if maxChars <= 0 {
+		maxChars = immersiveLogPreviewChars
+	}
+	runes := []rune(text)
+	if len(runes) <= maxChars {
+		return text
+	}
+	return string(runes[:maxChars]) + "...(truncated)"
+}
+
+func firstLineForLog(text string) string {
+	if text == "" {
+		return ""
+	}
+	line := text
+	if idx := strings.IndexAny(line, "\r\n"); idx >= 0 {
+		line = line[:idx]
+	}
+	return strings.TrimSpace(line)
 }
