@@ -228,3 +228,62 @@ func TestControlHeaderParserCaseAndWhitespaceVariants(t *testing.T) {
 		})
 	}
 }
+
+func TestParseControlHeaderFallback(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantOK     bool
+		wantAction controlAction
+		wantWaitMS int
+		wantBody   string
+	}{
+		{
+			name:       "reply inline with separator",
+			input:      "REPLY: hello",
+			wantOK:     true,
+			wantAction: controlActionReply,
+			wantBody:   "hello",
+		},
+		{
+			name:       "reply multiline body",
+			input:      "REPLY\nhello",
+			wantOK:     true,
+			wantAction: controlActionReply,
+			wantBody:   "hello",
+		},
+		{
+			name:       "wait with trailing text",
+			input:      "WAIT: 600 because user is still typing",
+			wantOK:     true,
+			wantAction: controlActionWait,
+			wantWaitMS: 600,
+		},
+		{
+			name:   "invalid plain text",
+			input:  "hello there",
+			wantOK: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			decision, body, ok := parseControlHeaderFallback(tc.input)
+			if ok != tc.wantOK {
+				t.Fatalf("unexpected ok: got %v, want %v", ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				return
+			}
+			if decision.action != tc.wantAction {
+				t.Fatalf("unexpected action: got %q, want %q", decision.action, tc.wantAction)
+			}
+			if decision.waitMS != tc.wantWaitMS {
+				t.Fatalf("unexpected wait_ms: got %d, want %d", decision.waitMS, tc.wantWaitMS)
+			}
+			if body != tc.wantBody {
+				t.Fatalf("unexpected body: got %q, want %q", body, tc.wantBody)
+			}
+		})
+	}
+}

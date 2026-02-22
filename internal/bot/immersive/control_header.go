@@ -132,6 +132,56 @@ func parseControlHeaderLine(line string) (controlHeaderDecision, error) {
 	}
 }
 
+func parseControlHeaderFallback(raw string) (controlHeaderDecision, string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return controlHeaderDecision{}, "", false
+	}
+
+	if newlineIdx := strings.IndexAny(trimmed, "\r\n"); newlineIdx >= 0 {
+		line := strings.TrimSpace(trimmed[:newlineIdx])
+		body := strings.TrimLeft(trimmed[newlineIdx:], "\r\n")
+		decision, err := parseControlHeaderLine(line)
+		if err != nil {
+			return controlHeaderDecision{}, "", false
+		}
+		if decision.action == controlActionReply {
+			return decision, body, true
+		}
+		if strings.TrimSpace(body) == "" {
+			return decision, "", true
+		}
+		return controlHeaderDecision{}, "", false
+	}
+
+	if decision, err := parseControlHeaderLine(trimmed); err == nil {
+		return decision, "", true
+	}
+
+	upper := strings.ToUpper(trimmed)
+	if strings.HasPrefix(upper, "REPLY") {
+		remainder := strings.TrimSpace(trimmed[len("REPLY"):])
+		remainder = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(remainder, ":"), "："))
+		return controlHeaderDecision{action: controlActionReply}, remainder, true
+	}
+	if strings.HasPrefix(upper, "WAIT:") {
+		remainder := strings.TrimSpace(trimmed[len("WAIT:"):])
+		fields := strings.Fields(remainder)
+		if len(fields) == 0 {
+			return controlHeaderDecision{}, "", false
+		}
+		waitMS, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return controlHeaderDecision{}, "", false
+		}
+		return controlHeaderDecision{
+			action: controlActionWait,
+			waitMS: clampControlWaitMS(waitMS),
+		}, "", true
+	}
+	return controlHeaderDecision{}, "", false
+}
+
 func clampControlWaitMS(waitMS int) int {
 	if waitMS < minControlWaitMS {
 		return minControlWaitMS

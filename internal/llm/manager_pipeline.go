@@ -16,13 +16,14 @@ import (
 )
 
 type pipelineRequest struct {
-	UserInput   string
-	SessionKey  string
-	Speaker     string
-	ExtraPrompt string
-	Source      string
-	AppendTurn  bool
-	Meta        contextassemble.Meta
+	UserInput    string
+	SessionKey   string
+	Speaker      string
+	ExtraPrompt  string
+	Source       string
+	AppendTurn   bool
+	DisableTools bool
+	Meta         contextassemble.Meta
 }
 
 type pipelineState struct {
@@ -79,7 +80,7 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 	}
 
 	var toolDescriptors []tools.Descriptor
-	if state.toolsEnabled && state.router != nil {
+	if !req.DisableTools && state.toolsEnabled && state.router != nil {
 		toolDescriptors, err = state.router.ListTools(ctx)
 		if err != nil {
 			return "", fmt.Errorf("list tools failed: %w", err)
@@ -171,7 +172,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 		return onEvent(mapToolLoopStreamEvent(current, step, message))
 	}
 
-	if !state.toolsEnabled || state.router == nil {
+	if req.DisableTools || !state.toolsEnabled || state.router == nil {
 		reply, err := m.generateStreamWithProvider(ctx, state.provider, state.model, requestPrompt, messages, llmclient.RequestOptions{
 			Source: req.Source,
 		}, func(delta string) error {

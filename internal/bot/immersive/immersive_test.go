@@ -104,7 +104,7 @@ func TestRecordTimelineEvent_AppendsWithoutQueueing(t *testing.T) {
 
 func TestFlush_ProtocolErrorFirstRoundWaitThenFollowupSkip(t *testing.T) {
 	t.Run("first round protocol error uses wait", func(t *testing.T) {
-		server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"REPLY"}]}]}`)
+		server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"hello"}]}]}`)
 		defer server.Close()
 
 		buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
@@ -129,7 +129,7 @@ func TestFlush_ProtocolErrorFirstRoundWaitThenFollowupSkip(t *testing.T) {
 	})
 
 	t.Run("follow-up protocol error uses skip", func(t *testing.T) {
-		server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"REPLY"}]}]}`)
+		server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"hello"}]}]}`)
 		defer server.Close()
 
 		buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
@@ -147,6 +147,46 @@ func TestFlush_ProtocolErrorFirstRoundWaitThenFollowupSkip(t *testing.T) {
 			t.Fatalf("expected waitRounds reset to 0 after skip, got %d", state.waitRounds)
 		}
 	})
+}
+
+func TestFlush_MissingNewlineReplyUsesFallbackParser(t *testing.T) {
+	server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"REPLY: ok"}]}]}`)
+	defer server.Close()
+
+	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	buffer.flush(sessionKey)
+
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	if got := len(state.nextBatch); got != 0 {
+		state.mu.Unlock()
+		t.Fatalf("expected next batch to be consumed, got %d", got)
+	}
+	if state.waitRounds != 0 {
+		state.mu.Unlock()
+		t.Fatalf("expected waitRounds reset to 0, got %d", state.waitRounds)
+	}
+	state.mu.Unlock()
+
+	entries := mustListChatEvents(t, manager, sessionKey, 10)
+	if len(entries) == 0 {
+		t.Fatal("expected chat history entries")
+	}
+	foundAssistant := false
+	for _, entry := range entries {
+		if entry.Role != chatlog.RoleAssistant {
+			continue
+		}
+		if strings.Contains(entry.Content, "ok") {
+			foundAssistant = true
+			break
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected assistant reply 'ok' in history, entries=%+v", entries)
+	}
 }
 
 func TestFlush_NonProtocolModelErrorSkips(t *testing.T) {

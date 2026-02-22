@@ -331,7 +331,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 	streamCtx, cancelStream := context.WithCancel(context.Background())
 	defer cancelStream()
-	_, streamErr := b.llm.ReplyStreamWithExtraPrompt(
+	streamReply, streamErr := b.llm.ReplyStreamWithExtraPrompt(
 		streamCtx,
 		input,
 		sessionKey,
@@ -342,7 +342,19 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	if streamErr == nil {
 		finalDecision, err := headerParser.Finalize()
 		if err != nil {
-			streamErr = fmt.Errorf("%w: %w", errControlHeaderProtocol, err)
+			if fallbackDecision, fallbackBody, ok := parseControlHeaderFallback(streamReply); ok {
+				decision = fallbackDecision
+				if fallbackDecision.action == controlActionReply && strings.TrimSpace(fallbackBody) != "" {
+					replyBuilder.WriteString(fallbackBody)
+				}
+				log.Warn().
+					Str("session", sessionKey).
+					Err(err).
+					Str("fallback_action", string(fallbackDecision.action)).
+					Msg("immersive control fallback parser applied")
+			} else {
+				streamErr = fmt.Errorf("%w: %w", errControlHeaderProtocol, err)
+			}
 		} else {
 			decision = finalDecision
 		}

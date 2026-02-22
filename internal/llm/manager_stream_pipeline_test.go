@@ -85,6 +85,50 @@ func TestReplyStreamWithExtraPrompt_DoesNotAppendHistory(t *testing.T) {
 	}
 }
 
+func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
+	var observedCall int64
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		atomic.StoreInt64(&observedCall, call)
+		switch call {
+		case 1:
+			return []string{
+				mustResponsesDeltaEvent(t, `{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"session-extra-tools-off","limit":1}}}`+"\n"),
+				`{"type":"response.completed"}`,
+			}
+		default:
+			return []string{
+				mustResponsesDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"done","stop_reason":"final"}}`+"\n"),
+				`{"type":"response.completed"}`,
+			}
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+		Tools: config.ToolsConfig{
+			Enabled: true,
+		},
+	})
+
+	reply, err := manager.ReplyStreamWithExtraPrompt(context.Background(), "hello", "session-extra-tools-off", "alice", "extra", func(event StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reply stream with extra prompt failed: %v", err)
+	}
+	if atomic.LoadInt64(&observedCall) != 1 {
+		t.Fatalf("expected exactly one provider call, got %d", atomic.LoadInt64(&observedCall))
+	}
+	if !strings.Contains(reply, `"type":"tool_call"`) {
+		t.Fatalf("expected raw streamed content without tool-loop handling, got %q", reply)
+	}
+}
+
 func TestReplyStream_ToolsEnabled_EmitsToolEvents(t *testing.T) {
 	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
 		switch call {

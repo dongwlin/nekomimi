@@ -256,12 +256,13 @@ func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speake
 func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error) {
 	startedAt := time.Now()
 	reply, err := m.replyStreamWithPipeline(ctx, pipelineRequest{
-		UserInput:   userInput,
-		SessionKey:  sessionKey,
-		Speaker:     speaker,
-		ExtraPrompt: extraPrompt,
-		Source:      "immersive_control_reply_stream",
-		AppendTurn:  false,
+		UserInput:    userInput,
+		SessionKey:   sessionKey,
+		Speaker:      speaker,
+		ExtraPrompt:  extraPrompt,
+		Source:       "immersive_control_reply_stream",
+		AppendTurn:   false,
+		DisableTools: true,
 	}, onEvent)
 	if err != nil {
 		log.Warn().
