@@ -17,7 +17,7 @@ import (
 
 // Default configuration values for the immersive buffer.
 const (
-	defaultTimelineMaxMessages       = 200
+	defaultRuntimeBufferMaxMessages  = 200
 	defaultPokeReactionWindowMS      = 180000
 	defaultPokeReactionMildThresh    = 3
 	defaultPokeReactionAnnoyedThresh = 6
@@ -641,7 +641,7 @@ func (b *ImmersiveBuffer) currentIdentity() botIdentity {
 }
 
 func (b *ImmersiveBuffer) runtimeBufferLimit() int {
-	return b.cfg.Timeline.MaxMessages
+	return b.cfg.RuntimeBuffer.MaxMessages
 }
 
 func previewForLog(text string, maxChars int) string {

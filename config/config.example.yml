@@ -31,7 +31,7 @@ llm:
     max_steps: 8
     timeout_ms: 45000
   immersive:
-    timeline:
+    runtime_buffer:
       max_messages: 200
     poke_reaction:
       window_ms: 180000
