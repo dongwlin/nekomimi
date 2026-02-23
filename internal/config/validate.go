@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	paseto "aidanwoods.dev/go-paseto"
 )
@@ -34,17 +35,17 @@ func validate(cfg *Config) error {
 		return nil
 	}
 
-	if cfg.API.Auth.PasetoKeyHex == "" {
-		return fmt.Errorf("api.auth.paseto_key_hex is required when api.enabled is true")
-	}
+	cfg.API.Auth.PasetoKeyHex = strings.TrimSpace(cfg.API.Auth.PasetoKeyHex)
 	if cfg.API.Auth.AccessTTLMS < minAllowedTokenTTLMS {
 		return fmt.Errorf("api.auth.access_ttl_ms must be greater than 0")
 	}
 	if cfg.API.Auth.RefreshTTLMS < minAllowedTokenTTLMS {
 		return fmt.Errorf("api.auth.refresh_ttl_ms must be greater than 0")
 	}
-	if _, err := paseto.V4SymmetricKeyFromHex(cfg.API.Auth.PasetoKeyHex); err != nil {
-		return fmt.Errorf("api.auth.paseto_key_hex is invalid: %w", err)
+	if cfg.API.Auth.PasetoKeyHex != "" {
+		if _, err := paseto.V4SymmetricKeyFromHex(cfg.API.Auth.PasetoKeyHex); err != nil {
+			return fmt.Errorf("api.auth.paseto_key_hex is invalid: %w", err)
+		}
 	}
 
 	return nil

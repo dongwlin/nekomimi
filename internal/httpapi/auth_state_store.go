@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	paseto "aidanwoods.dev/go-paseto"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 	"github.com/uptrace/bun/driver/sqliteshim"
@@ -24,6 +25,12 @@ const (
 	passphraseMinLength      = 8
 	generatedPassphraseChars = 32
 	bcryptCost               = 12
+
+	pasetoKeyActionGenerated        = "generated"
+	pasetoKeyActionResetInvalid     = "reset_invalid"
+	pasetoKeyActionSyncedFromConfig = "synced_from_config"
+	pasetoKeyActionLoadedFromDB     = "loaded_from_db"
+	pasetoKeyActionUnchangedConfig  = "unchanged_config"
 )
 
 var (
@@ -36,6 +43,7 @@ type authStateRecord struct {
 
 	ID             int64     `bun:"id,pk"`
 	PassphraseHash string    `bun:"passphrase_hash,notnull"`
+	PasetoKeyHex   string    `bun:"paseto_key_hex,notnull,default:''"`
 	TokenVersion   int64     `bun:"token_version,notnull"`
 	CreatedAt      time.Time `bun:"created_at,notnull"`
 	UpdatedAt      time.Time `bun:"updated_at,notnull"`
@@ -46,6 +54,7 @@ type authStateStore struct {
 	db             *bun.DB
 	sqlDB          *sql.DB
 	passphraseHash string
+	pasetoKeyHex   string
 	tokenVersion   int64
 }
 
@@ -86,8 +95,8 @@ func (s *authStateStore) Close() error {
 }
 
 func (s *authStateStore) initialize(ctx context.Context) (string, error) {
-	if _, err := s.db.NewCreateTable().Model((*authStateRecord)(nil)).IfNotExists().Exec(ctx); err != nil {
-		return "", fmt.Errorf("create auth_state table failed: %w", err)
+	if err := s.ensureAuthStateSchema(ctx); err != nil {
+		return "", err
 	}
 
 	record := new(authStateRecord)
@@ -111,6 +120,7 @@ func (s *authStateStore) initialize(ctx context.Context) (string, error) {
 		record = &authStateRecord{
 			ID:             authStateRowID,
 			PassphraseHash: hashedPassphrase,
+			PasetoKeyHex:   "",
 			TokenVersion:   1,
 			CreatedAt:      now,
 			UpdatedAt:      now,
@@ -121,6 +131,7 @@ func (s *authStateStore) initialize(ctx context.Context) (string, error) {
 
 		s.mu.Lock()
 		s.passphraseHash = record.PassphraseHash
+		s.pasetoKeyHex = record.PasetoKeyHex
 		s.tokenVersion = record.TokenVersion
 		s.mu.Unlock()
 
@@ -129,9 +140,59 @@ func (s *authStateStore) initialize(ctx context.Context) (string, error) {
 
 	s.mu.Lock()
 	s.passphraseHash = record.PassphraseHash
+	s.pasetoKeyHex = record.PasetoKeyHex
 	s.tokenVersion = record.TokenVersion
 	s.mu.Unlock()
 	return "", nil
+}
+
+func (s *authStateStore) ensureAuthStateSchema(ctx context.Context) error {
+	if _, err := s.db.NewCreateTable().Model((*authStateRecord)(nil)).IfNotExists().Exec(ctx); err != nil {
+		return fmt.Errorf("create auth_state table failed: %w", err)
+	}
+
+	hasPasetoKeyColumn, err := s.hasAuthStatePasetoKeyColumn(ctx)
+	if err != nil {
+		return err
+	}
+	if hasPasetoKeyColumn {
+		return nil
+	}
+
+	if _, err := s.db.NewRaw("ALTER TABLE auth_state ADD COLUMN paseto_key_hex TEXT NOT NULL DEFAULT ''").Exec(ctx); err != nil {
+		return fmt.Errorf("add auth_state paseto_key_hex column failed: %w", err)
+	}
+	return nil
+}
+
+func (s *authStateStore) hasAuthStatePasetoKeyColumn(ctx context.Context) (bool, error) {
+	rows, err := s.sqlDB.QueryContext(ctx, "PRAGMA table_info(auth_state)")
+	if err != nil {
+		return false, fmt.Errorf("inspect auth_state schema failed: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid          int64
+			name         string
+			columnType   string
+			notNull      int64
+			defaultValue any
+			pk           int64
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("scan auth_state schema failed: %w", err)
+		}
+		if strings.EqualFold(name, "paseto_key_hex") {
+			return true, nil
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate auth_state schema failed: %w", err)
+	}
+	return false, nil
 }
 
 func (s *authStateStore) authenticate(passphrase string) (int64, error) {
@@ -189,6 +250,67 @@ func (s *authStateStore) rotatePassphrase(currentPassphrase string, newPassphras
 	s.passphraseHash = hashedPassphrase
 	s.tokenVersion = nextVersion
 	return nextVersion, nil
+}
+
+func (s *authStateStore) resolvePasetoKeyHex(configured string) (string, string, error) {
+	configured = strings.TrimSpace(configured)
+	if configured != "" {
+		if _, err := paseto.V4SymmetricKeyFromHex(configured); err != nil {
+			return "", "", fmt.Errorf("configured paseto key is invalid: %w", err)
+		}
+
+		s.mu.RLock()
+		current := s.pasetoKeyHex
+		s.mu.RUnlock()
+		if current == configured {
+			return configured, pasetoKeyActionUnchangedConfig, nil
+		}
+
+		if err := s.persistPasetoKeyHex(configured); err != nil {
+			return "", "", err
+		}
+		return configured, pasetoKeyActionSyncedFromConfig, nil
+	}
+
+	s.mu.RLock()
+	cached := strings.TrimSpace(s.pasetoKeyHex)
+	s.mu.RUnlock()
+
+	if cached == "" {
+		generated := paseto.NewV4SymmetricKey().ExportHex()
+		if err := s.persistPasetoKeyHex(generated); err != nil {
+			return "", "", err
+		}
+		return generated, pasetoKeyActionGenerated, nil
+	}
+
+	if _, err := paseto.V4SymmetricKeyFromHex(cached); err == nil {
+		return cached, pasetoKeyActionLoadedFromDB, nil
+	}
+
+	generated := paseto.NewV4SymmetricKey().ExportHex()
+	if err := s.persistPasetoKeyHex(generated); err != nil {
+		return "", "", err
+	}
+	return generated, pasetoKeyActionResetInvalid, nil
+}
+
+func (s *authStateStore) persistPasetoKeyHex(keyHex string) error {
+	now := time.Now().UTC()
+	_, err := s.db.NewUpdate().
+		Model((*authStateRecord)(nil)).
+		Set("paseto_key_hex = ?", keyHex).
+		Set("updated_at = ?", now).
+		Where("id = ?", authStateRowID).
+		Exec(context.Background())
+	if err != nil {
+		return fmt.Errorf("update auth_state paseto key failed: %w", err)
+	}
+
+	s.mu.Lock()
+	s.pasetoKeyHex = keyHex
+	s.mu.Unlock()
+	return nil
 }
 
 func hashPassphrase(passphrase string) (string, error) {

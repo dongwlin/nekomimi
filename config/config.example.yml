@@ -48,7 +48,7 @@ api:
   listen: "127.0.0.1:8080"
   auth:
     passphrase: "" # optional/deprecated: first startup auto-generates and logs passphrase, then persists in data/auth.db
-    paseto_key_hex: "32_bytes_hex_for_v4_local_key"
+    paseto_key_hex: "" # optional: if empty, startup auto-generates a v4 local key and persists it in data/auth.db; if set, config value is synced to DB
     access_ttl_ms: 900000
     refresh_ttl_ms: 604800000
   cors:

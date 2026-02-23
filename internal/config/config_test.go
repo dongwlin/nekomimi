@@ -357,6 +357,45 @@ api:
 	}
 }
 
+func TestLoad_AllowEnabledAPIMissingPasetoKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+api:
+  enabled: true
+  auth:
+    passphrase: "secret"
+    paseto_key_hex: ""
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	if _, err := Load(configPath); err != nil {
+		t.Fatalf("expected missing paseto key to be allowed, got error: %v", err)
+	}
+}
+
 func TestLoad_RejectEnabledAPIInvalidPasetoKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yml")

@@ -38,8 +38,24 @@ func Run(cfg config.APIConfig, opts RunOptions) error {
 			Msg("initial api passphrase generated; rotate it immediately")
 	}
 
+	effectiveKeyHex, keyAction, err := stateStore.resolvePasetoKeyHex(cfg.Auth.PasetoKeyHex)
+	if err != nil {
+		return fmt.Errorf("resolve paseto key failed: %w", err)
+	}
+	switch keyAction {
+	case pasetoKeyActionGenerated:
+		log.Warn().
+			Msg("api paseto key generated and persisted to auth state")
+	case pasetoKeyActionResetInvalid:
+		log.Warn().
+			Msg("invalid api paseto key in auth state reset and persisted")
+	case pasetoKeyActionSyncedFromConfig:
+		log.Info().
+			Msg("api paseto key synchronized from config to auth state")
+	}
+
 	authService, err := NewAuthService(AuthServiceConfig{
-		KeyHex:      cfg.Auth.PasetoKeyHex,
+		KeyHex:      effectiveKeyHex,
 		AccessTTL:   time.Duration(cfg.Auth.AccessTTLMS) * time.Millisecond,
 		RefreshTTL:  time.Duration(cfg.Auth.RefreshTTLMS) * time.Millisecond,
 		Passphrases: stateStore,
