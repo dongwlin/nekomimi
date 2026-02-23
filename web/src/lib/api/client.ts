@@ -1,7 +1,7 @@
 import { client } from './generated/client.gen'
 import { useAuthStore } from '@/features/auth/store'
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8080/api/v1'
+const DEFAULT_API_BASE_URL = '/api/v1'
 
 let initialized = false
 
@@ -10,8 +10,10 @@ export function initApiClient() {
     return
   }
 
+  const envBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
+
   client.setConfig({
-    baseUrl: import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL,
+    baseUrl: envBaseUrl || DEFAULT_API_BASE_URL,
     auth: () => {
       const token = useAuthStore.getState().accessToken
       if (!token) {
