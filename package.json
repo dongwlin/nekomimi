@@ -2,7 +2,7 @@
     "name": "nekomimi",
     "private": true,
     "scripts": {
-        "gen:swagger": "go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g swagger.go -d cmd/nekomimi,internal/httpapi -o docs/swagger --parseInternal --ot json,yaml",
+        "gen:swagger": "go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g swagger.go -d cmd/nekomimi,internal/httpapi,internal/metrics -o docs/swagger --parseInternal --ot json,yaml",
         "gen:api-client": "pnpm -C web gen:api-client",
         "gen:api": "pnpm gen:swagger && pnpm gen:api-client",
         "dev:backend": "go run ./cmd/nekomimi",

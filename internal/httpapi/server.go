@@ -7,14 +7,22 @@ import (
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/metrics"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
 
-const authSQLitePath = "data/auth.db"
+const AuthSQLitePath = "data/auth.db"
 
-func Run(cfg config.APIConfig) error {
-	stateStore, initialPassphrase, err := newSQLiteAuthStateStore(authSQLitePath)
+type LLMStatusProvider func() metrics.LLMStatus
+
+type RunOptions struct {
+	Metrics           *metrics.Collector
+	LLMStatusProvider LLMStatusProvider
+}
+
+func Run(cfg config.APIConfig, opts RunOptions) error {
+	stateStore, initialPassphrase, err := newSQLiteAuthStateStore(AuthSQLitePath)
 	if err != nil {
 		return fmt.Errorf("initialize auth state store failed: %w", err)
 	}
@@ -45,6 +53,7 @@ func Run(cfg config.APIConfig) error {
 	engine.Use(corsMiddleware(cfg.CORS.AllowOrigins))
 
 	handler := newAuthHandler(authService)
+	dashboard := newDashboardHandler(opts.Metrics, opts.LLMStatusProvider)
 
 	v1 := engine.Group("/api/v1")
 	{
@@ -64,6 +73,8 @@ func Run(cfg config.APIConfig) error {
 			)
 			auth.POST("/passphrase/rotate", accessTokenMiddleware(authService, nil), handler.rotatePassphrase)
 		}
+
+		v1.GET("/dashboard/overview", accessTokenMiddleware(authService, nil), dashboard.overview)
 	}
 
 	server := &http.Server{

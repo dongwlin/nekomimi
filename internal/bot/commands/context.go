@@ -21,6 +21,12 @@ func sessionKey(ctx *zero.Ctx) string {
 	if ctx.Event.DetailType == "private" {
 		return fmt.Sprintf("private:%d", ctx.Event.UserID)
 	}
+	if ctx.Event.GroupID == 0 && ctx.Event.UserID != 0 {
+		return fmt.Sprintf("private:%d", ctx.Event.UserID)
+	}
+	if ctx.Event.GroupID == 0 {
+		return "global"
+	}
 	return fmt.Sprintf("group:%d", ctx.Event.GroupID)
 }
 

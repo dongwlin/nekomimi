@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthLoginData, AuthLoginErrors, AuthLoginResponses, AuthPassphraseRotateData, AuthPassphraseRotateErrors, AuthPassphraseRotateResponses, AuthRefreshData, AuthRefreshErrors, AuthRefreshResponses, AuthVerifyData, AuthVerifyErrors, AuthVerifyResponses } from './types.gen';
+import type { AuthLoginData, AuthLoginErrors, AuthLoginResponses, AuthPassphraseRotateData, AuthPassphraseRotateErrors, AuthPassphraseRotateResponses, AuthRefreshData, AuthRefreshErrors, AuthRefreshResponses, AuthVerifyData, AuthVerifyErrors, AuthVerifyResponses, DashboardOverviewData, DashboardOverviewErrors, DashboardOverviewResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -69,5 +69,16 @@ export const authRefresh = <ThrowOnError extends boolean = false>(options: Optio
 export const authVerify = <ThrowOnError extends boolean = false>(options?: Options<AuthVerifyData, ThrowOnError>) => (options?.client ?? client).get<AuthVerifyResponses, AuthVerifyErrors, ThrowOnError>({
     security: [{ name: 'Authorization', type: 'apiKey' }],
     url: '/auth/verify',
+    ...options
+});
+
+/**
+ * Get dashboard overview
+ *
+ * Returns runtime status, daily/total KPIs, type distribution, and 24-hour trend.
+ */
+export const dashboardOverview = <ThrowOnError extends boolean = false>(options?: Options<DashboardOverviewData, ThrowOnError>) => (options?.client ?? client).get<DashboardOverviewResponses, DashboardOverviewErrors, ThrowOnError>({
+    security: [{ name: 'Authorization', type: 'apiKey' }],
+    url: '/dashboard/overview',
     ...options
 });

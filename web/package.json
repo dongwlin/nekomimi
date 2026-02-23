@@ -11,6 +11,7 @@
     "gen:api-client": "openapi-ts -i ../docs/swagger/swagger.json -o src/lib/api/generated -c @hey-api/client-fetch"
   },
   "dependencies": {
+    "@ant-design/plots": "^2.6.5",
     "@hey-api/client-fetch": "^0.4.3",
     "@tailwindcss/vite": "^4.2.0",
     "antd": "^6.3.0",

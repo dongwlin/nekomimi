@@ -203,6 +203,38 @@
                     }
                 }
             }
+        },
+        "/dashboard/overview": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns runtime status, daily/total KPIs, type distribution, and 24-hour trend.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Get dashboard overview",
+                "operationId": "dashboardOverview",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/metrics.Overview"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.errorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -287,6 +319,142 @@
                 },
                 "ok": {
                     "type": "boolean"
+                }
+            }
+        },
+        "metrics.Overview": {
+            "type": "object",
+            "properties": {
+                "generated_at": {
+                    "type": "string"
+                },
+                "hourly_trend": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/metrics.OverviewHourly"
+                    }
+                },
+                "kpi": {
+                    "$ref": "#/definitions/metrics.OverviewKPI"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/metrics.OverviewRuntime"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "today_failed_types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/metrics.OverviewTypeItem"
+                    }
+                },
+                "today_inbound_types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/metrics.OverviewTypeItem"
+                    }
+                },
+                "today_outbound_types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/metrics.OverviewTypeItem"
+                    }
+                }
+            }
+        },
+        "metrics.OverviewHourly": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "hour": {
+                    "type": "string"
+                },
+                "received": {
+                    "type": "integer"
+                },
+                "sent": {
+                    "type": "integer"
+                }
+            }
+        },
+        "metrics.OverviewKPI": {
+            "type": "object",
+            "properties": {
+                "last_failed_at": {
+                    "type": "string"
+                },
+                "last_received_at": {
+                    "type": "string"
+                },
+                "last_sent_at": {
+                    "type": "string"
+                },
+                "llm_enabled": {
+                    "type": "boolean"
+                },
+                "llm_model": {
+                    "type": "string"
+                },
+                "llm_provider": {
+                    "type": "string"
+                },
+                "today_active_sessions": {
+                    "type": "integer"
+                },
+                "today_failed_total": {
+                    "type": "integer"
+                },
+                "today_received_total": {
+                    "type": "integer"
+                },
+                "today_sent_total": {
+                    "type": "integer"
+                },
+                "total_failed_total": {
+                    "type": "integer"
+                },
+                "total_received_total": {
+                    "type": "integer"
+                },
+                "total_sent_total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "metrics.OverviewRuntime": {
+            "type": "object",
+            "properties": {
+                "bot_connected_at": {
+                    "type": "string"
+                },
+                "bot_started_at": {
+                    "type": "string"
+                },
+                "bot_uptime_seconds": {
+                    "type": "integer"
+                },
+                "process_started_at": {
+                    "type": "string"
+                },
+                "uptime_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "metrics.OverviewTypeItem": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "ratio": {
+                    "type": "number"
+                },
+                "type": {
+                    "type": "string"
                 }
             }
         }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/metrics"
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
@@ -18,6 +19,7 @@ import (
 type ImmersiveBuffer struct {
 	cfg       config.ImmersiveConfig
 	llm       *llm.Manager
+	collector *metrics.Collector
 	nicknames []string
 	identity  botIdentity
 	mu        sync.Mutex

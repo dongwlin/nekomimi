@@ -38,6 +38,54 @@ export type HttpapiVerifyResponse = {
     ok?: boolean;
 };
 
+export type MetricsOverview = {
+    generated_at?: string;
+    hourly_trend?: Array<MetricsOverviewHourly>;
+    kpi?: MetricsOverviewKpi;
+    runtime?: MetricsOverviewRuntime;
+    timezone?: string;
+    today_failed_types?: Array<MetricsOverviewTypeItem>;
+    today_inbound_types?: Array<MetricsOverviewTypeItem>;
+    today_outbound_types?: Array<MetricsOverviewTypeItem>;
+};
+
+export type MetricsOverviewHourly = {
+    failed?: number;
+    hour?: string;
+    received?: number;
+    sent?: number;
+};
+
+export type MetricsOverviewKpi = {
+    last_failed_at?: string;
+    last_received_at?: string;
+    last_sent_at?: string;
+    llm_enabled?: boolean;
+    llm_model?: string;
+    llm_provider?: string;
+    today_active_sessions?: number;
+    today_failed_total?: number;
+    today_received_total?: number;
+    today_sent_total?: number;
+    total_failed_total?: number;
+    total_received_total?: number;
+    total_sent_total?: number;
+};
+
+export type MetricsOverviewRuntime = {
+    bot_connected_at?: string;
+    bot_started_at?: string;
+    bot_uptime_seconds?: number;
+    process_started_at?: string;
+    uptime_seconds?: number;
+};
+
+export type MetricsOverviewTypeItem = {
+    count?: number;
+    ratio?: number;
+    type?: string;
+};
+
 export type AuthLoginData = {
     /**
      * Passphrase
@@ -170,3 +218,28 @@ export type AuthVerifyResponses = {
 };
 
 export type AuthVerifyResponse = AuthVerifyResponses[keyof AuthVerifyResponses];
+
+export type DashboardOverviewData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/dashboard/overview';
+};
+
+export type DashboardOverviewErrors = {
+    /**
+     * Internal Server Error
+     */
+    500: HttpapiErrorResponse;
+};
+
+export type DashboardOverviewError = DashboardOverviewErrors[keyof DashboardOverviewErrors];
+
+export type DashboardOverviewResponses = {
+    /**
+     * OK
+     */
+    200: MetricsOverview;
+};
+
+export type DashboardOverviewResponse = DashboardOverviewResponses[keyof DashboardOverviewResponses];

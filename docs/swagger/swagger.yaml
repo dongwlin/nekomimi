@@ -54,6 +54,95 @@ definitions:
       ok:
         type: boolean
     type: object
+  metrics.Overview:
+    properties:
+      generated_at:
+        type: string
+      hourly_trend:
+        items:
+          $ref: '#/definitions/metrics.OverviewHourly'
+        type: array
+      kpi:
+        $ref: '#/definitions/metrics.OverviewKPI'
+      runtime:
+        $ref: '#/definitions/metrics.OverviewRuntime'
+      timezone:
+        type: string
+      today_failed_types:
+        items:
+          $ref: '#/definitions/metrics.OverviewTypeItem'
+        type: array
+      today_inbound_types:
+        items:
+          $ref: '#/definitions/metrics.OverviewTypeItem'
+        type: array
+      today_outbound_types:
+        items:
+          $ref: '#/definitions/metrics.OverviewTypeItem'
+        type: array
+    type: object
+  metrics.OverviewHourly:
+    properties:
+      failed:
+        type: integer
+      hour:
+        type: string
+      received:
+        type: integer
+      sent:
+        type: integer
+    type: object
+  metrics.OverviewKPI:
+    properties:
+      last_failed_at:
+        type: string
+      last_received_at:
+        type: string
+      last_sent_at:
+        type: string
+      llm_enabled:
+        type: boolean
+      llm_model:
+        type: string
+      llm_provider:
+        type: string
+      today_active_sessions:
+        type: integer
+      today_failed_total:
+        type: integer
+      today_received_total:
+        type: integer
+      today_sent_total:
+        type: integer
+      total_failed_total:
+        type: integer
+      total_received_total:
+        type: integer
+      total_sent_total:
+        type: integer
+    type: object
+  metrics.OverviewRuntime:
+    properties:
+      bot_connected_at:
+        type: string
+      bot_started_at:
+        type: string
+      bot_uptime_seconds:
+        type: integer
+      process_started_at:
+        type: string
+      uptime_seconds:
+        type: integer
+    type: object
+  metrics.OverviewTypeItem:
+    properties:
+      count:
+        type: integer
+      ratio:
+        type: number
+      type:
+        type: string
+    type: object
 info:
   contact: {}
   description: API for token-based auth bootstrap and verification.
@@ -188,6 +277,27 @@ paths:
       summary: Verify access token
       tags:
       - auth
+  /dashboard/overview:
+    get:
+      description: Returns runtime status, daily/total KPIs, type distribution, and
+        24-hour trend.
+      operationId: dashboardOverview
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/metrics.Overview'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get dashboard overview
+      tags:
+      - dashboard
 securityDefinitions:
   BearerAuth:
     in: header

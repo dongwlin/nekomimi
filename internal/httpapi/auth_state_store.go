@@ -61,7 +61,7 @@ func newSQLiteAuthStateStore(dbPath string) (*authStateStore, string, error) {
 		}
 	}
 
-	sqlDB, err := sql.Open(sqliteshim.ShimName, dbPath)
+	sqlDB, err := sql.Open(sqliteshim.ShimName, sqliteDSN(dbPath))
 	if err != nil {
 		return nil, "", fmt.Errorf("open sqlite database failed: %w", err)
 	}
@@ -218,4 +218,9 @@ func generateAlnumPassphrase(length int) (string, error) {
 	}
 
 	return builder.String(), nil
+}
+
+func sqliteDSN(path string) string {
+	normalized := filepath.ToSlash(path)
+	return "file:" + normalized + "?_pragma=busy_timeout(5000)"
 }
