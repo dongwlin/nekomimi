@@ -9,6 +9,7 @@ import (
 
 const (
 	maxControlHeaderLineLen = 64
+	maxControlReasonLineLen = 200
 	minControlWaitMS        = 1
 	maxControlWaitMS        = 3000
 )
@@ -18,6 +19,9 @@ var (
 	errControlHeaderMissingNewline    = errors.New("control header first line missing newline")
 	errControlHeaderInvalid           = errors.New("control header first line invalid")
 	errControlHeaderUnexpectedContent = errors.New("control header has unexpected trailing content")
+	errControlHeaderReasonMissing     = errors.New("control header reason line missing")
+	errControlHeaderReasonInvalid     = errors.New("control header reason line invalid")
+	errControlHeaderReasonTooLong     = errors.New("control header reason line too long")
 )
 
 type controlAction string
@@ -31,12 +35,15 @@ const (
 type controlHeaderDecision struct {
 	action controlAction
 	waitMS int
+	reason string
 }
 
 type controlHeaderParser struct {
-	lineBuffer strings.Builder
-	parsed     bool
-	decision   controlHeaderDecision
+	lineBuffer       strings.Builder
+	parsed           bool
+	expectingReason  bool
+	decision         controlHeaderDecision
+	pendingFirstLine controlHeaderDecision
 }
 
 func newControlHeaderParser() *controlHeaderParser {
@@ -48,7 +55,7 @@ func (p *controlHeaderParser) Consume(delta string) (controlHeaderDecision, stri
 		if p.decision.action == controlActionReply {
 			return p.decision, delta, true, nil
 		}
-		if delta != "" {
+		if strings.TrimSpace(delta) != "" {
 			return controlHeaderDecision{}, "", false, errControlHeaderUnexpectedContent
 		}
 		return p.decision, "", true, nil
@@ -59,43 +66,91 @@ func (p *controlHeaderParser) Consume(delta string) (controlHeaderDecision, stri
 	}
 
 	p.lineBuffer.WriteString(delta)
-	buffer := p.lineBuffer.String()
-	newlineIdx := strings.IndexByte(buffer, '\n')
-	if newlineIdx < 0 {
-		if utf8.RuneCountInString(buffer) > maxControlHeaderLineLen {
+	for {
+		buffer := p.lineBuffer.String()
+		newlineIdx := strings.IndexByte(buffer, '\n')
+		if newlineIdx < 0 {
+			limitErr := errControlHeaderTooLong
+			lineLimit := maxControlHeaderLineLen
+			if p.expectingReason {
+				limitErr = errControlHeaderReasonTooLong
+				lineLimit = maxControlReasonLineLen
+			}
+			if utf8.RuneCountInString(buffer) > lineLimit {
+				return controlHeaderDecision{}, "", false, limitErr
+			}
+			return controlHeaderDecision{}, "", false, nil
+		}
+
+		line := strings.TrimSuffix(buffer[:newlineIdx], "\r")
+		rest := buffer[newlineIdx+1:]
+		p.lineBuffer.Reset()
+		p.lineBuffer.WriteString(rest)
+
+		if p.expectingReason {
+			reason, err := parseControlReasonLine(line)
+			if err != nil {
+				return controlHeaderDecision{}, "", false, err
+			}
+			decision := p.pendingFirstLine
+			decision.reason = reason
+			p.pendingFirstLine = controlHeaderDecision{}
+			p.expectingReason = false
+			p.parsed = true
+			p.decision = decision
+
+			trailing := p.lineBuffer.String()
+			p.lineBuffer.Reset()
+			if strings.TrimSpace(trailing) != "" {
+				return controlHeaderDecision{}, "", false, errControlHeaderUnexpectedContent
+			}
+			return decision, "", true, nil
+		}
+
+		if utf8.RuneCountInString(line) > maxControlHeaderLineLen {
 			return controlHeaderDecision{}, "", false, errControlHeaderTooLong
 		}
-		return controlHeaderDecision{}, "", false, nil
-	}
+		decision, err := parseControlHeaderLine(line)
+		if err != nil {
+			return controlHeaderDecision{}, "", false, err
+		}
+		if decision.action == controlActionReply {
+			p.parsed = true
+			p.decision = decision
+			body := p.lineBuffer.String()
+			p.lineBuffer.Reset()
+			return decision, body, true, nil
+		}
 
-	line := strings.TrimSuffix(buffer[:newlineIdx], "\r")
-	rest := buffer[newlineIdx+1:]
-	if utf8.RuneCountInString(line) > maxControlHeaderLineLen {
-		return controlHeaderDecision{}, "", false, errControlHeaderTooLong
+		p.expectingReason = true
+		p.pendingFirstLine = decision
 	}
-
-	decision, err := parseControlHeaderLine(line)
-	if err != nil {
-		return controlHeaderDecision{}, "", false, err
-	}
-	p.parsed = true
-	p.decision = decision
-	p.lineBuffer.Reset()
-
-	if decision.action == controlActionReply {
-		return decision, rest, true, nil
-	}
-	if rest != "" {
-		return controlHeaderDecision{}, "", false, errControlHeaderUnexpectedContent
-	}
-	return decision, "", true, nil
 }
 
 func (p *controlHeaderParser) Finalize() (controlHeaderDecision, error) {
 	if p.parsed {
 		return p.decision, nil
 	}
+
 	buffer := p.lineBuffer.String()
+	if p.expectingReason {
+		if buffer == "" {
+			return controlHeaderDecision{}, errControlHeaderReasonMissing
+		}
+		reason, err := parseControlReasonLine(strings.TrimSuffix(buffer, "\r"))
+		if err != nil {
+			return controlHeaderDecision{}, err
+		}
+		decision := p.pendingFirstLine
+		decision.reason = reason
+		p.pendingFirstLine = controlHeaderDecision{}
+		p.expectingReason = false
+		p.parsed = true
+		p.decision = decision
+		p.lineBuffer.Reset()
+		return decision, nil
+	}
+
 	if buffer == "" {
 		return controlHeaderDecision{}, errControlHeaderMissingNewline
 	}
@@ -132,6 +187,17 @@ func parseControlHeaderLine(line string) (controlHeaderDecision, error) {
 	}
 }
 
+func parseControlReasonLine(line string) (string, error) {
+	if utf8.RuneCountInString(line) > maxControlReasonLineLen {
+		return "", errControlHeaderReasonTooLong
+	}
+	reason := strings.TrimSpace(line)
+	if reason == "" {
+		return "", errControlHeaderReasonInvalid
+	}
+	return reason, nil
+}
+
 func parseControlHeaderFallback(raw string) (controlHeaderDecision, string, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -140,21 +206,36 @@ func parseControlHeaderFallback(raw string) (controlHeaderDecision, string, bool
 
 	if newlineIdx := strings.IndexAny(trimmed, "\r\n"); newlineIdx >= 0 {
 		line := strings.TrimSpace(trimmed[:newlineIdx])
-		body := strings.TrimLeft(trimmed[newlineIdx:], "\r\n")
+		remainder := strings.TrimLeft(trimmed[newlineIdx:], "\r\n")
 		decision, err := parseControlHeaderLine(line)
 		if err != nil {
 			return controlHeaderDecision{}, "", false
 		}
 		if decision.action == controlActionReply {
-			return decision, body, true
+			return decision, remainder, true
 		}
-		if strings.TrimSpace(body) == "" {
-			return decision, "", true
+
+		reasonLine := remainder
+		rest := ""
+		if reasonIdx := strings.IndexAny(remainder, "\r\n"); reasonIdx >= 0 {
+			reasonLine = remainder[:reasonIdx]
+			rest = strings.TrimLeft(remainder[reasonIdx:], "\r\n")
 		}
-		return controlHeaderDecision{}, "", false
+		reason, err := parseControlReasonLine(reasonLine)
+		if err != nil {
+			return controlHeaderDecision{}, "", false
+		}
+		if strings.TrimSpace(rest) != "" {
+			return controlHeaderDecision{}, "", false
+		}
+		decision.reason = reason
+		return decision, "", true
 	}
 
 	if decision, err := parseControlHeaderLine(trimmed); err == nil {
+		if decision.action != controlActionReply {
+			return controlHeaderDecision{}, "", false
+		}
 		return decision, "", true
 	}
 
@@ -163,21 +244,6 @@ func parseControlHeaderFallback(raw string) (controlHeaderDecision, string, bool
 		remainder := strings.TrimSpace(trimmed[len("REPLY"):])
 		remainder = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(remainder, ":"), "："))
 		return controlHeaderDecision{action: controlActionReply}, remainder, true
-	}
-	if strings.HasPrefix(upper, "WAIT:") {
-		remainder := strings.TrimSpace(trimmed[len("WAIT:"):])
-		fields := strings.Fields(remainder)
-		if len(fields) == 0 {
-			return controlHeaderDecision{}, "", false
-		}
-		waitMS, err := strconv.Atoi(fields[0])
-		if err != nil {
-			return controlHeaderDecision{}, "", false
-		}
-		return controlHeaderDecision{
-			action: controlActionWait,
-			waitMS: clampControlWaitMS(waitMS),
-		}, "", true
 	}
 	return controlHeaderDecision{}, "", false
 }

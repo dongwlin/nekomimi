@@ -5,8 +5,8 @@ Output protocol (strict):
 - SKIP
 - WAIT:<milliseconds>
 - REPLY
-2) If first line is SKIP: stop immediately. Do not output anything else.
-3) If first line is WAIT:<n>: n must be an integer. Stop immediately after this line.
+2) If first line is SKIP: line 2 must be a non-empty plain-text reason. Stop immediately after line 2.
+3) If first line is WAIT:<n>: n must be an integer, and line 2 must be a non-empty plain-text reason. Stop immediately after line 2.
 4) If first line is REPLY: actual reply content starts from line 2 and can be streamed.
 5) If REPLY has multiple segments, you MUST use the exact delimiter string \n---\n between segments.
 6) Do NOT output any other segmentation markers.
@@ -26,4 +26,5 @@ Decision guidance:
 Safety:
 - Never output explanation before the control line.
 - Never output extra characters on line 1.
-- Never output body for SKIP or WAIT.
+- For SKIP or WAIT, always provide exactly one non-empty reason line on line 2.
+- Never output any additional lines after the reason for SKIP or WAIT.

@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestControlHeaderParserSkip(t *testing.T) {
+func TestControlHeaderParserSkipWithReason(t *testing.T) {
 	parser := newControlHeaderParser()
 
-	decision, body, ready, err := parser.Consume("SKIP\n")
+	decision, body, ready, err := parser.Consume("SKIP\nnot needed now\n")
 	if err != nil {
 		t.Fatalf("consume skip failed: %v", err)
 	}
@@ -22,12 +22,15 @@ func TestControlHeaderParserSkip(t *testing.T) {
 	if decision.action != controlActionSkip {
 		t.Fatalf("expected skip action, got %q", decision.action)
 	}
+	if decision.reason != "not needed now" {
+		t.Fatalf("unexpected reason: %q", decision.reason)
+	}
 }
 
-func TestControlHeaderParserWait1200(t *testing.T) {
+func TestControlHeaderParserWait1200WithReason(t *testing.T) {
 	parser := newControlHeaderParser()
 
-	decision, body, ready, err := parser.Consume("WAIT:1200\n")
+	decision, body, ready, err := parser.Consume("WAIT:1200\nuser still typing\n")
 	if err != nil {
 		t.Fatalf("consume wait failed: %v", err)
 	}
@@ -43,6 +46,9 @@ func TestControlHeaderParserWait1200(t *testing.T) {
 	if decision.waitMS != 1200 {
 		t.Fatalf("expected wait_ms=1200, got %d", decision.waitMS)
 	}
+	if decision.reason != "user still typing" {
+		t.Fatalf("unexpected reason: %q", decision.reason)
+	}
 }
 
 func TestControlHeaderParserWaitInvalidAndClamp(t *testing.T) {
@@ -54,17 +60,17 @@ func TestControlHeaderParserWaitInvalidAndClamp(t *testing.T) {
 	}{
 		{
 			name:    "invalid number",
-			input:   "WAIT:abc\n",
+			input:   "WAIT:abc\nreason\n",
 			wantErr: errControlHeaderInvalid,
 		},
 		{
 			name:       "clamp low",
-			input:      "WAIT:0\n",
+			input:      "WAIT:0\nreason\n",
 			wantWaitMS: 1,
 		},
 		{
 			name:       "clamp high",
-			input:      "WAIT:6000\n",
+			input:      "WAIT:6000\nreason\n",
 			wantWaitMS: 3000,
 		},
 	}
@@ -91,6 +97,9 @@ func TestControlHeaderParserWaitInvalidAndClamp(t *testing.T) {
 			if decision.waitMS != tc.wantWaitMS {
 				t.Fatalf("expected wait_ms=%d, got %d", tc.wantWaitMS, decision.waitMS)
 			}
+			if decision.reason != "reason" {
+				t.Fatalf("unexpected reason: %q", decision.reason)
+			}
 		})
 	}
 }
@@ -107,6 +116,9 @@ func TestControlHeaderParserReplyAndBodyStreaming(t *testing.T) {
 	}
 	if decision.action != controlActionReply {
 		t.Fatalf("expected reply action, got %q", decision.action)
+	}
+	if decision.reason != "" {
+		t.Fatalf("reply reason should be empty, got %q", decision.reason)
 	}
 	if body != "hello" {
 		t.Fatalf("expected first body segment 'hello', got %q", body)
@@ -136,7 +148,7 @@ func TestControlHeaderParserFirstLineTooLong(t *testing.T) {
 	}
 }
 
-func TestControlHeaderParserMissingNewline(t *testing.T) {
+func TestControlHeaderParserMissingFirstLineNewline(t *testing.T) {
 	parser := newControlHeaderParser()
 
 	_, _, ready, err := parser.Consume("REPLY")
@@ -153,18 +165,73 @@ func TestControlHeaderParserMissingNewline(t *testing.T) {
 	}
 }
 
+func TestControlHeaderParserMissingReason(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "skip", input: "SKIP\n"},
+		{name: "wait", input: "WAIT:100\n"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := newControlHeaderParser()
+			_, _, ready, err := parser.Consume(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected consume error: %v", err)
+			}
+			if ready {
+				t.Fatalf("expected ready=false before reason")
+			}
+			_, err = parser.Finalize()
+			if !errors.Is(err, errControlHeaderReasonMissing) {
+				t.Fatalf("expected missing-reason error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestControlHeaderParserInvalidReason(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "skip blank reason", input: "SKIP\n   \n"},
+		{name: "wait blank reason", input: "WAIT:100\n \t \n"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := newControlHeaderParser()
+			_, _, _, err := parser.Consume(tc.input)
+			if !errors.Is(err, errControlHeaderReasonInvalid) {
+				t.Fatalf("expected invalid-reason error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestControlHeaderParserReasonTooLong(t *testing.T) {
+	parser := newControlHeaderParser()
+	_, _, _, err := parser.Consume("SKIP\n" + strings.Repeat("A", 201))
+	if !errors.Is(err, errControlHeaderReasonTooLong) {
+		t.Fatalf("expected reason-too-long error, got %v", err)
+	}
+}
+
 func TestControlHeaderParserUnexpectedContentAfterSkipOrWait(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
 	}{
 		{
-			name:  "skip with body",
-			input: "SKIP\nfoo",
+			name:  "skip with third line content",
+			input: "SKIP\nlow value\nfoo",
 		},
 		{
-			name:  "wait with body",
-			input: "WAIT:100\nbar",
+			name:  "wait with third line content",
+			input: "WAIT:100\nneed one more message\nbar",
 		},
 	}
 
@@ -185,18 +252,21 @@ func TestControlHeaderParserCaseAndWhitespaceVariants(t *testing.T) {
 		input      string
 		wantAction controlAction
 		wantWaitMS int
+		wantReason string
 		wantBody   string
 	}{
 		{
-			name:       "lower skip",
-			input:      "skip\n",
+			name:       "lower skip with padded reason",
+			input:      "skip\n  low value intervention  \n",
 			wantAction: controlActionSkip,
+			wantReason: "low value intervention",
 		},
 		{
-			name:       "wait with spaces",
-			input:      " wait: 10 \n",
+			name:       "wait with spaces and crlf",
+			input:      " wait: 10 \r\n user still typing \r\n",
 			wantAction: controlActionWait,
 			wantWaitMS: 10,
+			wantReason: "user still typing",
 		},
 		{
 			name:       "reply with trailing space and crlf",
@@ -222,6 +292,9 @@ func TestControlHeaderParserCaseAndWhitespaceVariants(t *testing.T) {
 			if decision.waitMS != tc.wantWaitMS {
 				t.Fatalf("unexpected wait_ms: got %d, want %d", decision.waitMS, tc.wantWaitMS)
 			}
+			if decision.reason != tc.wantReason {
+				t.Fatalf("unexpected reason: got %q, want %q", decision.reason, tc.wantReason)
+			}
 			if body != tc.wantBody {
 				t.Fatalf("unexpected body: got %q, want %q", body, tc.wantBody)
 			}
@@ -236,6 +309,7 @@ func TestParseControlHeaderFallback(t *testing.T) {
 		wantOK     bool
 		wantAction controlAction
 		wantWaitMS int
+		wantReason string
 		wantBody   string
 	}{
 		{
@@ -253,11 +327,29 @@ func TestParseControlHeaderFallback(t *testing.T) {
 			wantBody:   "hello",
 		},
 		{
-			name:       "wait with trailing text",
-			input:      "WAIT: 600 because user is still typing",
+			name:       "wait with reason",
+			input:      "WAIT: 600\nbecause user is still typing",
 			wantOK:     true,
 			wantAction: controlActionWait,
 			wantWaitMS: 600,
+			wantReason: "because user is still typing",
+		},
+		{
+			name:       "skip with reason",
+			input:      "SKIP\nintervention is unnecessary",
+			wantOK:     true,
+			wantAction: controlActionSkip,
+			wantReason: "intervention is unnecessary",
+		},
+		{
+			name:   "wait missing reason",
+			input:  "WAIT: 600",
+			wantOK: false,
+		},
+		{
+			name:   "wait with extra content",
+			input:  "WAIT: 600\nneed more context\nextra",
+			wantOK: false,
 		},
 		{
 			name:   "invalid plain text",
@@ -280,6 +372,9 @@ func TestParseControlHeaderFallback(t *testing.T) {
 			}
 			if decision.waitMS != tc.wantWaitMS {
 				t.Fatalf("unexpected wait_ms: got %d, want %d", decision.waitMS, tc.wantWaitMS)
+			}
+			if decision.reason != tc.wantReason {
+				t.Fatalf("unexpected reason: got %q, want %q", decision.reason, tc.wantReason)
 			}
 			if body != tc.wantBody {
 				t.Fatalf("unexpected body: got %q, want %q", body, tc.wantBody)

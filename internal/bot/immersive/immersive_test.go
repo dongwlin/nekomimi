@@ -1,6 +1,7 @@
 package immersive
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
 	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
+	logpkg "github.com/rs/zerolog/log"
 )
 
 func TestBuildCombinedInput_ContainsStructuredMeta(t *testing.T) {
@@ -63,6 +65,9 @@ func TestBuildCombinedInput_ContainsStructuredMeta(t *testing.T) {
 func TestIsControlHeaderProtocolError(t *testing.T) {
 	if !isControlHeaderProtocolError(errControlHeaderInvalid) {
 		t.Fatal("expected parser error to be treated as protocol error")
+	}
+	if !isControlHeaderProtocolError(errControlHeaderReasonInvalid) {
+		t.Fatal("expected reason parser error to be treated as protocol error")
 	}
 
 	wrapped := fmt.Errorf("%w: %w", errControlHeaderProtocol, errControlHeaderMissingNewline)
@@ -319,7 +324,7 @@ func TestFlush_NonProtocolModelErrorSkips(t *testing.T) {
 }
 
 func TestFlush_WaitRoundsLimitConvertsWaitToSkip(t *testing.T) {
-	server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"WAIT:100\n"}]}]}`)
+	server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"WAIT:100\nstill collecting context\n"}]}]}`)
 	defer server.Close()
 
 	buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
@@ -335,6 +340,47 @@ func TestFlush_WaitRoundsLimitConvertsWaitToSkip(t *testing.T) {
 	}
 	if state.waitRounds != 0 {
 		t.Fatalf("expected waitRounds reset to 0 after limit skip, got %d", state.waitRounds)
+	}
+}
+
+func TestFlush_DecisionLogIncludesModelReasonAndCode(t *testing.T) {
+	server := newResponsesJSONServer(t, http.StatusOK, `{"output":[{"content":[{"type":"output_text","text":"WAIT:120\nuser is still typing\n"}]}]}`)
+	defer server.Close()
+
+	buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	events := captureLogEvents(t, func() {
+		buffer.flush(sessionKey)
+	})
+
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	if state.timer != nil {
+		state.timer.Stop()
+		state.timer = nil
+	}
+	state.mu.Unlock()
+
+	found := false
+	for _, event := range events {
+		if toString(event["message"]) != "immersive control decision evaluated" {
+			continue
+		}
+		if toString(event["action"]) != string(controlActionWait) {
+			continue
+		}
+		if toString(event["reason"]) != "user is still typing" {
+			t.Fatalf("unexpected decision reason: %#v", event["reason"])
+		}
+		if toString(event["reason_code"]) != "model" {
+			t.Fatalf("unexpected decision reason_code: %#v", event["reason_code"])
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatalf("missing decision log with action=%q, events=%d", controlActionWait, len(events))
 	}
 }
 
@@ -381,7 +427,7 @@ func TestFlush_WaitRetryDoesNotDuplicateUserPersistence(t *testing.T) {
 		}
 		_ = r.Body.Close()
 		call := atomic.AddInt64(&callCount, 1)
-		text := "WAIT:10\n"
+		text := "WAIT:10\nstill collecting context\n"
 		if call > 1 {
 			text = "REPLY\nok"
 		}
@@ -694,6 +740,33 @@ func mustMarshalJSON(t *testing.T, value any) string {
 		t.Fatalf("marshal json failed: %v", err)
 	}
 	return string(data)
+}
+
+func captureLogEvents(t *testing.T, fn func()) []map[string]any {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := logpkg.Logger
+	logpkg.Logger = logpkg.Output(&buf)
+	defer func() {
+		logpkg.Logger = previous
+	}()
+
+	fn()
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	events := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			t.Fatalf("unmarshal log event failed: %v, line=%q", err, line)
+		}
+		events = append(events, payload)
+	}
+	return events
 }
 
 func toString(value any) string {

@@ -142,7 +142,7 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 
 // flush processes the queued messages for a session using a single immersive LLM
 // stream call. The first line of the stream is parsed as a control header:
-// SKIP / WAIT:<ms> / REPLY.
+// SKIP / WAIT:<ms> / REPLY. For SKIP/WAIT, line 2 must be a non-empty reason.
 func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state := b.session(sessionKey)
 	state.mu.Lock()
@@ -393,6 +393,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 					Err(parseErr).
 					Bool("fallback_mode", controlHeaderFallbackMode).
 					Str("fallback_action", string(fallbackDecision.action)).
+					Str("fallback_reason", fallbackDecision.reason).
 					Msg("immersive control fallback parser applied")
 			} else {
 				streamErr = fmt.Errorf("%w: %w", errControlHeaderProtocol, parseErr)
@@ -402,33 +403,45 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 	action := decision.action
 	waitMS := decision.waitMS
-	decisionReason := "model"
+	decisionReason := strings.TrimSpace(decision.reason)
+	decisionReasonCode := "model"
 	if streamErr != nil {
 		if isControlHeaderProtocolError(streamErr) {
 			if waitRounds == 0 {
 				action = controlActionWait
 				waitMS = defaultProtocolErrorWaitMS
-				decisionReason = "protocol_error_wait"
+				decisionReasonCode = "protocol_error_wait"
+				decisionReason = "control protocol invalid, wait once for retry"
 			} else {
 				action = controlActionSkip
 				waitMS = 0
-				decisionReason = "protocol_error_skip"
+				decisionReasonCode = "protocol_error_skip"
+				decisionReason = "control protocol invalid repeatedly, skip this round"
 			}
 		} else {
 			action = controlActionSkip
 			waitMS = 0
-			decisionReason = "llm_stream_error_skip"
+			decisionReasonCode = "llm_stream_error_skip"
+			decisionReason = "llm stream error, skip this round"
 		}
 	}
 	if action == controlActionWait && waitRounds >= maxImmersiveWaitRounds {
 		action = controlActionSkip
 		waitMS = 0
-		decisionReason = "wait_round_limit_skip"
+		decisionReasonCode = "wait_round_limit_skip"
+		decisionReason = "wait round limit reached, skip this round"
 	}
 	if action == "" {
 		action = controlActionSkip
 		waitMS = 0
-		decisionReason = "empty_action_skip"
+		decisionReasonCode = "empty_action_skip"
+		decisionReason = "empty control action, skip this round"
+	}
+	if (action == controlActionWait || action == controlActionSkip) && strings.TrimSpace(decisionReason) == "" {
+		decisionReasonCode = "missing_reason_fallback"
+		decisionReason = "missing control reason, skip this round"
+		action = controlActionSkip
+		waitMS = 0
 	}
 
 	decisionLog := log.Info().
@@ -436,7 +449,8 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Str("action", string(action)).
 		Int("wait_ms", waitMS).
 		Int("wait_rounds", waitRounds).
-		Str("reason", decisionReason)
+		Str("reason", decisionReason).
+		Str("reason_code", decisionReasonCode)
 	if streamErr != nil {
 		decisionLog = decisionLog.Err(streamErr)
 	}
@@ -464,6 +478,8 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Str("session", sessionKey).
 			Int64("next_wait_ms", waitDelay.Milliseconds()).
 			Int("wait_rounds", waitRounds+1).
+			Str("reason", decisionReason).
+			Str("reason_code", decisionReasonCode).
 			Msg("immersive flush deferred by wait action")
 		return
 	}
@@ -531,7 +547,10 @@ func isControlHeaderProtocolError(err error) bool {
 	if errors.Is(err, errControlHeaderTooLong) ||
 		errors.Is(err, errControlHeaderMissingNewline) ||
 		errors.Is(err, errControlHeaderInvalid) ||
-		errors.Is(err, errControlHeaderUnexpectedContent) {
+		errors.Is(err, errControlHeaderUnexpectedContent) ||
+		errors.Is(err, errControlHeaderReasonMissing) ||
+		errors.Is(err, errControlHeaderReasonInvalid) ||
+		errors.Is(err, errControlHeaderReasonTooLong) {
 		return true
 	}
 	return false
