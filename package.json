@@ -1,0 +1,13 @@
+{
+    "name": "nekomimi",
+    "private": true,
+    "scripts": {
+        "gen:swagger": "go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g swagger.go -d cmd/nekomimi,internal/httpapi -o docs/swagger --parseInternal --ot json,yaml",
+        "gen:api-client": "pnpm -C web gen:api-client",
+        "gen:api": "pnpm gen:swagger && pnpm gen:api-client",
+        "dev:backend": "go run ./cmd/nekomimi",
+        "dev:web": "pnpm -C web dev",
+        "build:web": "pnpm -C web build",
+        "preview:web": "pnpm -C web preview"
+    }
+}
