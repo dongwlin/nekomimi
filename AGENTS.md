@@ -28,6 +28,8 @@
 ## Runtime and Config Notes
 - `config/config.yml` must exist before startup (not auto-generated).
 - App currently always loads `config/config.yml` (no custom path CLI flag).
+- API auth state persists to SQLite at `data/auth.db` (relative to process working directory).
+- For Docker persistence, mount host directory to container `data`: `./data:/app/data`.
 - `llm.provider` behavior:
   - `responses`: supported
   - `openai`: supported

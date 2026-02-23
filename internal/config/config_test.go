@@ -270,3 +270,170 @@ driver:
 		t.Fatalf("unexpected window_ms: %d", cfg.LLM.Immersive.PokeReaction.WindowMS)
 	}
 }
+
+func TestLoad_APIDefaultsApplied(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if cfg.API.Listen != "127.0.0.1:8080" {
+		t.Fatalf("unexpected api.listen: %q", cfg.API.Listen)
+	}
+	if cfg.API.Auth.AccessTTLMS != 900000 {
+		t.Fatalf("unexpected api.auth.access_ttl_ms: %d", cfg.API.Auth.AccessTTLMS)
+	}
+	if cfg.API.Auth.RefreshTTLMS != 604800000 {
+		t.Fatalf("unexpected api.auth.refresh_ttl_ms: %d", cfg.API.Auth.RefreshTTLMS)
+	}
+	if len(cfg.API.CORS.AllowOrigins) != 1 || cfg.API.CORS.AllowOrigins[0] != "http://localhost:5173" {
+		t.Fatalf("unexpected api.cors.allow_origins: %#v", cfg.API.CORS.AllowOrigins)
+	}
+}
+
+func TestLoad_AllowEnabledAPIMissingPassphrase(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+api:
+  enabled: true
+  auth:
+    passphrase: ""
+    paseto_key_hex: "9f10ec4ee8ca74d6b6a6460f6609409e63d76ca4bc5f8cc86f3bd9464f694f16"
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	if _, err := Load(configPath); err != nil {
+		t.Fatalf("expected missing passphrase to be allowed, got error: %v", err)
+	}
+}
+
+func TestLoad_RejectEnabledAPIInvalidPasetoKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+api:
+  enabled: true
+  auth:
+    passphrase: "secret"
+    paseto_key_hex: "not-a-valid-key"
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected invalid paseto key error, got nil")
+	}
+}
+
+func TestLoad_RejectEnabledAPINonPositiveTTL(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+api:
+  enabled: true
+  auth:
+    passphrase: "secret"
+    paseto_key_hex: "9f10ec4ee8ca74d6b6a6460f6609409e63d76ca4bc5f8cc86f3bd9464f694f16"
+    access_ttl_ms: -1
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected non-positive access ttl error, got nil")
+	}
+}

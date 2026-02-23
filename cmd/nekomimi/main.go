@@ -7,6 +7,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/bot/bootstrap"
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/httpapi"
 	"github.com/dongwlin/nekomimi/internal/llm"
 	"github.com/dongwlin/nekomimi/internal/version"
 	"github.com/rs/zerolog"
@@ -30,7 +31,21 @@ func main() {
 		Bool("llm_enabled", cfg.LLM.Enabled).
 		Str("provider", cfg.LLM.Provider).
 		Str("model", cfg.LLM.Model).
+		Bool("api_enabled", cfg.API.Enabled).
 		Msg("config loaded")
+
+	if cfg.API.Enabled {
+		go func() {
+			log.Info().
+				Str("listen", cfg.API.Listen).
+				Msg("http api starting")
+			if err := httpapi.Run(cfg.API); err != nil {
+				log.Fatal().
+					Err(err).
+					Msg("http api stopped")
+			}
+		}()
+	}
 
 	llmManager := llm.NewManager(cfg.LLM)
 	log.Info().
