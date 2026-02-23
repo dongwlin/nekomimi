@@ -8,6 +8,7 @@ type Config struct {
 	SuperUsers    []int64      `yaml:"super_users"`
 	LLM           LLMConfig    `yaml:"llm"`
 	Driver        DriverConfig `yaml:"driver"`
+	API           APIConfig    `yaml:"api"`
 }
 
 type LLMConfig struct {
@@ -84,4 +85,22 @@ type DriverConfig struct {
 type WebSocketConfig struct {
 	URL   string `yaml:"url"`
 	Token string `yaml:"token"`
+}
+
+type APIConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	Listen  string        `yaml:"listen"`
+	Auth    APIAuthConfig `yaml:"auth"`
+	CORS    APICORSConfig `yaml:"cors"`
+}
+
+type APIAuthConfig struct {
+	Passphrase   string `yaml:"passphrase"`
+	PasetoKeyHex string `yaml:"paseto_key_hex"`
+	AccessTTLMS  int    `yaml:"access_ttl_ms"`
+	RefreshTTLMS int    `yaml:"refresh_ttl_ms"`
+}
+
+type APICORSConfig struct {
+	AllowOrigins []string `yaml:"allow_origins"`
 }

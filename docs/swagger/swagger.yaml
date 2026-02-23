@@ -1,0 +1,306 @@
+basePath: /api/v1
+definitions:
+  httpapi.errorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  httpapi.loginRequest:
+    properties:
+      passphrase:
+        type: string
+    required:
+    - passphrase
+    type: object
+  httpapi.okResponse:
+    properties:
+      ok:
+        type: boolean
+    type: object
+  httpapi.refreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  httpapi.rotatePassphraseRequest:
+    properties:
+      current_passphrase:
+        type: string
+      new_passphrase:
+        type: string
+    required:
+    - current_passphrase
+    - new_passphrase
+    type: object
+  httpapi.tokenResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      token_type:
+        type: string
+    type: object
+  httpapi.verifyResponse:
+    properties:
+      error:
+        type: string
+      ok:
+        type: boolean
+    type: object
+  metrics.Overview:
+    properties:
+      generated_at:
+        type: string
+      hourly_trend:
+        items:
+          $ref: '#/definitions/metrics.OverviewHourly'
+        type: array
+      kpi:
+        $ref: '#/definitions/metrics.OverviewKPI'
+      runtime:
+        $ref: '#/definitions/metrics.OverviewRuntime'
+      timezone:
+        type: string
+      today_failed_types:
+        items:
+          $ref: '#/definitions/metrics.OverviewTypeItem'
+        type: array
+      today_inbound_types:
+        items:
+          $ref: '#/definitions/metrics.OverviewTypeItem'
+        type: array
+      today_outbound_types:
+        items:
+          $ref: '#/definitions/metrics.OverviewTypeItem'
+        type: array
+    type: object
+  metrics.OverviewHourly:
+    properties:
+      failed:
+        type: integer
+      hour:
+        type: string
+      received:
+        type: integer
+      sent:
+        type: integer
+    type: object
+  metrics.OverviewKPI:
+    properties:
+      last_failed_at:
+        type: string
+      last_received_at:
+        type: string
+      last_sent_at:
+        type: string
+      llm_enabled:
+        type: boolean
+      llm_model:
+        type: string
+      llm_provider:
+        type: string
+      today_active_sessions:
+        type: integer
+      today_failed_total:
+        type: integer
+      today_received_total:
+        type: integer
+      today_sent_total:
+        type: integer
+      total_failed_total:
+        type: integer
+      total_received_total:
+        type: integer
+      total_sent_total:
+        type: integer
+    type: object
+  metrics.OverviewRuntime:
+    properties:
+      bot_connected_at:
+        type: string
+      bot_started_at:
+        type: string
+      bot_uptime_seconds:
+        type: integer
+      process_started_at:
+        type: string
+      uptime_seconds:
+        type: integer
+    type: object
+  metrics.OverviewTypeItem:
+    properties:
+      count:
+        type: integer
+      ratio:
+        type: number
+      type:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: API for token-based auth bootstrap and verification.
+  title: Nekomimi API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Validate the single passphrase and issue PASETO tokens.
+      operationId: authLogin
+      parameters:
+      - description: Passphrase
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.tokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+      summary: Exchange passphrase for access/refresh token pair
+      tags:
+      - auth
+  /auth/passphrase/rotate:
+    post:
+      consumes:
+      - application/json
+      description: Rotate passphrase with current passphrase and revoke existing sessions
+        immediately.
+      operationId: authPassphraseRotate
+      parameters:
+      - description: Current and new passphrase
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.rotatePassphraseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.okResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+      security:
+      - BearerAuth: []
+      summary: Rotate system passphrase
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Rotate refresh token and issue a new token pair.
+      operationId: authRefresh
+      parameters:
+      - description: Refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.refreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.tokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+      summary: Refresh access token with refresh token
+      tags:
+      - auth
+  /auth/verify:
+    get:
+      description: Check whether the supplied Bearer access token is valid.
+      operationId: authVerify
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.verifyResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.verifyResponse'
+      security:
+      - BearerAuth: []
+      summary: Verify access token
+      tags:
+      - auth
+  /dashboard/overview:
+    get:
+      description: Returns runtime status, daily/total KPIs, type distribution, and
+        24-hour trend.
+      operationId: dashboardOverview
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/metrics.Overview'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get dashboard overview
+      tags:
+      - dashboard
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

@@ -7,13 +7,17 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/bot/bootstrap"
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/httpapi"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/metrics"
 	"github.com/dongwlin/nekomimi/internal/version"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
 func main() {
+	processStartedAt := time.Now()
+
 	if shouldPrintVersion(os.Args[1:]) {
 		fmt.Println(version.String())
 		return
@@ -30,12 +34,52 @@ func main() {
 		Bool("llm_enabled", cfg.LLM.Enabled).
 		Str("provider", cfg.LLM.Provider).
 		Str("model", cfg.LLM.Model).
+		Bool("api_enabled", cfg.API.Enabled).
 		Msg("config loaded")
 
 	llmManager := llm.NewManager(cfg.LLM)
 	log.Info().
 		Msg("llm manager initialized")
-	bootstrap.Start(cfg, llmManager)
+
+	var collector *metrics.Collector
+	if cfg.API.Enabled {
+		var err error
+		collector, err = metrics.NewCollector(httpapi.AuthSQLitePath)
+		if err != nil {
+			log.Fatal().
+				Err(err).
+				Msg("initialize metrics collector failed")
+		}
+		defer func() {
+			if closeErr := collector.Close(); closeErr != nil {
+				log.Error().Err(closeErr).Msg("close metrics collector failed")
+			}
+		}()
+		collector.SetProcessStartedAt(processStartedAt)
+
+		go func() {
+			log.Info().
+				Str("listen", cfg.API.Listen).
+				Msg("http api starting")
+			if err := httpapi.Run(cfg.API, httpapi.RunOptions{
+				Metrics: collector,
+				LLMStatusProvider: func() metrics.LLMStatus {
+					enabled, provider, model, _, _ := llmManager.Status()
+					return metrics.LLMStatus{
+						Enabled:  enabled,
+						Provider: provider,
+						Model:    model,
+					}
+				},
+			}); err != nil {
+				log.Fatal().
+					Err(err).
+					Msg("http api stopped")
+			}
+		}()
+	}
+
+	bootstrap.Start(cfg, llmManager, collector)
 }
 
 func shouldPrintVersion(args []string) bool {

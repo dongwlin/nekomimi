@@ -230,7 +230,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(processing)
 	if repeatText != "" && ctx != nil {
-		ctx.Send(repeatText)
+		b.sendTracked(ctx, repeatText)
 		b.recordAssistantUtterance(sessionKey, repeatText)
 		_ = b.llm.AppendAssistantEvent(sessionKey, repeatText, cutoffSeq)
 		log.Info().
@@ -288,7 +288,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			if sentMessages > 0 {
 				time.Sleep(NextReplySegmentDelay(trimmed))
 			}
-			ctx.Send(trimmed)
+			b.sendTracked(ctx, trimmed)
 			if sentReplyBuilder.Len() > 0 {
 				sentReplyBuilder.WriteString("\n")
 			}
@@ -499,7 +499,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				Msg("immersive reply prepared without ctx")
 		} else {
 			if sentMessages == 0 {
-				ctx.Send(reply)
+				b.sendTracked(ctx, reply)
 				sentReplyBuilder.WriteString(reply)
 				sentMessages = 1
 				sentChars = len([]rune(reply))

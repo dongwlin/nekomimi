@@ -29,6 +29,10 @@ func Load(path string) (*Config, error) {
 	if err := resolvePromptFields(&cfg, rootDir); err != nil {
 		return nil, err
 	}
+	applyDefaults(&cfg)
+	if err := validate(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 

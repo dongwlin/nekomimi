@@ -21,19 +21,19 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		llmManager.SetAssistantSpeaker(assistantLabel(ctx))
 		prompt := strings.TrimSpace(ctx.State["args"].(string))
 		if prompt == "" {
-			ctx.Send("用法: /ai 你的问题")
+			sendTracked(ctx, "用法: /ai 你的问题")
 			return
 		}
 		if !llmManager.IsEnabled() {
-			ctx.Send("LLM未开启，可使用 /llm on 开启")
+			sendTracked(ctx, "LLM未开启，可使用 /llm on 开启")
 			return
 		}
 		reply, err := llmManager.Reply(context.Background(), prompt, sessionKey(ctx), speakerLabel(ctx))
 		if err != nil {
-			ctx.Send("LLM调用失败: " + llm.UserVisibleError(err))
+			sendTracked(ctx, "LLM调用失败: "+llm.UserVisibleError(err))
 			return
 		}
-		ctx.Send(reply)
+		sendTracked(ctx, reply)
 	})
 
 	zero.OnCommand("ctx", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
@@ -44,18 +44,18 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		engine.RefreshIdentityFromCtx(ctx)
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		if args == "" {
-			ctx.Send("用法: /chat on|off|status")
+			sendTracked(ctx, "用法: /chat on|off|status")
 			return
 		}
 		action, rest := parseActionArgs(args)
 		if strings.TrimSpace(rest) != "" {
-			ctx.Send("用法: /chat on|off|status")
+			sendTracked(ctx, "用法: /chat on|off|status")
 			return
 		}
 		switch action {
 		case "on":
 			if !llmManager.IsEnabled() {
-				ctx.Send("LLM 未开启，可使用 /llm on 开启")
+				sendTracked(ctx, "LLM 未开启，可使用 /llm on 开启")
 				return
 			}
 			llmManager.SetImmersive(sessionKey(ctx), true)
@@ -87,27 +87,27 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 				[]string{"沉浸模式当前是关闭状态。"},
 			)
 		default:
-			ctx.Send("用法: /chat on|off|status")
+			sendTracked(ctx, "用法: /chat on|off|status")
 		}
 	})
 
 	zero.OnCommand("chaton", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
 		engine.RefreshIdentityFromCtx(ctx)
 		if !llmManager.IsEnabled() {
-			ctx.Send("LLM 未开启，可使用 /llm on 开启")
+			sendTracked(ctx, "LLM 未开启，可使用 /llm on 开启")
 			return
 		}
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		targetSession, targetLabel, err := parseTargetSessionKey(args)
 		if err != nil {
-			ctx.Send("用法: /chaton group <群号> | /chaton private <QQ号>\n示例: /chaton group 123456")
+			sendTracked(ctx, "用法: /chaton group <群号> | /chaton private <QQ号>\n示例: /chaton group 123456")
 			return
 		}
 		llmManager.SetImmersive(targetSession, true)
 		if targetSession == sessionKey(ctx) {
 			return
 		}
-		ctx.Send("已静默开启沉浸模式: " + targetLabel)
+		sendTracked(ctx, "已静默开启沉浸模式: "+targetLabel)
 	})
 
 	zero.OnCommand("chatoff", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
@@ -115,7 +115,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		targetSession, targetLabel, err := parseTargetSessionKey(args)
 		if err != nil {
-			ctx.Send("用法: /chatoff group <群号> | /chatoff private <QQ号>\n示例: /chatoff group 123456")
+			sendTracked(ctx, "用法: /chatoff group <群号> | /chatoff private <QQ号>\n示例: /chatoff group 123456")
 			return
 		}
 		llmManager.SetImmersive(targetSession, false)
@@ -123,7 +123,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 		if targetSession == sessionKey(ctx) {
 			return
 		}
-		ctx.Send("已静默关闭沉浸模式: " + targetLabel)
+		sendTracked(ctx, "已静默关闭沉浸模式: "+targetLabel)
 	})
 
 	zero.OnMessage().Handle(func(ctx *zero.Ctx) {
@@ -160,7 +160,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 
 		engine.RecordTimelineEvent(session, actorName+"戳了你一下。", actorLabel)
 
-		ctx.SendPoke(ctx.Event.GroupID, ctx.Event.UserID)
+		sendPokeTracked(ctx, ctx.Event.GroupID, ctx.Event.UserID)
 		engine.RecordTimelineEvent(session, "你回戳了对方。", "assistant")
 
 		reply, err := llmManager.Reply(
@@ -188,7 +188,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 
 func sendContextUsage(ctx *zero.Ctx, llmManager *llm.Manager) {
 	if !llmManager.IsEnabled() {
-		ctx.Send("LLM未开启，可使用 /llm on 开启")
+		sendTracked(ctx, "LLM未开启，可使用 /llm on 开启")
 		return
 	}
 	usage := llmManager.SessionContextUsage(sessionKey(ctx))
@@ -197,7 +197,7 @@ func sendContextUsage(ctx *zero.Ctx, llmManager *llm.Manager) {
 		sessionStart = usage.SessionStartedAt.Format("2006-01-02 15:04:05")
 	}
 	if usage.MaxTokens <= 0 {
-		ctx.Send(fmt.Sprintf(
+		sendTracked(ctx, fmt.Sprintf(
 			"当前会话上下文（新链路）:\n会话开始: %s\n估算 tokens: %d\ntoken 上限: 未设置（context_max <= 0）\n占比: 未启用\nrecent_chat: %d/%d\nrecent_diary: %d/%d\n组装字符数: %d\n截断块数: %d\n累计截断轮次: %d",
 			sessionStart,
 			usage.UsedTokens,
@@ -211,7 +211,7 @@ func sendContextUsage(ctx *zero.Ctx, llmManager *llm.Manager) {
 		))
 		return
 	}
-	ctx.Send(fmt.Sprintf(
+	sendTracked(ctx, fmt.Sprintf(
 		"当前会话上下文（新链路）:\n会话开始: %s\n估算 tokens: %d/%d\n占比: %.1f%%\nrecent_chat: %d/%d\nrecent_diary: %d/%d\n组装字符数: %d\n截断块数: %d\n累计截断轮次: %d",
 		sessionStart,
 		usage.UsedTokens,
@@ -231,7 +231,7 @@ func sendRandomMessage(ctx *zero.Ctx, messages []string) {
 	if len(messages) == 0 {
 		return
 	}
-	ctx.Send(messages[rand.Intn(len(messages))])
+	sendTracked(ctx, messages[rand.Intn(len(messages))])
 }
 
 func sendTimeAwareRandomMessage(ctx *zero.Ctx, dayMessages []string, nightMessages []string) {
@@ -283,6 +283,6 @@ func sendPokeSegmentedReply(ctx *zero.Ctx, reply string) {
 		if idx > 0 {
 			time.Sleep(immersivepkg.NextReplySegmentDelay(segment))
 		}
-		ctx.Send(segment)
+		sendTracked(ctx, segment)
 	}
 }

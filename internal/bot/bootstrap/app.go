@@ -1,16 +1,23 @@
 package bootstrap
 
 import (
+	"time"
+
 	"github.com/dongwlin/nekomimi/internal/bot/commands"
 	"github.com/dongwlin/nekomimi/internal/bot/immersive"
 	"github.com/dongwlin/nekomimi/internal/bot/runtime"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/metrics"
 )
 
 // Start wires runtime dependencies and starts the bot.
-func Start(cfg *config.Config, llmManager *llm.Manager) {
+func Start(cfg *config.Config, llmManager *llm.Manager, collector *metrics.Collector) {
 	engine := immersive.NewEngine(cfg.LLM.Immersive, llmManager, cfg.NickName)
-	commands.Register(cfg, llmManager, engine)
+	engine.SetMetricsCollector(collector)
+	commands.Register(cfg, llmManager, engine, collector)
+	if collector != nil {
+		collector.SetBotStartedAt(time.Now())
+	}
 	runtime.Run(cfg)
 }
