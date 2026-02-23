@@ -1,0 +1,196 @@
+basePath: /api/v1
+definitions:
+  httpapi.errorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  httpapi.loginRequest:
+    properties:
+      passphrase:
+        type: string
+    required:
+    - passphrase
+    type: object
+  httpapi.okResponse:
+    properties:
+      ok:
+        type: boolean
+    type: object
+  httpapi.refreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  httpapi.rotatePassphraseRequest:
+    properties:
+      current_passphrase:
+        type: string
+      new_passphrase:
+        type: string
+    required:
+    - current_passphrase
+    - new_passphrase
+    type: object
+  httpapi.tokenResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      token_type:
+        type: string
+    type: object
+  httpapi.verifyResponse:
+    properties:
+      error:
+        type: string
+      ok:
+        type: boolean
+    type: object
+info:
+  contact: {}
+  description: API for token-based auth bootstrap and verification.
+  title: Nekomimi API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Validate the single passphrase and issue PASETO tokens.
+      operationId: authLogin
+      parameters:
+      - description: Passphrase
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.tokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+      summary: Exchange passphrase for access/refresh token pair
+      tags:
+      - auth
+  /auth/passphrase/rotate:
+    post:
+      consumes:
+      - application/json
+      description: Rotate passphrase with current passphrase and revoke existing sessions
+        immediately.
+      operationId: authPassphraseRotate
+      parameters:
+      - description: Current and new passphrase
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.rotatePassphraseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.okResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+      security:
+      - BearerAuth: []
+      summary: Rotate system passphrase
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Rotate refresh token and issue a new token pair.
+      operationId: authRefresh
+      parameters:
+      - description: Refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.refreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.tokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpapi.errorResponse'
+      summary: Refresh access token with refresh token
+      tags:
+      - auth
+  /auth/verify:
+    get:
+      description: Check whether the supplied Bearer access token is valid.
+      operationId: authVerify
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.verifyResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpapi.verifyResponse'
+      security:
+      - BearerAuth: []
+      summary: Verify access token
+      tags:
+      - auth
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
