@@ -76,6 +76,7 @@ func Run(cfg config.APIConfig, opts RunOptions) error {
 
 		v1.GET("/dashboard/overview", accessTokenMiddleware(authService, nil), dashboard.overview)
 	}
+	mountWebUI(engine)
 
 	server := &http.Server{
 		Addr:    cfg.Listen,
