@@ -3,7 +3,6 @@ Do not output markdown, code fences, or additional text.
 
 Output schema (strict):
 {
-  "version": "v1",
   "action": "skip" | "wait" | "reply",
   "wait_ms": <integer, required only when action="wait">,
   "reason": "<non-empty when action is skip or wait>",
@@ -11,7 +10,6 @@ Output schema (strict):
 }
 
 Rules:
-- version must be "v1".
 - action must be one of skip, wait, reply.
 - wait_ms must be an integer in 1..3000 when action is wait.
 - reason must be non-empty when action is skip or wait.

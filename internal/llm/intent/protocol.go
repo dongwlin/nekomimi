@@ -9,9 +9,8 @@ import (
 )
 
 const (
-	ProtocolVersion = "v1"
-	MinWaitMS       = 1
-	MaxWaitMS       = 3000
+	MinWaitMS = 1
+	MaxWaitMS = 3000
 )
 
 type Action string
@@ -23,7 +22,6 @@ const (
 )
 
 type ControlIntent struct {
-	Version   string `json:"version"`
 	Action    Action `json:"action"`
 	WaitMS    int    `json:"wait_ms,omitempty"`
 	Reason    string `json:"reason,omitempty"`
@@ -33,7 +31,6 @@ type ControlIntent struct {
 var (
 	ErrProtocol       = errors.New("invalid control intent protocol")
 	ErrInvalidPayload = errors.New("invalid control intent payload")
-	ErrInvalidVersion = errors.New("invalid control intent version")
 	ErrInvalidAction  = errors.New("invalid control intent action")
 	ErrReasonRequired = errors.New("control intent reason is required")
 	ErrWaitMSRequired = errors.New("control intent wait_ms is required")
@@ -79,7 +76,6 @@ func Normalize(value *ControlIntent) {
 	if value == nil {
 		return
 	}
-	value.Version = strings.ToLower(strings.TrimSpace(value.Version))
 	value.Action = Action(strings.ToLower(strings.TrimSpace(string(value.Action))))
 	value.Reason = strings.TrimSpace(value.Reason)
 	value.ReplyPlan = strings.TrimSpace(value.ReplyPlan)
@@ -94,9 +90,6 @@ func Normalize(value *ControlIntent) {
 
 // Validate checks semantic constraints after normalization.
 func Validate(value ControlIntent) error {
-	if value.Version != ProtocolVersion {
-		return ErrInvalidVersion
-	}
 	switch value.Action {
 	case ActionSkip:
 		if value.Reason == "" {

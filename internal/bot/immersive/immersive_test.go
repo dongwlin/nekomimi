@@ -144,7 +144,6 @@ func TestFlush_IntentProtocolErrorFirstRoundWaitThenFollowupSkip(t *testing.T) {
 
 func TestFlush_IntentWaitFromModelRequeues(t *testing.T) {
 	intent := mustMarshalJSON(t, map[string]any{
-		"version": "v1",
 		"action":  "wait",
 		"wait_ms": 120,
 		"reason":  "user is still typing",
@@ -177,8 +176,7 @@ func TestFlush_IntentWaitFromModelRequeues(t *testing.T) {
 func TestFlush_IntentReplyGeneratesAndPersistsAssistant(t *testing.T) {
 	var callCount int64
 	control := mustMarshalJSON(t, map[string]any{
-		"version": "v1",
-		"action":  "reply",
+		"action": "reply",
 	})
 	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
 		atomic.StoreInt64(&callCount, call)
@@ -221,8 +219,7 @@ func TestFlush_IntentReplyGeneratesAndPersistsAssistant(t *testing.T) {
 
 func TestFlush_ReplyDelimiterSegmentsAreSentWithoutControlMarker(t *testing.T) {
 	control := mustMarshalJSON(t, map[string]any{
-		"version": "v1",
-		"action":  "reply",
+		"action": "reply",
 	})
 	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
 		if !stream {
@@ -263,7 +260,6 @@ func TestFlush_ReplyDelimiterSegmentsAreSentWithoutControlMarker(t *testing.T) {
 
 func TestFlush_DecisionLogIncludesModelReasonAndCode(t *testing.T) {
 	intent := mustMarshalJSON(t, map[string]any{
-		"version": "v1",
 		"action":  "wait",
 		"wait_ms": 120,
 		"reason":  "user is still typing",
@@ -312,8 +308,7 @@ func TestFlush_DecisionLogIncludesModelReasonAndCode(t *testing.T) {
 
 func TestFlush_PersistsAtomicUserEventsWithoutBatchEnvelope(t *testing.T) {
 	control := mustMarshalJSON(t, map[string]any{
-		"version": "v1",
-		"action":  "reply",
+		"action": "reply",
 	})
 	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
 		if !stream {
@@ -362,14 +357,12 @@ func TestFlush_PersistsAtomicUserEventsWithoutBatchEnvelope(t *testing.T) {
 func TestFlush_WaitRetryDoesNotDuplicateUserPersistence(t *testing.T) {
 	var callCount int64
 	waitIntent := mustMarshalJSON(t, map[string]any{
-		"version": "v1",
 		"action":  "wait",
 		"wait_ms": 10,
 		"reason":  "still collecting context",
 	})
 	replyIntent := mustMarshalJSON(t, map[string]any{
-		"version": "v1",
-		"action":  "reply",
+		"action": "reply",
 	})
 	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
 		callNo := atomic.AddInt64(&callCount, 1)
@@ -483,7 +476,7 @@ func newScriptedResponsesServer(t *testing.T, script func(call int64, stream boo
 		}
 
 		if strings.TrimSpace(resp.JSONBody) == "" {
-			resp.JSONBody = responsesOutputTextJSON(`{"version":"v1","action":"skip","reason":"default"}`)
+			resp.JSONBody = responsesOutputTextJSON(`{""action":"skip","reason":"default"}`)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)

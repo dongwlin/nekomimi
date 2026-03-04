@@ -15,7 +15,7 @@ import (
 
 func TestDecideImmersiveIntent_ParsesValidIntent(t *testing.T) {
 	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
-		return responsesOutputTextJSONForIntent(t, `{"version":"v1","action":"wait","wait_ms":120,"reason":"still typing"}`)
+		return responsesOutputTextJSONForIntent(t, `{"action":"wait","wait_ms":120,"reason":"still typing"}`)
 	})
 	defer server.Close()
 
@@ -72,7 +72,7 @@ func TestDecideImmersiveIntent_DoesNotUseToolLoop(t *testing.T) {
 	var callCount int64
 	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
 		atomic.StoreInt64(&callCount, call)
-		return responsesOutputTextJSONForIntent(t, `{"version":"v1","action":"reply"}`)
+		return responsesOutputTextJSONForIntent(t, `{"action":"reply"}`)
 	})
 	defer server.Close()
 
@@ -116,7 +116,7 @@ func newResponsesJSONServerForIntent(t *testing.T, script func(call int64, body 
 		call := atomic.AddInt64(&callCount, 1)
 		responseBody := script(call, body)
 		if responseBody == "" {
-			responseBody = responsesOutputTextJSONForIntent(t, `{"version":"v1","action":"skip","reason":"default"}`)
+			responseBody = responsesOutputTextJSONForIntent(t, `{"action":"skip","reason":"default"}`)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

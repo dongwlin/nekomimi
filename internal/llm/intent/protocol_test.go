@@ -7,7 +7,7 @@ import (
 
 func TestParse_SkipWaitReply(t *testing.T) {
 	t.Run("skip", func(t *testing.T) {
-		value, err := Parse(`{"version":"v1","action":"skip","reason":"low value"}`)
+		value, err := Parse(`{"action":"skip","reason":"low value"}`)
 		if err != nil {
 			t.Fatalf("parse skip failed: %v", err)
 		}
@@ -20,7 +20,7 @@ func TestParse_SkipWaitReply(t *testing.T) {
 	})
 
 	t.Run("wait with clamp", func(t *testing.T) {
-		value, err := Parse(`{"version":"v1","action":"wait","wait_ms":6000,"reason":"still typing"}`)
+		value, err := Parse(`{"action":"wait","wait_ms":6000,"reason":"still typing"}`)
 		if err != nil {
 			t.Fatalf("parse wait failed: %v", err)
 		}
@@ -33,7 +33,7 @@ func TestParse_SkipWaitReply(t *testing.T) {
 	})
 
 	t.Run("reply", func(t *testing.T) {
-		value, err := Parse(`{"version":"v1","action":"reply","reply_plan":"brief"}`)
+		value, err := Parse(`{"action":"reply","reply_plan":"brief"}`)
 		if err != nil {
 			t.Fatalf("parse reply failed: %v", err)
 		}
@@ -58,28 +58,28 @@ func TestParse_ProtocolErrors(t *testing.T) {
 			wantErr: ErrInvalidPayload,
 		},
 		{
-			name:    "invalid version",
-			input:   `{"version":"v2","action":"reply"}`,
-			wantErr: ErrInvalidVersion,
-		},
-		{
 			name:    "invalid action",
-			input:   `{"version":"v1","action":"noop"}`,
+			input:   `{"action":"noop"}`,
 			wantErr: ErrInvalidAction,
 		},
 		{
 			name:    "wait missing wait_ms",
-			input:   `{"version":"v1","action":"wait","reason":"typing"}`,
+			input:   `{"action":"wait","reason":"typing"}`,
 			wantErr: ErrWaitMSRequired,
 		},
 		{
 			name:    "skip missing reason",
-			input:   `{"version":"v1","action":"skip"}`,
+			input:   `{"action":"skip"}`,
 			wantErr: ErrReasonRequired,
 		},
 		{
 			name:    "unknown field",
-			input:   `{"version":"v1","action":"reply","unknown":1}`,
+			input:   `{"action":"reply","unknown":1}`,
+			wantErr: ErrInvalidPayload,
+		},
+		{
+			name:    "version field is rejected",
+			input:   `{"version":"v1","action":"reply"}`,
 			wantErr: ErrInvalidPayload,
 		},
 	}
@@ -101,7 +101,7 @@ func TestParse_ProtocolErrors(t *testing.T) {
 }
 
 func TestParse_CodeFenceAndEmbeddedJSON(t *testing.T) {
-	value, err := Parse("```json\n{\"version\":\"v1\",\"action\":\"reply\"}\n```")
+	value, err := Parse("```json\n{\"action\":\"reply\"}\n```")
 	if err != nil {
 		t.Fatalf("parse codefence failed: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestParse_CodeFenceAndEmbeddedJSON(t *testing.T) {
 		t.Fatalf("action mismatch: got %q", value.Action)
 	}
 
-	value, err = Parse("prefix {\"version\":\"v1\",\"action\":\"skip\",\"reason\":\"x\"} suffix")
+	value, err = Parse("prefix {\"action\":\"skip\",\"reason\":\"x\"} suffix")
 	if err != nil {
 		t.Fatalf("parse embedded object failed: %v", err)
 	}
