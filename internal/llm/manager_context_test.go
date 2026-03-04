@@ -228,6 +228,40 @@ func TestAppendEvents_MetadataAndReplyAnchor(t *testing.T) {
 	}
 }
 
+func TestAppendUserEventAt_PreservesEventTimezoneInContent(t *testing.T) {
+	m := NewManager(config.LLMConfig{
+		Model: "gpt-4.1-mini",
+	})
+	sessionKey := "group:event-timezone"
+	userZone := time.FixedZone("UTC-8", -8*60*60)
+	userAt := time.Date(2026, 2, 22, 9, 30, 0, 0, userZone)
+
+	if _, ok := m.AppendUserEventAt(sessionKey, "hello", "name=alice", userAt); !ok {
+		t.Fatal("append user event failed")
+	}
+
+	result, err := m.ListChatEvents(sessionKey, chatlog.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list chat events failed: %v", err)
+	}
+	if len(result.Entries) != 1 {
+		t.Fatalf("event count mismatch: got %d, want %d", len(result.Entries), 1)
+	}
+
+	user := result.Entries[0]
+	if !strings.Contains(user.Content, "[name=alice;time=2026-02-22 09:30:00]: hello") {
+		t.Fatalf("user content should preserve event timezone wall-clock time, got %q", user.Content)
+	}
+	parsedEventTime, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(user.Metadata["event_time"]))
+	if err != nil {
+		t.Fatalf("parse event_time metadata failed: %v", err)
+	}
+	_, offset := parsedEventTime.Zone()
+	if offset != -8*60*60 {
+		t.Fatalf("event_time offset mismatch: got %d, want %d", offset, -8*60*60)
+	}
+}
+
 func TestAssemble_OrderStableWhenEventTimeSkews(t *testing.T) {
 	m := NewManager(config.LLMConfig{
 		Model: "gpt-4.1-mini",

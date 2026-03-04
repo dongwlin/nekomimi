@@ -177,7 +177,7 @@ func normalizeEventTime(at time.Time) time.Time {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	return at.UTC()
+	return at
 }
 
 func (m *Manager) nextCausalSeq(sessionKey string) int64 {
