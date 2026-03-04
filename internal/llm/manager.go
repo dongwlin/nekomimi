@@ -12,6 +12,7 @@ import (
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	"github.com/dongwlin/nekomimi/internal/llm/diary"
+	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
 	"github.com/dongwlin/nekomimi/internal/llm/provider"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
@@ -261,6 +262,35 @@ func (m *Manager) ReplyStreamWithExtraPromptAllowTools(ctx context.Context, user
 	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, false)
 }
 
+func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string) (llmintent.ControlIntent, error) {
+	startedAt := time.Now()
+	intent, err := m.decideIntentWithPipeline(ctx, pipelineRequest{
+		UserInput:   userInput,
+		SessionKey:  sessionKey,
+		Speaker:     speaker,
+		ExtraPrompt: llmprompt.ImmersiveControlPrompt,
+		Source:      "immersive_control_intent",
+		AppendTurn:  false,
+	})
+	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("request_source", "immersive_control_intent").
+			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+			Msg("llm immersive control intent failed")
+		return llmintent.ControlIntent{}, err
+	}
+
+	log.Info().
+		Str("request_source", "immersive_control_intent").
+		Str("intent_action", string(intent.Action)).
+		Int("intent_wait_ms", intent.WaitMS).
+		Str("intent_reason", intent.Reason).
+		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
+		Msg("llm immersive control intent completed")
+	return intent, nil
+}
+
 func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, disableTools bool) (string, error) {
 	startedAt := time.Now()
 	reply, err := m.replyStreamWithPipeline(ctx, pipelineRequest{
@@ -268,20 +298,20 @@ func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, ses
 		SessionKey:   sessionKey,
 		Speaker:      speaker,
 		ExtraPrompt:  extraPrompt,
-		Source:       "immersive_control_reply_stream",
+		Source:       "extra_prompt_reply_stream",
 		AppendTurn:   false,
 		DisableTools: disableTools,
 	}, onEvent)
 	if err != nil {
 		log.Warn().
 			Err(err).
-			Str("request_source", "immersive_control_reply_stream").
+			Str("request_source", "extra_prompt_reply_stream").
 			Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 			Msg("llm assistant streaming reply failed")
 		return "", err
 	}
 	log.Info().
-		Str("request_source", "immersive_control_reply_stream").
+		Str("request_source", "extra_prompt_reply_stream").
 		Int64("elapsed_ms", time.Since(startedAt).Milliseconds()).
 		Msg("llm assistant streaming reply completed")
 	return reply, nil

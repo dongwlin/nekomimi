@@ -10,6 +10,7 @@ import (
 
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 	"github.com/dongwlin/nekomimi/internal/llm/model"
 	"github.com/dongwlin/nekomimi/internal/llm/toolloop"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
@@ -120,6 +121,49 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 		_ = m.AppendAssistantEvent(req.SessionKey, reply, replyCutoffSeq)
 	}
 	return reply, nil
+}
+
+func (m *Manager) decideIntentWithPipeline(ctx context.Context, req pipelineRequest) (llmintent.ControlIntent, error) {
+	if m == nil {
+		return llmintent.ControlIntent{}, errors.New("manager is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	state := m.snapshotPipelineState()
+	if strings.TrimSpace(state.model) == "" {
+		return llmintent.ControlIntent{}, errors.New("model is not configured")
+	}
+
+	eventTime := time.Now()
+	userContent := formatUserContentAt(req.UserInput, req.Speaker, eventTime)
+	if strings.TrimSpace(userContent) == "" && strings.TrimSpace(req.SessionKey) == "" {
+		return llmintent.ControlIntent{}, errors.New("input is empty")
+	}
+
+	requestPrompt := composeSystemPrompt(state.systemPrompt, req.ExtraPrompt)
+	meta := buildPipelineMeta(req.SessionKey, state.assistantSpeaker, req.Meta)
+	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent)
+	if err != nil {
+		return llmintent.ControlIntent{}, err
+	}
+	if compressed {
+		m.incrementContextTrimCount(req.SessionKey)
+	}
+
+	reply, err := m.generateWithProvider(ctx, state.provider, state.model, requestPrompt, messages, llmclient.RequestOptions{
+		Source: req.Source,
+	})
+	if err != nil {
+		return llmintent.ControlIntent{}, err
+	}
+
+	decision, err := llmintent.Parse(reply)
+	if err != nil {
+		return llmintent.ControlIntent{}, err
+	}
+	return decision, nil
 }
 
 func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineRequest, onEvent StreamEventHandler) (string, error) {

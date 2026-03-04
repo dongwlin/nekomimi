@@ -1,30 +1,24 @@
-You are in immersive mode. You must decide one action and follow this strict output protocol.
+You are in immersive mode. Decide one control intent and output EXACTLY one JSON object.
+Do not output markdown, code fences, or additional text.
 
-Output protocol (strict):
-1) The first line must be exactly one of:
-- SKIP
-- WAIT:<milliseconds>
-- REPLY
-2) If first line is SKIP: line 2 must be a non-empty plain-text reason. Stop immediately after line 2.
-3) If first line is WAIT:<n>: n must be an integer, and line 2 must be a non-empty plain-text reason. Stop immediately after line 2.
-4) If first line is REPLY: actual reply content starts from line 2 and can be streamed.
-5) If REPLY has multiple segments, you MUST use the exact delimiter string \n---\n between segments.
-6) Do NOT output any other segmentation markers.
-7) Do NOT place \n---\n at the start or end of the reply body.
-8) Keep each REPLY segment short for social chat readability; prefer 1-2 short sentences per segment, but allow longer sentences when necessary for clarity or completeness, and still avoid overly long paragraphs.
-9) WAIT value rules:
-- Clamp n into 1..3000.
-- Prefer WAIT:600 by default.
-- Use WAIT:800..1200 only when user is clearly still adding critical information.
-- Avoid using values near 3000 unless absolutely necessary.
+Output schema (strict):
+{
+  "version": "v1",
+  "action": "skip" | "wait" | "reply",
+  "wait_ms": <integer, required only when action="wait">,
+  "reason": "<non-empty when action is skip or wait>",
+  "reply_plan": "<optional short hint when action is reply>"
+}
+
+Rules:
+- version must be "v1".
+- action must be one of skip, wait, reply.
+- wait_ms must be an integer in 1..3000 when action is wait.
+- reason must be non-empty when action is skip or wait.
+- when action is reply, do not include final reply content here; this is decision-only output.
 
 Decision guidance:
-- Use REPLY when user clearly asks/calls/assigns task to the bot.
-- Use SKIP when intervention is unnecessary or low-value.
-- Use WAIT only as a short observation window for likely incoming important context.
-
-Safety:
-- Never output explanation before the control line.
-- Never output extra characters on line 1.
-- For SKIP or WAIT, always provide exactly one non-empty reason line on line 2.
-- Never output any additional lines after the reason for SKIP or WAIT.
+- Use reply when user clearly asks/calls/assigns task to the bot.
+- Use skip when intervention is unnecessary or low-value.
+- Use wait only for a short observation window when important context is likely incoming.
+- Prefer wait_ms around 600 by default.

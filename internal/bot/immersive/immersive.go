@@ -2,15 +2,12 @@ package immersive
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
-	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
 	"github.com/rs/zerolog/log"
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
@@ -27,8 +24,6 @@ const (
 	immersiveEmptyReplyFallback      = "..."
 	immersiveLogPreviewChars         = 600
 )
-
-var errControlHeaderProtocol = errors.New("control header protocol")
 
 // NewImmersiveBuffer creates a new ImmersiveBuffer with the given configuration,
 // LLM manager, and bot nicknames.
@@ -140,9 +135,9 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	log.Info().Str("session", sessionKey).Msg("immersive session buffer cleared")
 }
 
-// flush processes the queued messages for a session using a single immersive LLM
-// stream call. The first line of the stream is parsed as a control header:
-// SKIP / WAIT:<ms> / REPLY. For SKIP/WAIT, line 2 must be a non-empty reason.
+// flush processes queued messages through a two-phase flow:
+// 1) control intent decision (skip/wait/reply), then
+// 2) reply generation when action=reply.
 func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state := b.session(sessionKey)
 	state.mu.Lock()
@@ -267,36 +262,8 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Str("session", sessionKey).
 		Int("input_chars", len([]rune(input))).
 		Str("input_preview", previewForLog(input, immersiveLogPreviewChars)).
-		Msg("immersive control llm input prepared")
+		Msg("immersive control intent input prepared")
 
-	headerParser := newControlHeaderParser()
-	segmentAcc := NewReplySegmentAccumulator()
-	replyParts := make([]string, 0, 4)
-	var sentReplyBuilder strings.Builder
-	sentMessages := 0
-	sentChars := 0
-	decision := controlHeaderDecision{}
-	controlHeaderFallbackMode := false
-	var controlHeaderParseErr error
-	emitSegment := func(segment string) {
-		trimmed := strings.TrimSpace(segment)
-		if trimmed == "" {
-			return
-		}
-		replyParts = append(replyParts, trimmed)
-		if ctx != nil {
-			if sentMessages > 0 {
-				time.Sleep(NextReplySegmentDelay(trimmed))
-			}
-			b.sendTracked(ctx, trimmed)
-			if sentReplyBuilder.Len() > 0 {
-				sentReplyBuilder.WriteString("\n")
-			}
-			sentReplyBuilder.WriteString(trimmed)
-			sentMessages++
-			sentChars += len([]rune(trimmed))
-		}
-	}
 	recordReply := func(reply, reason string) {
 		trimmed := strings.TrimSpace(reply)
 		if trimmed == "" {
@@ -312,101 +279,15 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Msg("immersive reply recorded into runtime buffer and llm history")
 	}
 
-	onEvent := func(event llm.StreamEvent) error {
-		switch event.Type {
-		case llm.StreamEventDelta:
-			if controlHeaderFallbackMode {
-				return nil
-			}
-			delta := event.Delta
-			parsedDecision, bodyDelta, ready, err := headerParser.Consume(delta)
-			if err != nil {
-				controlHeaderFallbackMode = true
-				controlHeaderParseErr = err
-				log.Warn().
-					Str("session", sessionKey).
-					Err(err).
-					Msg("immersive control streaming header parse failed, fallback to final output parse")
-				return nil
-			}
-			if !ready {
-				return nil
-			}
-			decision = parsedDecision
-			if parsedDecision.action != controlActionReply || bodyDelta == "" {
-				return nil
-			}
-			segments := segmentAcc.Append(bodyDelta)
-			for _, segment := range segments {
-				emitSegment(segment)
-			}
-		case llm.StreamEventToolCall, llm.StreamEventToolResult, llm.StreamEventFinal, llm.StreamEventError:
-			log.Debug().
-				Str("session", sessionKey).
-				Int64("stream_seq", event.Seq).
-				Int("stream_step", event.Step).
-				Str("stream_event_type", string(event.Type)).
-				Msg("immersive stream event")
-		}
-		return nil
-	}
-
-	streamCtx, cancelStream := context.WithCancel(context.Background())
-	defer cancelStream()
-	streamReply, streamErr := b.llm.ReplyStreamWithExtraPromptAllowTools(
-		streamCtx,
-		input,
-		sessionKey,
-		"",
-		llmprompt.ImmersiveControlPrompt,
-		onEvent,
-	)
-	rawOutputLog := log.Info().
-		Str("session", sessionKey).
-		Int("output_chars", len([]rune(streamReply))).
-		Str("output_first_line", firstLineForLog(streamReply)).
-		Str("output_preview", previewForLog(streamReply, immersiveLogPreviewChars))
-	if streamErr != nil {
-		rawOutputLog = rawOutputLog.Err(streamErr)
-	}
-	rawOutputLog.Msg("immersive control llm raw output captured")
-	if streamErr == nil {
-		parseErr := controlHeaderParseErr
-		if parseErr == nil {
-			finalDecision, err := headerParser.Finalize()
-			if err == nil {
-				decision = finalDecision
-			} else {
-				parseErr = err
-			}
-		}
-		if parseErr != nil {
-			if fallbackDecision, fallbackBody, ok := parseControlHeaderFallback(streamReply); ok {
-				decision = fallbackDecision
-				if fallbackDecision.action == controlActionReply && strings.TrimSpace(fallbackBody) != "" {
-					for _, segment := range SplitReplySegments(fallbackBody) {
-						emitSegment(segment)
-					}
-				}
-				log.Warn().
-					Str("session", sessionKey).
-					Err(parseErr).
-					Bool("fallback_mode", controlHeaderFallbackMode).
-					Str("fallback_action", string(fallbackDecision.action)).
-					Str("fallback_reason", fallbackDecision.reason).
-					Msg("immersive control fallback parser applied")
-			} else {
-				streamErr = fmt.Errorf("%w: %w", errControlHeaderProtocol, parseErr)
-			}
-		}
-	}
-
+	intent, intentErr := b.llm.DecideImmersiveIntent(context.Background(), input, sessionKey, "")
+	decision := decisionFromIntent(intent)
 	action := decision.action
 	waitMS := decision.waitMS
-	decisionReason := strings.TrimSpace(decision.reason)
+	decisionReason := decision.reason
 	decisionReasonCode := "model"
-	if streamErr != nil {
-		if isControlHeaderProtocolError(streamErr) {
+
+	if intentErr != nil {
+		if isControlIntentProtocolError(intentErr) {
 			if waitRounds == 0 {
 				action = controlActionWait
 				waitMS = defaultProtocolErrorWaitMS
@@ -421,8 +302,8 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		} else {
 			action = controlActionSkip
 			waitMS = 0
-			decisionReasonCode = "llm_stream_error_skip"
-			decisionReason = "llm stream error, skip this round"
+			decisionReasonCode = "intent_error_skip"
+			decisionReason = "intent decision failed, skip this round"
 		}
 	}
 	if action == controlActionWait && waitRounds >= maxImmersiveWaitRounds {
@@ -451,13 +332,10 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Int("wait_rounds", waitRounds).
 		Str("reason", decisionReason).
 		Str("reason_code", decisionReasonCode)
-	if streamErr != nil {
-		decisionLog = decisionLog.Err(streamErr)
+	if intentErr != nil {
+		decisionLog = decisionLog.Err(intentErr)
 	}
 	decisionLog.Msg("immersive control decision evaluated")
-	if action == controlActionSkip && streamErr != nil && ctx != nil && sentMessages > 0 {
-		recordReply(sentReplyBuilder.String(), "partial_stream_recorded")
-	}
 
 	if action == controlActionWait {
 		waitDelay := time.Duration(waitMS) * time.Millisecond
@@ -485,35 +363,97 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 
 	if action == controlActionReply {
-		for _, segment := range segmentAcc.FlushTail() {
-			emitSegment(segment)
+		onReplyEvent := func(event llm.StreamEvent) error {
+			switch event.Type {
+			case llm.StreamEventToolCall, llm.StreamEventToolResult, llm.StreamEventFinal, llm.StreamEventError:
+				log.Debug().
+					Str("session", sessionKey).
+					Int64("stream_seq", event.Seq).
+					Int("stream_step", event.Step).
+					Str("stream_event_type", string(event.Type)).
+					Msg("immersive reply stream event")
+			}
+			return nil
 		}
-		reply := strings.TrimSpace(strings.Join(replyParts, "\n"))
+
+		replyCtx, cancelReply := context.WithCancel(context.Background())
+		reply, replyErr := b.llm.ReplyStreamWithExtraPromptAllowTools(
+			replyCtx,
+			input,
+			sessionKey,
+			"",
+			"",
+			onReplyEvent,
+		)
+		cancelReply()
+		replyLog := log.Info().
+			Str("session", sessionKey).
+			Int("output_chars", len([]rune(reply))).
+			Str("output_first_line", firstLineForLog(reply)).
+			Str("output_preview", previewForLog(reply, immersiveLogPreviewChars))
+		if replyErr != nil {
+			replyLog = replyLog.Err(replyErr)
+		}
+		replyLog.Msg("immersive reply llm raw output captured")
+		if replyErr != nil {
+			log.Warn().
+				Str("session", sessionKey).
+				Err(replyErr).
+				Msg("immersive reply generation failed")
+			goto finalizeState
+		}
+
+		reply = strings.TrimSpace(reply)
 		if reply == "" {
 			reply = immersiveEmptyReplyFallback
 		}
+
+		segments := SplitReplySegments(reply)
+		if len(segments) == 0 {
+			segments = []string{reply}
+		}
+
+		sentMessages := 0
+		sentChars := 0
+		replyParts := make([]string, 0, len(segments))
+		for _, segment := range segments {
+			trimmed := strings.TrimSpace(segment)
+			if trimmed == "" {
+				continue
+			}
+			replyParts = append(replyParts, trimmed)
+			if ctx == nil {
+				continue
+			}
+			if sentMessages > 0 {
+				time.Sleep(NextReplySegmentDelay(trimmed))
+			}
+			b.sendTracked(ctx, trimmed)
+			sentMessages++
+			sentChars += len([]rune(trimmed))
+		}
+		finalReply := strings.TrimSpace(strings.Join(replyParts, "\n"))
+		if finalReply == "" {
+			finalReply = immersiveEmptyReplyFallback
+		}
+
 		if ctx == nil {
 			log.Info().
 				Str("session", sessionKey).
-				Int("reply_chars", len([]rune(reply))).
+				Int("reply_chars", len([]rune(finalReply))).
 				Msg("immersive reply prepared without ctx")
 		} else {
-			if sentMessages == 0 {
-				b.sendTracked(ctx, reply)
-				sentReplyBuilder.WriteString(reply)
-				sentMessages = 1
-				sentChars = len([]rune(reply))
-			}
 			log.Info().
 				Str("session", sessionKey).
-				Int("reply_chars", len([]rune(reply))).
+				Int("reply_chars", len([]rune(finalReply))).
 				Int("reply_messages", sentMessages).
 				Int("sent_chars", sentChars).
 				Msg("immersive reply sent")
 		}
-		recordReply(reply, "reply_action")
+		recordReply(finalReply, "reply_action")
 	}
 
+finalizeState:
 	delay := time.Duration(defaultPendingFlushDelayMS) * time.Millisecond
 	state.mu.Lock()
 	state.inFlight = false
@@ -535,25 +475,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Int64("next_delay_ms", delay.Milliseconds()).
 			Msg("pending messages detected, flushing again")
 	}
-}
-
-func isControlHeaderProtocolError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, errControlHeaderProtocol) {
-		return true
-	}
-	if errors.Is(err, errControlHeaderTooLong) ||
-		errors.Is(err, errControlHeaderMissingNewline) ||
-		errors.Is(err, errControlHeaderInvalid) ||
-		errors.Is(err, errControlHeaderUnexpectedContent) ||
-		errors.Is(err, errControlHeaderReasonMissing) ||
-		errors.Is(err, errControlHeaderReasonInvalid) ||
-		errors.Is(err, errControlHeaderReasonTooLong) {
-		return true
-	}
-	return false
 }
 
 // session retrieves or creates the session state for the given session key.
