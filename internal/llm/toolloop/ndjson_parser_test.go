@@ -1,6 +1,9 @@
 package toolloop
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestNDJSONParser_CrossChunkFrames(t *testing.T) {
 	parser := NewNDJSONParser()
@@ -106,5 +109,37 @@ func TestNDJSONParser_InvalidStructuredFrame(t *testing.T) {
 	_, err := parser.Feed(`{"version":"v2","type":"final"}` + "\n")
 	if err == nil {
 		t.Fatal("expected invalid structured frame error, got nil")
+	}
+}
+
+func TestNDJSONParser_NormalizesLegacyToolCallFrame(t *testing.T) {
+	parser := NewNDJSONParser()
+
+	items, err := parser.Feed(`{"version":"v1","type":"tool_call","tool_call":{"name":"internal/read_diary","arguments":"{\"session_key\":\"group:1\"}"}}` + "\n")
+	if err != nil {
+		t.Fatalf("feed failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("item count mismatch: got %d, want 1", len(items))
+	}
+	frame := items[0].Frame
+	if frame == nil {
+		t.Fatal("expected parsed frame")
+	}
+	if frame.Version != StreamProtocolVersion {
+		t.Fatalf("version mismatch: got %q, want %q", frame.Version, StreamProtocolVersion)
+	}
+	if frame.Type != MessageTypeToolCall || frame.ToolCall == nil {
+		t.Fatalf("unexpected frame: %+v", frame)
+	}
+	if frame.ToolCall.CallID == "" {
+		t.Fatal("call_id should be auto-filled when model omits it")
+	}
+	var args map[string]any
+	if err := json.Unmarshal(frame.ToolCall.Arguments, &args); err != nil {
+		t.Fatalf("arguments should be object: %v", err)
+	}
+	if got := args["session_key"]; got != "group:1" {
+		t.Fatalf("session_key mismatch: got %#v, want %q", got, "group:1")
 	}
 }

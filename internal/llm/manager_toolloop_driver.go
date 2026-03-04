@@ -280,15 +280,7 @@ func parseToolLoopFrame(raw string) (toolloop.Message, bool) {
 	if strings.TrimSpace(string(frame.Type)) == "" {
 		return toolloop.Message{}, false
 	}
-	if strings.TrimSpace(frame.Version) == "" {
-		frame.Version = toolloop.ProtocolVersion
-	}
-	if frame.Type == toolloop.MessageTypeFinal && frame.Final != nil && frame.Final.StopReason == "" {
-		frame.Final.StopReason = toolloop.StopReasonFinal
-	}
-	if frame.Type == toolloop.MessageTypeToolCall && frame.ToolCall != nil && len(frame.ToolCall.Arguments) == 0 {
-		frame.ToolCall.Arguments = json.RawMessage(`{}`)
-	}
+	toolloop.NormalizeModelMessage(&frame)
 	return frame, true
 }
 

@@ -84,6 +84,7 @@ func parseNDJSONLine(line string) (item NDJSONItem, ok bool, err error) {
 	if err := json.Unmarshal([]byte(trimmed), &frame); err != nil {
 		return NDJSONItem{}, false, fmt.Errorf("invalid ndjson frame: %w", err)
 	}
+	NormalizeModelStreamFrame(&frame)
 	if protocolErr := validateModelStreamFrame(frame); protocolErr != nil {
 		return NDJSONItem{}, false, fmt.Errorf("invalid stream frame: %s", protocolErr.Message)
 	}
