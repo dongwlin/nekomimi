@@ -38,3 +38,28 @@ func CompactRawMessage(raw json.RawMessage) json.RawMessage {
 	}
 	return append(json.RawMessage(nil), buf.Bytes()...)
 }
+
+// ReadJSONStringField extracts a string value from a pre-parsed JSON object map.
+func ReadJSONStringField(payload map[string]json.RawMessage, key string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	raw, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return value
+}
+
+// HasJSONField reports whether the pre-parsed JSON object map contains the key.
+func HasJSONField(payload map[string]json.RawMessage, key string) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	_, ok := payload[key]
+	return ok
+}

@@ -7,7 +7,7 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
-func registerLLMHandlers(llmManager *llm.Manager) {
+func registerLLMHandlers(llmManager llm.Service) {
 	zero.OnCommand("llm", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		if args == "" {

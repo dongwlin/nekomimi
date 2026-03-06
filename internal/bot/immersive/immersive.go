@@ -27,7 +27,7 @@ const (
 
 // NewImmersiveBuffer creates a new ImmersiveBuffer with the given configuration,
 // LLM manager, and bot nicknames.
-func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager *llm.Manager, nicknames []string) *ImmersiveBuffer {
+func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager llm.Service, nicknames []string) *ImmersiveBuffer {
 	normalized := normalizeImmersiveConfig(cfg)
 	configNames := normalizedBotNames(nicknames)
 	return &ImmersiveBuffer{
@@ -42,7 +42,7 @@ func NewImmersiveBuffer(cfg config.ImmersiveConfig, llmManager *llm.Manager, nic
 }
 
 // NewEngine creates an immersive engine with configured policies.
-func NewEngine(cfg config.ImmersiveConfig, llmManager *llm.Manager, nicknames []string) *ImmersiveBuffer {
+func NewEngine(cfg config.ImmersiveConfig, llmManager llm.Service, nicknames []string) *ImmersiveBuffer {
 	return NewImmersiveBuffer(cfg, llmManager, nicknames)
 }
 

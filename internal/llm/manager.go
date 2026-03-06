@@ -21,6 +21,18 @@ import (
 
 type Manager struct {
 	mu               sync.RWMutex
+	current          currentConfig
+	defaults         defaultConfig
+	client           *llmclient.Client
+	providers        *provider.Factory
+	chatStore        chatlog.Store
+	diaryStore       diary.Store
+	contextAssembler *contextassemble.Assembler
+	toolRouter       tools.Router
+	sessions         *sessionState
+}
+
+type currentConfig struct {
 	enabled          bool
 	provider         string
 	model            string
@@ -28,24 +40,19 @@ type Manager struct {
 	systemPrompt     string
 	assistantSpeaker string
 	basePrompt       string
-	defaultModel     string
-	defaultPrompt    string
-	defaultAPI       string
-	defaultProv      string
-	client           *llmclient.Client
-	providers        *provider.Factory
-	chatStore        chatlog.Store
-	diaryStore       diary.Store
-	contextAssembler *contextassemble.Assembler
-	toolRouter       tools.Router
 	contextMax       int
 	recentChatLimit  int
 	recentDiaryLimit int
 	toolsEnabled     bool
 	toolLoopMaxSteps int
 	toolLoopTimeout  time.Duration
-	immersive        map[string]bool
-	sessionStats     map[string]*sessionUsageStats
+}
+
+type defaultConfig struct {
+	provider string
+	model    string
+	prompt   string
+	apiURL   string
 }
 
 type sessionUsageStats struct {
@@ -54,7 +61,14 @@ type sessionUsageStats struct {
 	causalSeq        int64
 }
 
-func NewManager(cfg config.LLMConfig) *Manager {
+// ManagerDeps holds optional dependencies for the Manager. When a field is nil,
+// the Manager falls back to an in-memory default implementation.
+type ManagerDeps struct {
+	ChatStore  chatlog.Store
+	DiaryStore diary.Store
+}
+
+func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 	basePrompt, systemPrompt := composeConfiguredSystemPrompt(cfg.SystemPrompt)
 	providerName := normalizeProvider(cfg.Provider)
 	apiURL := normalizeAPIURL(providerName, cfg.API)
@@ -72,35 +86,45 @@ func NewManager(cfg config.LLMConfig) *Manager {
 	client.SetThinkingType(cfg.ThinkingType)
 	client.SetShowReasoning(cfg.ShowReasoning)
 
-	chatStore := chatlog.NewMemoryStore()
-	diaryStore := diary.NewMemoryStore()
+	cs := deps.ChatStore
+	if cs == nil {
+		cs = chatlog.NewMemoryStore()
+	}
+	ds := deps.DiaryStore
+	if ds == nil {
+		ds = diary.NewMemoryStore()
+	}
 	runtimeCfg := normalizeRuntimeConfig(cfg, requestTimeout, contextMax)
 
 	return &Manager{
-		enabled:          cfg.Enabled,
-		provider:         providerName,
-		model:            strings.TrimSpace(cfg.Model),
-		requestTimeout:   requestTimeout,
-		systemPrompt:     systemPrompt,
-		assistantSpeaker: "name=assistant",
-		basePrompt:       basePrompt,
-		defaultModel:     strings.TrimSpace(cfg.Model),
-		defaultPrompt:    systemPrompt,
-		defaultAPI:       apiURL,
-		defaultProv:      providerName,
+		current: currentConfig{
+			enabled:          cfg.Enabled,
+			provider:         providerName,
+			model:            strings.TrimSpace(cfg.Model),
+			requestTimeout:   requestTimeout,
+			systemPrompt:     systemPrompt,
+			assistantSpeaker: "name=assistant",
+			basePrompt:       basePrompt,
+			contextMax:       contextMax,
+			recentChatLimit:  runtimeCfg.recentChatLimit,
+			recentDiaryLimit: runtimeCfg.recentDiaryLimit,
+			toolsEnabled:     runtimeCfg.toolsEnabled,
+			toolLoopMaxSteps: runtimeCfg.toolLoopMaxSteps,
+			toolLoopTimeout:  runtimeCfg.toolLoopTimeout,
+		},
+		defaults: defaultConfig{
+			provider: providerName,
+			model:    strings.TrimSpace(cfg.Model),
+			prompt:   systemPrompt,
+			apiURL:   apiURL,
+		},
 		client:           client,
 		providers:        provider.NewFactory(client),
-		chatStore:        chatStore,
-		diaryStore:       diaryStore,
-		contextAssembler: contextassemble.New(chatStore, diaryStore, runtimeCfg.assemblyOptions),
-		toolRouter:       buildToolRouter(chatStore, diaryStore, runtimeCfg),
-		contextMax:       contextMax,
-		recentChatLimit:  runtimeCfg.recentChatLimit,
-		recentDiaryLimit: runtimeCfg.recentDiaryLimit,
-		toolsEnabled:     runtimeCfg.toolsEnabled,
-		toolLoopMaxSteps: runtimeCfg.toolLoopMaxSteps,
-		toolLoopTimeout:  runtimeCfg.toolLoopTimeout,
-		sessionStats:     make(map[string]*sessionUsageStats),
+		chatStore:        cs,
+		diaryStore:       ds,
+		contextAssembler: contextassemble.New(cs, ds, runtimeCfg.assemblyOptions),
+		toolRouter:       buildToolRouter(cs, ds, runtimeCfg),
+		sessions:         newSessionState(),
 	}
 }
 
@@ -116,13 +140,13 @@ func composeConfiguredSystemPrompt(configPrompt string) (basePrompt string, syst
 func (m *Manager) IsEnabled() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.enabled
+	return m.current.enabled
 }
 
 func (m *Manager) SetEnabled(enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.enabled = enabled
+	m.current.enabled = enabled
 }
 
 func (m *Manager) SetProvider(provider string) error {
@@ -132,7 +156,7 @@ func (m *Manager) SetProvider(provider string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.provider = normalized
+	m.current.provider = normalized
 	m.client.SetAPIURL(normalizeAPIURL(normalized, m.client.APIURL()))
 	return nil
 }
@@ -140,17 +164,15 @@ func (m *Manager) SetProvider(provider string) error {
 func (m *Manager) SetModel(model string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.model = strings.TrimSpace(model)
+	m.current.model = strings.TrimSpace(model)
 }
 
 func (m *Manager) SetSystemPrompt(prompt string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.systemPrompt = composeSystemPrompt(m.basePrompt, prompt)
+	m.current.systemPrompt = composeSystemPrompt(m.current.basePrompt, prompt)
 }
 
-// SetAssistantSpeaker updates the speaker label used when appending assistant
-// replies into chat history content.
 func (m *Manager) SetAssistantSpeaker(speaker string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -158,50 +180,30 @@ func (m *Manager) SetAssistantSpeaker(speaker string) {
 	if trimmed == "" {
 		trimmed = "name=assistant"
 	}
-	m.assistantSpeaker = trimmed
+	m.current.assistantSpeaker = trimmed
 }
 
 func (m *Manager) SetImmersive(sessionKey string, enabled bool) {
-	if strings.TrimSpace(sessionKey) == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.immersive == nil {
-		m.immersive = make(map[string]bool)
-	}
-	if !enabled {
-		delete(m.immersive, sessionKey)
-		return
-	}
-	m.immersive[sessionKey] = true
+	m.sessions.SetImmersive(sessionKey, enabled)
 }
 
 func (m *Manager) IsImmersive(sessionKey string) bool {
-	if strings.TrimSpace(sessionKey) == "" {
-		return false
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.immersive == nil {
-		return false
-	}
-	return m.immersive[sessionKey]
+	return m.sessions.IsImmersive(sessionKey)
 }
 
 func (m *Manager) ResetDefaults() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.provider = m.defaultProv
-	m.model = m.defaultModel
-	m.systemPrompt = m.defaultPrompt
-	m.client.SetAPIURL(m.defaultAPI)
+	m.current.provider = m.defaults.provider
+	m.current.model = m.defaults.model
+	m.current.systemPrompt = m.defaults.prompt
+	m.client.SetAPIURL(m.defaults.apiURL)
 }
 
 func (m *Manager) Status() (enabled bool, provider string, model string, systemPrompt string, apiURL string) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.enabled, m.provider, m.model, m.systemPrompt, m.client.APIURL()
+	return m.current.enabled, m.current.provider, m.current.model, m.current.systemPrompt, m.client.APIURL()
 }
 
 func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker string) (string, error) {
@@ -322,7 +324,7 @@ func (m *Manager) generateWithProvider(ctx context.Context, providerName, model,
 		ctx = context.Background()
 	}
 	ctx = llmclient.WithRequestOptions(ctx, options)
-	timeout := m.requestTimeout
+	timeout := m.current.requestTimeout
 	if timeout <= 0 {
 		timeout = llmclient.DefaultRequestTimeout
 	}
@@ -337,7 +339,7 @@ func (m *Manager) generateStreamWithProvider(ctx context.Context, providerName, 
 		ctx = context.Background()
 	}
 	ctx = llmclient.WithRequestOptions(ctx, options)
-	timeout := m.requestTimeout
+	timeout := m.current.requestTimeout
 	if timeout <= 0 {
 		timeout = llmclient.DefaultRequestTimeout
 	}

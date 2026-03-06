@@ -15,7 +15,7 @@ type ImmersiveEngine interface {
 	ReloadConfig(cfg config.ImmersiveConfig, nicknames []string)
 }
 
-func Register(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine, collector *metrics.Collector) {
+func Register(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine, collector *metrics.Collector) {
 	setMetricsCollector(collector)
 	registerInboundMetricsMatchers()
 	registerAIHandlers(cfg, llmManager, engine)

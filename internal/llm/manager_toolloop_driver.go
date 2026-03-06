@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
+	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 	"github.com/dongwlin/nekomimi/internal/llm/model"
 	"github.com/dongwlin/nekomimi/internal/llm/toolloop"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
@@ -268,7 +269,7 @@ func streamFrameTerminalMessage(frame toolloop.StreamMessage) (toolloop.Message,
 }
 
 func parseToolLoopFrame(raw string) (toolloop.Message, bool) {
-	candidate := extractJSONObjectCandidate(raw)
+	candidate := jsonutil.ExtractJSONObjectCandidate(raw)
 	if candidate == "" {
 		return toolloop.Message{}, false
 	}
@@ -293,82 +294,18 @@ func looksLikeToolLoopFrame(candidate string) bool {
 		return false
 	}
 
-	switch frameType := strings.TrimSpace(readJSONStringField(payload, "type")); frameType {
+	switch frameType := strings.TrimSpace(jsonutil.ReadJSONStringField(payload, "type")); frameType {
 	case string(toolloop.MessageTypeDelta):
-		return hasJSONField(payload, "delta") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "delta") || jsonutil.HasJSONField(payload, "version")
 	case string(toolloop.MessageTypeToolCall):
-		return hasJSONField(payload, "tool_call") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "tool_call") || jsonutil.HasJSONField(payload, "version")
 	case string(toolloop.MessageTypeToolResult):
-		return hasJSONField(payload, "tool_result") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "tool_result") || jsonutil.HasJSONField(payload, "version")
 	case string(toolloop.MessageTypeFinal):
-		return hasJSONField(payload, "final") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "final") || jsonutil.HasJSONField(payload, "version")
 	case string(toolloop.MessageTypeError):
-		return hasJSONField(payload, "error") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "error") || jsonutil.HasJSONField(payload, "version")
 	default:
 		return false
 	}
-}
-
-func readJSONStringField(payload map[string]json.RawMessage, key string) string {
-	if len(payload) == 0 {
-		return ""
-	}
-	raw, ok := payload[key]
-	if !ok {
-		return ""
-	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return value
-}
-
-func hasJSONField(payload map[string]json.RawMessage, key string) bool {
-	if len(payload) == 0 {
-		return false
-	}
-	_, ok := payload[key]
-	return ok
-}
-
-func extractJSONObjectCandidate(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-
-	if strings.HasPrefix(trimmed, "```") {
-		trimmed = stripCodeFence(trimmed)
-	}
-	if json.Valid([]byte(trimmed)) {
-		return trimmed
-	}
-
-	first := strings.IndexByte(trimmed, '{')
-	last := strings.LastIndexByte(trimmed, '}')
-	if first >= 0 && last > first {
-		candidate := strings.TrimSpace(trimmed[first : last+1])
-		if json.Valid([]byte(candidate)) {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func stripCodeFence(content string) string {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 0 {
-		return content
-	}
-	if strings.HasPrefix(strings.TrimSpace(lines[0]), "```") {
-		lines = lines[1:]
-	}
-	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			lines = lines[:i]
-			break
-		}
-	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
 }

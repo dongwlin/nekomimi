@@ -28,7 +28,7 @@ func TestDecideImmersiveIntent_ParsesValidIntent(t *testing.T) {
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
-	})
+	}, ManagerDeps{})
 
 	decision, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent", "alice")
 	if err != nil {
@@ -57,7 +57,7 @@ func TestDecideImmersiveIntent_ProtocolError(t *testing.T) {
 		Model:    "gpt-4.1-mini",
 		API:      server.URL + "/responses",
 		Key:      "test-key",
-	})
+	}, ManagerDeps{})
 
 	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-bad", "alice")
 	if err == nil {
@@ -85,7 +85,7 @@ func TestDecideImmersiveIntent_DoesNotUseToolLoop(t *testing.T) {
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
-	})
+	}, ManagerDeps{})
 
 	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-toolloop", "alice")
 	if err != nil {

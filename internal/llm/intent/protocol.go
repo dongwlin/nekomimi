@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 )
 
 const (
@@ -38,7 +40,7 @@ var (
 
 // Parse decodes and validates one JSON control-intent object.
 func Parse(raw string) (ControlIntent, error) {
-	candidate := extractJSONObjectCandidate(raw)
+	candidate := jsonutil.ExtractJSONObjectCandidate(raw)
 	if candidate == "" {
 		return ControlIntent{}, wrapProtocolError(ErrInvalidPayload)
 	}
@@ -120,47 +122,6 @@ func wrapProtocolError(err error) error {
 		return ErrProtocol
 	}
 	return fmt.Errorf("%w: %w", ErrProtocol, err)
-}
-
-func extractJSONObjectCandidate(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-
-	if strings.HasPrefix(trimmed, "```") {
-		trimmed = stripCodeFence(trimmed)
-	}
-	if json.Valid([]byte(trimmed)) {
-		return trimmed
-	}
-
-	first := strings.IndexByte(trimmed, '{')
-	last := strings.LastIndexByte(trimmed, '}')
-	if first >= 0 && last > first {
-		candidate := strings.TrimSpace(trimmed[first : last+1])
-		if json.Valid([]byte(candidate)) {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func stripCodeFence(content string) string {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 0 {
-		return content
-	}
-	if strings.HasPrefix(strings.TrimSpace(lines[0]), "```") {
-		lines = lines[1:]
-	}
-	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			lines = lines[:i]
-			break
-		}
-	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func clampWaitMS(value int) int {

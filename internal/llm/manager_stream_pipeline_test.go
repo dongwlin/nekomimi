@@ -31,7 +31,7 @@ func TestReplyStream_ToolsDisabled_UsesProviderStreaming(t *testing.T) {
 		Model:    "gpt-4.1-mini",
 		API:      server.URL + "/responses",
 		Key:      "test-key",
-	})
+	}, ManagerDeps{})
 
 	events := make([]StreamEvent, 0, 4)
 	reply, err := manager.ReplyStream(context.Background(), "hello", "session-tools-off", "alice", func(event StreamEvent) error {
@@ -72,7 +72,7 @@ func TestReplyStream_ToolsDisabled_PreservesWhitespaceOnlyDelta(t *testing.T) {
 		Model:    "gpt-4.1-mini",
 		API:      server.URL + "/responses",
 		Key:      "test-key",
-	})
+	}, ManagerDeps{})
 
 	deltas := make([]string, 0, 4)
 	reply, err := manager.ReplyStream(context.Background(), "hello", "session-tools-off-whitespace", "alice", func(event StreamEvent) error {
@@ -109,7 +109,7 @@ func TestReplyStreamWithExtraPrompt_DoesNotAppendHistory(t *testing.T) {
 		Model:    "gpt-4.1-mini",
 		API:      server.URL + "/responses",
 		Key:      "test-key",
-	})
+	}, ManagerDeps{})
 
 	_, err := manager.ReplyStreamWithExtraPrompt(context.Background(), "hello", "session-extra", "alice", "extra", func(event StreamEvent) error {
 		return nil
@@ -152,7 +152,7 @@ func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
-	})
+	}, ManagerDeps{})
 
 	reply, err := manager.ReplyStreamWithExtraPrompt(context.Background(), "hello", "session-extra-tools-off", "alice", "extra", func(event StreamEvent) error {
 		return nil
@@ -203,7 +203,7 @@ func TestReplyStreamWithExtraPromptAllowTools_UsesToolLoop(t *testing.T) {
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
-	})
+	}, ManagerDeps{})
 
 	events := make([]StreamEvent, 0, 8)
 	reply, err := manager.ReplyStreamWithExtraPromptAllowTools(context.Background(), "hello", "session-extra-tools-on", "alice", "extra", func(event StreamEvent) error {
@@ -261,7 +261,7 @@ func TestReplyStreamWithExtraPrompt_PreservesWhitespaceOnlyDelta(t *testing.T) {
 		Model:    "gpt-4.1-mini",
 		API:      server.URL + "/responses",
 		Key:      "test-key",
-	})
+	}, ManagerDeps{})
 
 	deltas := make([]string, 0, 4)
 	reply, err := manager.ReplyStreamWithExtraPrompt(context.Background(), "hello", "session-extra-whitespace", "alice", "extra", func(event StreamEvent) error {
@@ -316,7 +316,7 @@ func TestReplyStream_ToolsEnabled_EmitsToolEvents(t *testing.T) {
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
-	})
+	}, ManagerDeps{})
 
 	events := make([]StreamEvent, 0, 8)
 	reply, err := manager.ReplyStream(context.Background(), "hello", "session-tools-on", "alice", func(event StreamEvent) error {
@@ -373,7 +373,7 @@ func TestReplyStream_ToolsEnabled_PlainTextFallbackPreservesLineBreaks(t *testin
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
-	})
+	}, ManagerDeps{})
 
 	deltas := make([]string, 0, 2)
 	reply, err := manager.ReplyStream(context.Background(), "hello", "session-tools-plaintext", "alice", func(event StreamEvent) error {
@@ -410,7 +410,7 @@ func TestReplyStream_AppendsAtomicEventsWithAnchor(t *testing.T) {
 		Model:    "gpt-4.1-mini",
 		API:      server.URL + "/responses",
 		Key:      "test-key",
-	})
+	}, ManagerDeps{})
 	sessionKey := "session-stream-atomic"
 	_, err := manager.ReplyStream(context.Background(), "hello-stream", sessionKey, "name=alice", func(event StreamEvent) error {
 		return nil

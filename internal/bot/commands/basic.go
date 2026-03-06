@@ -7,7 +7,7 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
-func registerBasicHandlers(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine) {
+func registerBasicHandlers(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine) {
 	zero.OnFullMatch("ping").Handle(func(ctx *zero.Ctx) {
 		sendTracked(ctx, "pong")
 	})

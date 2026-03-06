@@ -37,7 +37,7 @@ func main() {
 		Bool("api_enabled", cfg.API.Enabled).
 		Msg("config loaded")
 
-	llmManager := llm.NewManager(cfg.LLM)
+	llmManager := llm.NewManager(cfg.LLM, llm.ManagerDeps{})
 	log.Info().
 		Msg("llm manager initialized")
 

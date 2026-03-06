@@ -18,7 +18,7 @@ import (
 // speak gates and LLM-based judgments.
 type ImmersiveBuffer struct {
 	cfg       config.ImmersiveConfig
-	llm       *llm.Manager
+	llm       llm.Service
 	collector *metrics.Collector
 	nicknames []string
 	identity  botIdentity

@@ -23,7 +23,7 @@ func TestSessionContextUsage_WithLimit(t *testing.T) {
 			RecentChatLimit:  50,
 			RecentDiaryLimit: 50,
 		},
-	})
+	}, ManagerDeps{})
 	sessionKey := "group:123"
 	m.appendHistory(sessionKey, "hello", "world")
 	if _, err := m.diaryStore.Write(context.Background(), sessionKey, diary.Entry{
@@ -40,7 +40,7 @@ func TestSessionContextUsage_WithLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("assemble failed: %v", err)
 	}
-	expectedUsed := token.EstimateContextTokens(m.systemPrompt, []Message{
+	expectedUsed := token.EstimateContextTokens(m.current.systemPrompt, []Message{
 		{
 			Role:    "user",
 			Content: renderUsageAssembledBlocks(assembled.Blocks),
@@ -85,7 +85,7 @@ func TestSessionContextUsage_WithoutLimit(t *testing.T) {
 		Model:        "gpt-4.1-mini",
 		SystemPrompt: "test prompt",
 		ContextMax:   0,
-	})
+	}, ManagerDeps{})
 	sessionKey := "private:1"
 	m.appendHistory(sessionKey, "hi", "hello")
 
@@ -105,12 +105,12 @@ func TestSessionContextUsage_ContextTrimCountAndClear(t *testing.T) {
 	m := NewManager(config.LLMConfig{
 		Model:      "gpt-4.1-mini",
 		ContextMax: 1000,
-	})
+	}, ManagerDeps{})
 	sessionKey := "group:777"
 	m.appendHistory(sessionKey, "u", "a")
 	time.Sleep(1 * time.Millisecond)
-	m.incrementContextTrimCount(sessionKey)
-	m.incrementContextTrimCount(sessionKey)
+	m.sessions.incrementContextTrimCount(sessionKey)
+	m.sessions.incrementContextTrimCount(sessionKey)
 
 	usage := m.SessionContextUsage(sessionKey)
 	if usage.ContextTrimCount != 2 {
@@ -134,7 +134,7 @@ func TestSessionContextUsage_TruncatedBlocks(t *testing.T) {
 	m := NewManager(config.LLMConfig{
 		Model:      "gpt-4.1-mini",
 		ContextMax: 20,
-	})
+	}, ManagerDeps{})
 	sessionKey := "group:trim"
 	m.appendHistory(sessionKey, strings.Repeat("a", 40), strings.Repeat("b", 40))
 
@@ -150,7 +150,7 @@ func TestSessionContextUsage_TruncatedBlocks(t *testing.T) {
 func TestAppendHistory_AssistantEntryHasIdentityLabel(t *testing.T) {
 	m := NewManager(config.LLMConfig{
 		Model: "gpt-4.1-mini",
-	})
+	}, ManagerDeps{})
 	m.SetAssistantSpeaker("name=nekomimi;id=10000")
 	sessionKey := "group:assistant-speaker"
 	m.appendHistory(sessionKey, "hello", "world")
@@ -176,7 +176,7 @@ func TestAppendHistory_AssistantEntryHasIdentityLabel(t *testing.T) {
 func TestAppendEvents_MetadataAndReplyAnchor(t *testing.T) {
 	m := NewManager(config.LLMConfig{
 		Model: "gpt-4.1-mini",
-	})
+	}, ManagerDeps{})
 	sessionKey := "group:event-metadata"
 	userAt := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	replyAt := userAt.Add(2 * time.Second)
@@ -231,7 +231,7 @@ func TestAppendEvents_MetadataAndReplyAnchor(t *testing.T) {
 func TestAppendUserEventAt_PreservesEventTimezoneInContent(t *testing.T) {
 	m := NewManager(config.LLMConfig{
 		Model: "gpt-4.1-mini",
-	})
+	}, ManagerDeps{})
 	sessionKey := "group:event-timezone"
 	userZone := time.FixedZone("UTC-8", -8*60*60)
 	userAt := time.Date(2026, 2, 22, 9, 30, 0, 0, userZone)
@@ -265,7 +265,7 @@ func TestAppendUserEventAt_PreservesEventTimezoneInContent(t *testing.T) {
 func TestAssemble_OrderStableWhenEventTimeSkews(t *testing.T) {
 	m := NewManager(config.LLMConfig{
 		Model: "gpt-4.1-mini",
-	})
+	}, ManagerDeps{})
 	sessionKey := "group:causal-stable"
 	firstAt := time.Date(2026, 2, 22, 12, 1, 0, 0, time.UTC)
 	secondAt := firstAt.Add(-5 * time.Minute)

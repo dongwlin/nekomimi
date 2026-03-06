@@ -13,7 +13,7 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
-func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine ImmersiveEngine) {
+func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine) {
 	pokeReactions := newPokeTracker(cfg.LLM.Immersive.PokeReaction)
 
 	zero.OnCommand("ai").Handle(func(ctx *zero.Ctx) {
@@ -186,7 +186,7 @@ func registerAIHandlers(cfg *config.Config, llmManager *llm.Manager, engine Imme
 	})
 }
 
-func sendContextUsage(ctx *zero.Ctx, llmManager *llm.Manager) {
+func sendContextUsage(ctx *zero.Ctx, llmManager llm.Service) {
 	if !llmManager.IsEnabled() {
 		sendTracked(ctx, "LLM未开启，可使用 /llm on 开启")
 		return

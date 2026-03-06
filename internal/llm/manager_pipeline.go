@@ -77,7 +77,7 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 		return "", err
 	}
 	if compressed {
-		m.incrementContextTrimCount(req.SessionKey)
+		m.sessions.incrementContextTrimCount(req.SessionKey)
 	}
 
 	var toolDescriptors []tools.Descriptor
@@ -149,7 +149,7 @@ func (m *Manager) decideIntentWithPipeline(ctx context.Context, req pipelineRequ
 		return llmintent.ControlIntent{}, err
 	}
 	if compressed {
-		m.incrementContextTrimCount(req.SessionKey)
+		m.sessions.incrementContextTrimCount(req.SessionKey)
 	}
 
 	reply, err := m.generateWithProvider(ctx, state.provider, state.model, requestPrompt, messages, llmclient.RequestOptions{
@@ -204,7 +204,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 		return "", err
 	}
 	if compressed {
-		m.incrementContextTrimCount(req.SessionKey)
+		m.sessions.incrementContextTrimCount(req.SessionKey)
 	}
 
 	var seq int64
@@ -296,15 +296,15 @@ func (m *Manager) snapshotPipelineState() pipelineState {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return pipelineState{
-		provider:         m.provider,
-		model:            m.model,
-		systemPrompt:     m.systemPrompt,
-		assistantSpeaker: m.assistantSpeaker,
+		provider:         m.current.provider,
+		model:            m.current.model,
+		systemPrompt:     m.current.systemPrompt,
+		assistantSpeaker: m.current.assistantSpeaker,
 		assembler:        m.contextAssembler,
 		router:           m.toolRouter,
-		toolsEnabled:     m.toolsEnabled,
-		toolLoopMaxStep:  m.toolLoopMaxSteps,
-		toolLoopTimeout:  m.toolLoopTimeout,
+		toolsEnabled:     m.current.toolsEnabled,
+		toolLoopMaxStep:  m.current.toolLoopMaxSteps,
+		toolLoopTimeout:  m.current.toolLoopTimeout,
 	}
 }
 

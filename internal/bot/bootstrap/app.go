@@ -12,7 +12,7 @@ import (
 )
 
 // Start wires runtime dependencies and starts the bot.
-func Start(cfg *config.Config, llmManager *llm.Manager, collector *metrics.Collector) {
+func Start(cfg *config.Config, llmManager llm.Service, collector *metrics.Collector) {
 	engine := immersive.NewEngine(cfg.LLM.Immersive, llmManager, cfg.NickName)
 	engine.SetMetricsCollector(collector)
 	commands.Register(cfg, llmManager, engine, collector)

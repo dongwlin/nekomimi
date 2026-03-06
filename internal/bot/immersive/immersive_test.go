@@ -555,7 +555,7 @@ func newImmersiveBufferForFlushTest(t *testing.T, apiURL string, cfg config.Imme
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
-	})
+	}, llm.ManagerDeps{})
 	manager.SetImmersive(sessionKey, true)
 	buffer := NewImmersiveBuffer(cfg, manager, []string{"neko"})
 	return buffer, manager, sessionKey

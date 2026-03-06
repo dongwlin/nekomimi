@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 )
 
 type NDJSONItem struct {
@@ -100,41 +102,18 @@ func looksLikeStreamFrameJSON(candidate string) bool {
 		return false
 	}
 
-	switch frameType := strings.TrimSpace(readJSONStringField(payload, "type")); frameType {
+	switch frameType := strings.TrimSpace(jsonutil.ReadJSONStringField(payload, "type")); frameType {
 	case string(MessageTypeDelta):
-		return hasJSONField(payload, "delta") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "delta") || jsonutil.HasJSONField(payload, "version")
 	case string(MessageTypeToolCall):
-		return hasJSONField(payload, "tool_call") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "tool_call") || jsonutil.HasJSONField(payload, "version")
 	case string(MessageTypeToolResult):
-		return hasJSONField(payload, "tool_result") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "tool_result") || jsonutil.HasJSONField(payload, "version")
 	case string(MessageTypeFinal):
-		return hasJSONField(payload, "final") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "final") || jsonutil.HasJSONField(payload, "version")
 	case string(MessageTypeError):
-		return hasJSONField(payload, "error") || hasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "error") || jsonutil.HasJSONField(payload, "version")
 	default:
 		return false
 	}
-}
-
-func readJSONStringField(payload map[string]json.RawMessage, key string) string {
-	if len(payload) == 0 {
-		return ""
-	}
-	raw, ok := payload[key]
-	if !ok {
-		return ""
-	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return value
-}
-
-func hasJSONField(payload map[string]json.RawMessage, key string) bool {
-	if len(payload) == 0 {
-		return false
-	}
-	_, ok := payload[key]
-	return ok
 }

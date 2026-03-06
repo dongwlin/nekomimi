@@ -100,7 +100,7 @@ func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime
 		return 0, false
 	}
 
-	m.ensureSessionStarted(session)
+	m.sessions.ensureStarted(session)
 	m.mu.RLock()
 	store := m.chatStore
 	m.mu.RUnlock()
@@ -109,7 +109,7 @@ func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime
 	}
 
 	at := normalizeEventTime(eventTime)
-	seq := m.nextCausalSeq(session)
+	seq := m.sessions.nextCausalSeq(session)
 	metadata := map[string]string{
 		metaEventTime: at.Format(time.RFC3339Nano),
 		metaCausalSeq: strconv.FormatInt(seq, 10),
@@ -134,10 +134,10 @@ func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply strin
 		return false
 	}
 
-	m.ensureSessionStarted(session)
+	m.sessions.ensureStarted(session)
 	m.mu.RLock()
 	store := m.chatStore
-	assistantSpeaker := strings.TrimSpace(m.assistantSpeaker)
+	assistantSpeaker := strings.TrimSpace(m.current.assistantSpeaker)
 	m.mu.RUnlock()
 	if store == nil {
 		return false
@@ -152,7 +152,7 @@ func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply strin
 		return false
 	}
 
-	seq := m.nextCausalSeq(session)
+	seq := m.sessions.nextCausalSeq(session)
 	metadata := map[string]string{
 		metaEventTime: at.Format(time.RFC3339Nano),
 		metaCausalSeq: strconv.FormatInt(seq, 10),
@@ -180,29 +180,6 @@ func normalizeEventTime(at time.Time) time.Time {
 	return at
 }
 
-func (m *Manager) nextCausalSeq(sessionKey string) int64 {
-	session := strings.TrimSpace(sessionKey)
-	if session == "" {
-		return 0
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.sessionStats == nil {
-		m.sessionStats = make(map[string]*sessionUsageStats)
-	}
-	stats, ok := m.sessionStats[session]
-	if !ok {
-		stats = &sessionUsageStats{startedAt: time.Now()}
-		m.sessionStats[session] = stats
-	}
-	if stats.startedAt.IsZero() {
-		stats.startedAt = time.Now()
-	}
-	stats.causalSeq++
-	return stats.causalSeq
-}
-
 func (m *Manager) ClearHistory(sessionKey string) {
 	session := strings.TrimSpace(sessionKey)
 	if session == "" {
@@ -214,7 +191,7 @@ func (m *Manager) ClearHistory(sessionKey string) {
 	if store != nil {
 		_ = store.Clear(context.Background(), session)
 	}
-	m.clearSessionStats(session)
+	m.sessions.clearStats(session)
 }
 
 // ListChatEvents returns raw chatlog events for observability/debugging.
@@ -294,10 +271,10 @@ func (m *Manager) snapshotSessionContextUsage(sessionKey string) sessionContextU
 		chatStore:        m.chatStore,
 		diaryStore:       m.diaryStore,
 		assembler:        m.contextAssembler,
-		systemPrompt:     m.systemPrompt,
-		contextMax:       m.contextMax,
-		recentChatLimit:  m.recentChatLimit,
-		recentDiaryLimit: m.recentDiaryLimit,
+		systemPrompt:     m.current.systemPrompt,
+		contextMax:       m.current.contextMax,
+		recentChatLimit:  m.current.recentChatLimit,
+		recentDiaryLimit: m.current.recentDiaryLimit,
 	}
 	if state.recentChatLimit <= 0 {
 		state.recentChatLimit = contextassemble.DefaultRecentChatLimit
@@ -305,10 +282,7 @@ func (m *Manager) snapshotSessionContextUsage(sessionKey string) sessionContextU
 	if state.recentDiaryLimit <= 0 {
 		state.recentDiaryLimit = contextassemble.DefaultRecentDiaryLimit
 	}
-	if stats := m.sessionStats[sessionKey]; stats != nil {
-		state.startedAt = stats.startedAt
-		state.contextTrimCount = stats.contextTrimCount
-	}
+	state.startedAt, state.contextTrimCount = m.sessions.snapshot(sessionKey)
 	return state
 }
 
@@ -324,55 +298,4 @@ func countTruncatedBlocks(blocks []contextassemble.Block) int {
 
 func renderUsageAssembledBlocks(blocks []contextassemble.Block) string {
 	return renderAssembledBlocks(blocks)
-}
-
-func (m *Manager) ensureSessionStarted(sessionKey string) {
-	if strings.TrimSpace(sessionKey) == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.sessionStats == nil {
-		m.sessionStats = make(map[string]*sessionUsageStats)
-	}
-	stats, ok := m.sessionStats[sessionKey]
-	if !ok {
-		m.sessionStats[sessionKey] = &sessionUsageStats{startedAt: time.Now()}
-		return
-	}
-	if stats.startedAt.IsZero() {
-		stats.startedAt = time.Now()
-	}
-}
-
-func (m *Manager) incrementContextTrimCount(sessionKey string) {
-	if strings.TrimSpace(sessionKey) == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.sessionStats == nil {
-		m.sessionStats = make(map[string]*sessionUsageStats)
-	}
-	stats, ok := m.sessionStats[sessionKey]
-	if !ok {
-		stats = &sessionUsageStats{startedAt: time.Now()}
-		m.sessionStats[sessionKey] = stats
-	}
-	if stats.startedAt.IsZero() {
-		stats.startedAt = time.Now()
-	}
-	stats.contextTrimCount++
-}
-
-func (m *Manager) clearSessionStats(sessionKey string) {
-	if strings.TrimSpace(sessionKey) == "" {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.sessionStats == nil {
-		return
-	}
-	delete(m.sessionStats, sessionKey)
 }

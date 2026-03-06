@@ -34,22 +34,27 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	runtimeCfg := normalizeRuntimeConfig(cfg, requestTimeout, contextMax)
 
 	m.mu.Lock()
-	m.enabled = cfg.Enabled
-	m.provider = providerName
-	m.model = strings.TrimSpace(cfg.Model)
-	m.requestTimeout = requestTimeout
-	m.systemPrompt = systemPrompt
-	m.basePrompt = basePrompt
-	m.defaultModel = strings.TrimSpace(cfg.Model)
-	m.defaultPrompt = systemPrompt
-	m.defaultAPI = apiURL
-	m.defaultProv = providerName
-	m.contextMax = contextMax
-	m.recentChatLimit = runtimeCfg.recentChatLimit
-	m.recentDiaryLimit = runtimeCfg.recentDiaryLimit
-	m.toolsEnabled = runtimeCfg.toolsEnabled
-	m.toolLoopMaxSteps = runtimeCfg.toolLoopMaxSteps
-	m.toolLoopTimeout = runtimeCfg.toolLoopTimeout
+	m.current = currentConfig{
+		enabled:          cfg.Enabled,
+		provider:         providerName,
+		model:            strings.TrimSpace(cfg.Model),
+		requestTimeout:   requestTimeout,
+		systemPrompt:     systemPrompt,
+		basePrompt:       basePrompt,
+		assistantSpeaker: m.current.assistantSpeaker,
+		contextMax:       contextMax,
+		recentChatLimit:  runtimeCfg.recentChatLimit,
+		recentDiaryLimit: runtimeCfg.recentDiaryLimit,
+		toolsEnabled:     runtimeCfg.toolsEnabled,
+		toolLoopMaxSteps: runtimeCfg.toolLoopMaxSteps,
+		toolLoopTimeout:  runtimeCfg.toolLoopTimeout,
+	}
+	m.defaults = defaultConfig{
+		provider: providerName,
+		model:    strings.TrimSpace(cfg.Model),
+		prompt:   systemPrompt,
+		apiURL:   apiURL,
+	}
 
 	if m.chatStore == nil {
 		m.chatStore = chatlog.NewMemoryStore()
