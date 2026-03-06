@@ -33,6 +33,10 @@ llm:
   immersive:
     runtime_buffer:
       max_messages: 200
+    flush_policy:
+      min_batch_wait_ms: 600
+      max_batch_wait_ms: 3000
+      max_batch_size: 15
     poke_reaction:
       window_ms: 180000
       mild_threshold: 3

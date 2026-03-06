@@ -65,11 +65,18 @@ type ToolLoopConfig struct {
 
 type ImmersiveConfig struct {
 	RuntimeBuffer RuntimeBufferConfig `yaml:"runtime_buffer"`
+	FlushPolicy   FlushPolicyConfig   `yaml:"flush_policy"`
 	PokeReaction  PokeReactionConfig  `yaml:"poke_reaction"`
 }
 
 type RuntimeBufferConfig struct {
 	MaxMessages int `yaml:"max_messages"`
+}
+
+type FlushPolicyConfig struct {
+	MinBatchWaitMS int `yaml:"min_batch_wait_ms"`
+	MaxBatchWaitMS int `yaml:"max_batch_wait_ms"`
+	MaxBatchSize   int `yaml:"max_batch_size"`
 }
 
 type PokeReactionConfig struct {

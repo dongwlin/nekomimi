@@ -182,6 +182,54 @@ driver:
 	}
 }
 
+func TestLoad_ParseImmersiveFlushPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+    flush_policy:
+      min_batch_wait_ms: 600
+      max_batch_wait_ms: 3000
+      max_batch_size: 15
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if cfg.LLM.Immersive.FlushPolicy.MinBatchWaitMS != 600 {
+		t.Fatalf("unexpected flush_policy.min_batch_wait_ms: %d", cfg.LLM.Immersive.FlushPolicy.MinBatchWaitMS)
+	}
+	if cfg.LLM.Immersive.FlushPolicy.MaxBatchWaitMS != 3000 {
+		t.Fatalf("unexpected flush_policy.max_batch_wait_ms: %d", cfg.LLM.Immersive.FlushPolicy.MaxBatchWaitMS)
+	}
+	if cfg.LLM.Immersive.FlushPolicy.MaxBatchSize != 15 {
+		t.Fatalf("unexpected flush_policy.max_batch_size: %d", cfg.LLM.Immersive.FlushPolicy.MaxBatchSize)
+	}
+}
+
 func TestLoad_IgnoreLegacyImmersiveTimeline(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yml")

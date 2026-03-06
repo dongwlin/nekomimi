@@ -21,7 +21,6 @@ const (
 	defaultPokeReactionAnnoyedThresh = 6
 	maxImmersiveWaitRounds           = 2
 	defaultProtocolErrorWaitMS       = 600
-	defaultPendingFlushDelayMS       = 120
 	immersiveEmptyReplyFallback      = "..."
 	immersiveLogPreviewChars         = 600
 )
@@ -86,16 +85,20 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 
 	state.mu.Lock()
 	state.lastCtx = ctx
+	if len(state.nextBatch) == 0 {
+		state.batchStartTime = now
+	}
 	state.nextBatch = append(state.nextBatch, msg)
 	state.nextBatchChars += charCount
 	state.runtimeBuffer = appendTimelineMessage(state.runtimeBuffer, msg, b.runtimeBufferLimit())
 
-	cooldown := time.Duration(0)
+	cooldown := b.computeFlushDelay(sessionKey, state, now)
 	queueLen := len(state.nextBatch)
 	queueChars := state.nextBatchChars
 
 	if state.timer != nil {
 		state.timer.Stop()
+		state.timer = nil
 	}
 	state.timer = time.AfterFunc(cooldown, func() {
 		b.flush(sessionKey)
@@ -123,6 +126,7 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	state.mu.Lock()
 	state.nextBatch = nil
 	state.nextBatchChars = 0
+	state.batchStartTime = time.Time{}
 	state.processingBatch = nil
 	state.runtimeBuffer = nil
 	state.waitRounds = 0
@@ -142,9 +146,13 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state.mu.Lock()
 	if state.inFlight {
 		if len(state.nextBatch) > 0 {
-			delay := time.Duration(defaultPendingFlushDelayMS) * time.Millisecond
+			if state.batchStartTime.IsZero() {
+				state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
+			}
+			delay := b.computeFlushDelay(sessionKey, state, time.Now())
 			if state.timer != nil {
 				state.timer.Stop()
+				state.timer = nil
 			}
 			state.timer = time.AfterFunc(delay, func() {
 				b.flush(sessionKey)
@@ -154,12 +162,14 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		return
 	}
 	if len(state.nextBatch) == 0 {
+		state.batchStartTime = time.Time{}
 		state.mu.Unlock()
 		return
 	}
 	if !b.llm.IsEnabled() || !b.llm.IsImmersive(sessionKey) {
 		state.nextBatch = nil
 		state.nextBatchChars = 0
+		state.batchStartTime = time.Time{}
 		state.processingBatch = nil
 		if state.timer != nil {
 			state.timer.Stop()
@@ -169,8 +179,10 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		return
 	}
 	processing := state.nextBatch
+	processingBatchStart := state.batchStartTime
 	state.nextBatch = nil
 	state.nextBatchChars = 0
+	state.batchStartTime = time.Time{}
 	state.processingBatch = processing
 	state.inFlight = true
 	waitRounds := state.waitRounds
@@ -182,14 +194,23 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		if skipFinalize {
 			return
 		}
-		delay := time.Duration(defaultPendingFlushDelayMS) * time.Millisecond
 		state.mu.Lock()
 		state.inFlight = false
 		state.processingBatch = nil
 		state.waitRounds = 0
 		pending := len(state.nextBatch) > 0
+		if pending && state.batchStartTime.IsZero() {
+			state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
+		}
+		delay := time.Duration(0)
+		if pending {
+			delay = b.computeFlushDelay(sessionKey, state, time.Now())
+		} else {
+			state.batchStartTime = time.Time{}
+		}
 		if state.timer != nil {
 			state.timer.Stop()
+			state.timer = nil
 		}
 		if pending {
 			state.timer = time.AfterFunc(delay, func() {
@@ -350,11 +371,19 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		state.mu.Lock()
 		state.nextBatch = prependMessages(processing, state.nextBatch)
 		state.nextBatchChars += sumQueueChars(processing)
+		if processingBatchStart.IsZero() {
+			processingBatchStart = batchStartTimeFromQueue(processing)
+		}
+		state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
+		if state.batchStartTime.IsZero() {
+			state.batchStartTime = processingBatchStart
+		}
 		state.processingBatch = nil
 		state.inFlight = false
 		state.waitRounds++
 		if state.timer != nil {
 			state.timer.Stop()
+			state.timer = nil
 		}
 		state.timer = time.AfterFunc(waitDelay, func() {
 			b.flush(sessionKey)

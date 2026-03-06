@@ -579,6 +579,7 @@ func seedQueueForFlushTest(buffer *ImmersiveBuffer, sessionKey string, waitRound
 	state.nextBatch = make([]queuedMessage, len(messages))
 	copy(state.nextBatch, messages)
 	state.nextBatchChars = sumQueueChars(state.nextBatch)
+	state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
 	state.runtimeBuffer = append(state.runtimeBuffer[:0], messages...)
 	state.waitRounds = waitRounds
 	state.lastCtx = nil
@@ -591,6 +592,67 @@ func mustListChatEvents(t *testing.T, manager *llm.Manager, sessionKey string, l
 		t.Fatalf("list chat events failed: %v", err)
 	}
 	return result.Entries
+}
+
+func TestEnqueue_FlushPolicyDebouncesGroupMessages(t *testing.T) {
+	var callCount int64
+	control := mustMarshalJSON(t, map[string]any{
+		"action": "skip",
+		"reason": "batched messages",
+	})
+	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
+		atomic.AddInt64(&callCount, 1)
+		return scriptedResponse{
+			JSONBody: responsesOutputTextJSON(control),
+		}
+	})
+	defer server.Close()
+
+	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{
+		FlushPolicy: config.FlushPolicyConfig{
+			MinBatchWaitMS: 80,
+			MaxBatchWaitMS: 500,
+			MaxBatchSize:   10,
+		},
+	})
+
+	buffer.Enqueue(nil, sessionKey, "hello", "name=alice", false)
+	time.Sleep(20 * time.Millisecond)
+	buffer.Enqueue(nil, sessionKey, "world", "name=bob", false)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt64(&callCount) == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt64(&callCount); got != 1 {
+		t.Fatalf("expected exactly one control call after debounce, got %d", got)
+	}
+
+	time.Sleep(120 * time.Millisecond)
+	if got := atomic.LoadInt64(&callCount); got != 1 {
+		t.Fatalf("expected debounced batch to stay at one control call, got %d", got)
+	}
+
+	entries := mustListChatEvents(t, manager, sessionKey, 20)
+	var sawHello bool
+	var sawWorld bool
+	for _, entry := range entries {
+		if entry.Role != chatlog.RoleUser {
+			continue
+		}
+		if strings.Contains(entry.Content, "hello") {
+			sawHello = true
+		}
+		if strings.Contains(entry.Content, "world") {
+			sawWorld = true
+		}
+	}
+	if !sawHello || !sawWorld {
+		t.Fatalf("expected both debounced user messages in history, entries=%+v", entries)
+	}
 }
 
 func TestEnqueue_ConcurrentDoesNotPanic(t *testing.T) {

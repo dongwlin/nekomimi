@@ -39,6 +39,7 @@ type immersiveSession struct {
 	mu              sync.Mutex
 	nextBatch       []queuedMessage
 	nextBatchChars  int
+	batchStartTime  time.Time
 	processingBatch []queuedMessage
 	runtimeBuffer   []queuedMessage
 	timer           *time.Timer
