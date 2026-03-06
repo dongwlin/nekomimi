@@ -24,6 +24,8 @@ func buildRecentPreview(queue []queuedMessage, keep int, identity botIdentity) s
 // buildCombinedInput builds a complete formatted debug preview from the queue.
 func buildCombinedInput(queue []queuedMessage, identity botIdentity) string {
 	meta := summarizeQueueMeta(queue, time.Now(), identity)
+	transcriptLines := renderTranscriptLines(queue)
+	systemEventLines := renderSystemEventLines(queue)
 	var builder strings.Builder
 	builder.WriteString("batch_meta:\n")
 	builder.WriteString("  now_date: ")
@@ -72,14 +74,18 @@ func buildCombinedInput(queue []queuedMessage, identity botIdentity) string {
 	builder.WriteString(strconv.FormatInt(meta.TimeSpanMS, 10))
 	builder.WriteString("\n")
 	builder.WriteString("transcript:\n")
-	for _, msg := range queue {
-		formatted := formatQueuedMessage(msg)
-		if formatted == "" {
-			continue
-		}
+	for _, formatted := range transcriptLines {
 		builder.WriteString("  - ")
 		builder.WriteString(formatted)
 		builder.WriteString("\n")
+	}
+	if len(systemEventLines) > 0 {
+		builder.WriteString("system_events:\n")
+		for _, formatted := range systemEventLines {
+			builder.WriteString("  - ")
+			builder.WriteString(formatted)
+			builder.WriteString("\n")
+		}
 	}
 	return strings.TrimSpace(builder.String())
 }
@@ -87,6 +93,9 @@ func buildCombinedInput(queue []queuedMessage, identity botIdentity) string {
 // formatQueuedMessage formats a single queued message as a transcript line
 // with speaker label and optional timestamp.
 func formatQueuedMessage(msg queuedMessage) string {
+	if !isTranscriptEvent(msg) {
+		return ""
+	}
 	content := strings.TrimSpace(msg.text)
 	if content == "" {
 		return ""
@@ -104,6 +113,93 @@ func formatQueuedMessage(msg queuedMessage) string {
 		return "[" + label + "]: " + content
 	}
 	return "[" + label + ";time=" + timeLabel + "]: " + content
+}
+
+func renderTranscriptLines(queue []queuedMessage) []string {
+	lines := make([]string, 0, len(queue))
+	for _, msg := range queue {
+		formatted := formatQueuedMessage(msg)
+		if formatted == "" {
+			continue
+		}
+		lines = append(lines, formatted)
+	}
+	return lines
+}
+
+func renderSystemEventLines(queue []queuedMessage) []string {
+	lines := make([]string, 0, len(queue))
+	for _, msg := range queue {
+		formatted := formatSystemEventLine(msg)
+		if formatted == "" {
+			continue
+		}
+		lines = append(lines, formatted)
+	}
+	return lines
+}
+
+func renderSystemEventSummary(queue []queuedMessage) string {
+	return strings.Join(renderSystemEventLines(queue), "\n")
+}
+
+func formatSystemEventLine(msg queuedMessage) string {
+	if !isSystemEvent(msg) {
+		return ""
+	}
+	headerParts := []string{"kind=" + string(normalizeEventKind(msg.kind))}
+	if label := sanitizeInline(strings.TrimSpace(msg.speaker)); label != "" {
+		headerParts = append(headerParts, "speaker="+label)
+	}
+	if timeLabel := formatMessageTime(msg.ts); timeLabel != "" {
+		headerParts = append(headerParts, "time="+timeLabel)
+	}
+	header := "[" + strings.Join(headerParts, ";") + "]"
+	body := formatSystemEventBody(msg)
+	if body == "" {
+		return header
+	}
+	return header + ": " + body
+}
+
+func formatSystemEventBody(msg queuedMessage) string {
+	fields := make([]string, 0, len(msg.metadata)+1)
+	if content := strings.TrimSpace(msg.text); content != "" {
+		fields = append(fields, "text="+sanitizeInline(content))
+	}
+	if len(msg.metadata) > 0 {
+		keys := make([]string, 0, len(msg.metadata))
+		for key := range msg.metadata {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			value := strings.TrimSpace(msg.metadata[key])
+			if value == "" {
+				continue
+			}
+			fields = append(fields, key+"="+sanitizeInline(value))
+		}
+	}
+	return strings.Join(fields, " ")
+}
+
+func isTranscriptEvent(msg queuedMessage) bool {
+	switch normalizeEventKind(msg.kind) {
+	case EventUserMessage, EventAssistantText:
+		return true
+	default:
+		return false
+	}
+}
+
+func isSystemEvent(msg queuedMessage) bool {
+	switch normalizeEventKind(msg.kind) {
+	case EventPokeNotice, EventAssistantAction, EventRepeatTrigger, EventSystemNote:
+		return true
+	default:
+		return false
+	}
 }
 
 // sanitizeInline replaces newline characters with escaped sequences for inline text.
@@ -241,6 +337,7 @@ func limitRunes(text string, maxRunes int) string {
 // carries both batch signals and session behavior state into the LLM pipeline.
 func buildImmersiveContext(
 	queue []queuedMessage,
+	runtimeEvents []queuedMessage,
 	identity botIdentity,
 	behavior behaviorSnapshot,
 	gate speakGateDecision,
@@ -273,6 +370,7 @@ func buildImmersiveContext(
 		ReplyTier:              gate.ReplyTier,
 		MaxReplySegments:       gate.MaxReplySegments,
 		FollowupAllowed:        gate.FollowupAllowed,
+		SystemEventSummary:     renderSystemEventSummary(runtimeEvents),
 	}
 }
 
@@ -305,7 +403,7 @@ func summarizeQueueMeta(queue []queuedMessage, now time.Time, identity botIdenti
 		BotAccountNick: "unknown",
 		BotAccountIDs:  []string{"unknown"},
 		BotPrimaryID:   "unknown",
-		MessagesCount:  len(queue),
+		MessagesCount:  0,
 		LastSpeaker:    "unknown",
 		Participants:   []string{"none"},
 	}
@@ -338,9 +436,14 @@ func summarizeQueueMeta(queue []queuedMessage, now time.Time, identity botIdenti
 		return meta
 	}
 	participants := make(map[string]struct{}, len(queue))
-	first := queue[0].ts
-	last := queue[len(queue)-1].ts
+	var first time.Time
+	var last time.Time
+	var lastSpeaker string
 	for _, msg := range queue {
+		if !isTranscriptEvent(msg) {
+			continue
+		}
+		meta.MessagesCount++
 		label := strings.TrimSpace(msg.speaker)
 		if label == "" {
 			label = "unknown"
@@ -363,13 +466,16 @@ func summarizeQueueMeta(queue []queuedMessage, now time.Time, identity botIdenti
 				last = msg.ts
 			}
 		}
+		lastSpeaker = label
+	}
+	if meta.MessagesCount == 0 {
+		return meta
 	}
 	meta.Participants = make([]string, 0, len(participants))
 	for label := range participants {
 		meta.Participants = append(meta.Participants, sanitizeInline(label))
 	}
 	sort.Strings(meta.Participants)
-	lastSpeaker := strings.TrimSpace(queue[len(queue)-1].speaker)
 	if lastSpeaker != "" {
 		meta.LastSpeaker = sanitizeInline(lastSpeaker)
 	}

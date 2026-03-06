@@ -8,6 +8,7 @@ import (
 const BlockImmersiveSignals = "immersive_signals"
 const BlockImmersiveState = "immersive_state"
 const BlockImmersiveBatch = "immersive_batch"
+const BlockImmersiveEvents = "immersive_events"
 
 // ImmersiveContext carries batch-scoped state and signals from the immersive
 // layer so the LLM pipeline can merge persistent history with current-turn
@@ -38,6 +39,7 @@ type ImmersiveContext struct {
 	ReplyTier              string
 	MaxReplySegments       int
 	FollowupAllowed        bool
+	SystemEventSummary     string
 }
 
 // RenderImmersiveBlocks converts immersive incremental state into stable prompt blocks.
@@ -45,7 +47,7 @@ func RenderImmersiveBlocks(ic *ImmersiveContext) []Block {
 	if ic == nil {
 		return nil
 	}
-	return []Block{
+	blocks := []Block{
 		{
 			Name:    BlockImmersiveState,
 			Content: formatImmersiveState(ic),
@@ -59,6 +61,13 @@ func RenderImmersiveBlocks(ic *ImmersiveContext) []Block {
 			Content: formatImmersiveSignals(ic),
 		},
 	}
+	if content := strings.TrimSpace(ic.SystemEventSummary); content != "" {
+		blocks = append(blocks, Block{
+			Name:    BlockImmersiveEvents,
+			Content: content,
+		})
+	}
+	return blocks
 }
 
 // FormatImmersiveContext renders immersive blocks into a readable multi-block string.

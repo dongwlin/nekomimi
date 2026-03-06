@@ -144,7 +144,8 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 
 	zero.On("notice/notify/poke").Handle(func(ctx *zero.Ctx) {
 		engine.RefreshIdentityFromCtx(ctx)
-		llmManager.SetAssistantSpeaker(assistantLabel(ctx))
+		assistantSpeaker := assistantLabel(ctx)
+		llmManager.SetAssistantSpeaker(assistantSpeaker)
 		if ctx == nil || ctx.Event == nil || !ctx.Event.IsToMe {
 			return
 		}
@@ -158,22 +159,35 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 		actorLabel, actorName := pokeActorInfo(ctx)
 		pokeCount, moodTier := pokeReactions.Observe(session, time.Now())
 
-		engine.RecordTimelineEvent(session, actorName+"戳了你一下。", actorLabel)
+		engine.RecordEvent(session, immersivepkg.NewPokeNoticeEvent(actorLabel, actorName, "inbound", time.Now()))
 
 		sendPokeTracked(ctx, ctx.Event.GroupID, ctx.Event.UserID)
-		engine.RecordTimelineEvent(session, "你回戳了对方。", "assistant")
+		engine.RecordEvent(session, immersivepkg.NewAssistantActionEvent(assistantSpeaker, "send_poke", time.Now(), map[string]string{
+			"target_name": actorName,
+		}))
 
-		reply, err := llmManager.Reply(
+		recordReply := func(rawReply string) {
+			finalReply, segments := normalizeSegmentedReply(rawReply)
+			if finalReply == "" {
+				return
+			}
+			sendPokeReplySegments(ctx, segments)
+			_ = llmManager.AppendAssistantEvent(session, finalReply, 0)
+			engine.RecordEvent(session, immersivepkg.NewAssistantTextEvent(finalReply, assistantSpeaker, time.Now()))
+		}
+
+		reply, err := llmManager.ReplyStreamWithExtraPrompt(
 			context.Background(),
-			buildPokeReplyPrompt(pokeCount, moodTier),
+			"",
 			session,
-			speakerLabel(ctx),
+			"",
+			buildPokeReplyPrompt(pokeCount, moodTier),
+			nil,
 		)
 		if err != nil {
 			fallback := pokeFallbackReplies(moodTier)
 			fallbackReply := fallback[rand.Intn(len(fallback))]
-			sendPokeSegmentedReply(ctx, fallbackReply)
-			engine.RecordTimelineEvent(session, fallbackReply, "assistant")
+			recordReply(fallbackReply)
 			return
 		}
 		reply = strings.TrimSpace(reply)
@@ -181,8 +195,7 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 			fallback := pokeFallbackReplies(moodTier)
 			reply = fallback[0]
 		}
-		sendPokeSegmentedReply(ctx, reply)
-		engine.RecordTimelineEvent(session, reply, "assistant")
+		recordReply(reply)
 	})
 }
 
@@ -274,8 +287,23 @@ func isDigits(value string) bool {
 	return value != ""
 }
 
-func sendPokeSegmentedReply(ctx *zero.Ctx, reply string) {
-	segments := immersivepkg.SplitReplySegments(reply)
+func normalizeSegmentedReply(reply string) (string, []string) {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return "", nil
+	}
+	segments := immersivepkg.SplitReplySegments(trimmed)
+	if len(segments) == 0 {
+		segments = []string{trimmed}
+	}
+	finalReply := strings.TrimSpace(strings.Join(segments, "\n"))
+	if finalReply == "" {
+		return "", nil
+	}
+	return finalReply, segments
+}
+
+func sendPokeReplySegments(ctx *zero.Ctx, segments []string) {
 	if len(segments) == 0 {
 		return
 	}

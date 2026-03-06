@@ -39,6 +39,7 @@ func TestFormatImmersiveContext_AllFields(t *testing.T) {
 		ReplyTier:              "engaged",
 		MaxReplySegments:       3,
 		FollowupAllowed:        false,
+		SystemEventSummary:     "[kind=poke_notice]: actor_name=alice direction=inbound",
 	}
 	result := FormatImmersiveContext(ic)
 
@@ -46,6 +47,7 @@ func TestFormatImmersiveContext_AllFields(t *testing.T) {
 		"[immersive_state]",
 		"[immersive_batch]",
 		"[immersive_signals]",
+		"[immersive_events]",
 		"messages_count: 5",
 		"participants: [alice,bob]",
 		"mentions_to_bot: 2",
@@ -71,6 +73,7 @@ func TestFormatImmersiveContext_AllFields(t *testing.T) {
 		"reply_tier: engaged",
 		"max_reply_segments: 3",
 		"followup_allowed: false",
+		"[kind=poke_notice]: actor_name=alice direction=inbound",
 	}
 	for _, check := range checks {
 		if !strings.Contains(result, check) {
@@ -92,6 +95,22 @@ func TestRenderImmersiveBlocks_ReturnsStableBlocks(t *testing.T) {
 	}
 	if blocks[2].Name != BlockImmersiveSignals {
 		t.Fatalf("unexpected third block %q", blocks[2].Name)
+	}
+}
+
+func TestRenderImmersiveBlocks_WithSystemEventSummary_AppendsEventsBlock(t *testing.T) {
+	blocks := RenderImmersiveBlocks(&ImmersiveContext{
+		MessagesCount:      1,
+		SystemEventSummary: "[kind=system_note]: text=quiet",
+	})
+	if len(blocks) != 4 {
+		t.Fatalf("expected 4 immersive blocks when system events exist, got %d", len(blocks))
+	}
+	if blocks[3].Name != BlockImmersiveEvents {
+		t.Fatalf("unexpected fourth block %q", blocks[3].Name)
+	}
+	if blocks[3].Content != "[kind=system_note]: text=quiet" {
+		t.Fatalf("unexpected immersive events content %q", blocks[3].Content)
 	}
 }
 

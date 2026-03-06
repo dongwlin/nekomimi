@@ -60,6 +60,38 @@ func TestBuildCombinedInput_ContainsStructuredMeta(t *testing.T) {
 	}
 }
 
+func TestBuildCombinedInput_SeparatesTranscriptAndSystemEvents(t *testing.T) {
+	base := time.Date(2026, 2, 10, 21, 30, 5, 0, time.Local)
+	queue := []queuedMessage{
+		newQueuedMessage(EventUserMessage, "hello", "name=alice", base, nil),
+		newQueuedMessage(EventPokeNotice, "", "name=alice", base.Add(1*time.Second), map[string]string{
+			eventMetaActorName: "alice",
+			eventMetaDirection: "inbound",
+		}),
+		newQueuedMessage(EventAssistantAction, "", "name=neko", base.Add(2*time.Second), map[string]string{
+			eventMetaAction:     "send_poke",
+			eventMetaTargetName: "alice",
+		}),
+		newQueuedMessage(EventAssistantText, "别戳啦", "name=neko", base.Add(3*time.Second), nil),
+	}
+
+	input := buildCombinedInput(queue, botIdentity{})
+	if !strings.Contains(input, "transcript:\n  - [name=alice;time=2026-02-10 21:30:05]: hello\n  - [name=neko;time=2026-02-10 21:30:08]: 别戳啦") {
+		t.Fatalf("expected only chat transcript lines, got:\n%s", input)
+	}
+	for _, token := range []string{
+		"system_events:",
+		"kind=poke_notice",
+		"kind=assistant_action",
+		"action=send_poke",
+		"target_name=alice",
+	} {
+		if !strings.Contains(input, token) {
+			t.Fatalf("expected %q in system event summary, got:\n%s", token, input)
+		}
+	}
+}
+
 func TestIsControlIntentProtocolError_Integration(t *testing.T) {
 	if !isControlIntentProtocolError(llmintent.ErrProtocol) {
 		t.Fatal("expected protocol sentinel error to be detected")
@@ -94,6 +126,38 @@ func TestRecordTimelineEvent_AppendsWithoutQueueing(t *testing.T) {
 	}
 	if state.runtimeBuffer[1].speaker != "assistant" {
 		t.Fatalf("unexpected second speaker: %q", state.runtimeBuffer[1].speaker)
+	}
+	if state.runtimeBuffer[0].kind != EventSystemNote || state.runtimeBuffer[1].kind != EventSystemNote {
+		t.Fatalf("expected timeline events to default to system notes, got kinds %q and %q", state.runtimeBuffer[0].kind, state.runtimeBuffer[1].kind)
+	}
+}
+
+func TestBuildImmersiveContext_SystemEventsStayOutOfTranscript(t *testing.T) {
+	base := time.Date(2026, 2, 10, 21, 30, 5, 0, time.Local)
+	processing := []queuedMessage{
+		newQueuedMessage(EventUserMessage, "neko 在吗", "name=alice", base, nil),
+	}
+	runtime := []queuedMessage{
+		processing[0],
+		newQueuedMessage(EventPokeNotice, "", "name=alice", base.Add(1*time.Second), map[string]string{
+			eventMetaActorName: "alice",
+			eventMetaDirection: "inbound",
+		}),
+		newQueuedMessage(EventAssistantText, "我在", "name=neko", base.Add(2*time.Second), nil),
+		newQueuedMessage(EventSystemNote, "debug-only", "system", base.Add(3*time.Second), nil),
+	}
+
+	ic := buildImmersiveContext(processing, runtime, botIdentity{}, behaviorSnapshot{}, speakGateDecision{})
+	if !strings.Contains(ic.SystemEventSummary, "kind=poke_notice") {
+		t.Fatalf("expected poke notice in system event summary, got:\n%s", ic.SystemEventSummary)
+	}
+	if !strings.Contains(ic.SystemEventSummary, "kind=system_note") {
+		t.Fatalf("expected system note in system event summary, got:\n%s", ic.SystemEventSummary)
+	}
+	for _, token := range []string{"neko 在吗", "我在"} {
+		if strings.Contains(ic.SystemEventSummary, token) {
+			t.Fatalf("normal transcript content should not appear in system event summary, got:\n%s", ic.SystemEventSummary)
+		}
 	}
 }
 

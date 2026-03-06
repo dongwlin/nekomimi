@@ -161,15 +161,16 @@ func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
 	}
 
 	ic := &contextassemble.ImmersiveContext{
-		MessagesCount:    4,
-		Participants:     []string{"alice", "bob"},
-		MentionsToBot:    2,
-		AddressedToBot:   1,
-		QuestionsCount:   1,
-		LastSpeaker:      "alice",
-		TimeSpanMS:       3000,
-		ConversationMode: "addressed",
-		SignalScore:      9,
+		MessagesCount:      4,
+		Participants:       []string{"alice", "bob"},
+		MentionsToBot:      2,
+		AddressedToBot:     1,
+		QuestionsCount:     1,
+		LastSpeaker:        "alice",
+		TimeSpanMS:         3000,
+		ConversationMode:   "addressed",
+		SignalScore:        9,
+		SystemEventSummary: "[kind=poke_notice]: actor_name=alice direction=inbound",
 	}
 
 	decision, err := manager.DecideImmersiveIntent(context.Background(), "", "session-intent-ic", "alice", ic)
@@ -188,11 +189,13 @@ func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
 		"[immersive_state]",
 		"[immersive_batch]",
 		"[immersive_signals]",
+		"[immersive_events]",
 		"mentions_to_bot: 2",
 		"addressed_to_bot: 1",
 		"questions_count: 1",
 		"last_speaker: alice",
 		"conversation_mode: addressed",
+		"[kind=poke_notice]: actor_name=alice direction=inbound",
 		"neko what time is it?",
 	}
 	for _, signal := range signals {

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	immersivepkg "github.com/dongwlin/nekomimi/internal/bot/immersive"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
 	"github.com/dongwlin/nekomimi/internal/metrics"
@@ -9,6 +10,7 @@ import (
 
 type ImmersiveEngine interface {
 	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool)
+	RecordEvent(sessionKey string, event immersivepkg.TimelineEvent)
 	RecordTimelineEvent(sessionKey, text, speaker string)
 	Clear(sessionKey string)
 	RefreshIdentityFromCtx(ctx *zero.Ctx)

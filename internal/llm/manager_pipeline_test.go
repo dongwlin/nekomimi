@@ -168,6 +168,44 @@ func TestBuildPipelineMessages_WithAssembler_NilImmersiveContext_NoSignals(t *te
 	}
 }
 
+func TestBuildPipelineMessages_WithSystemEventSummary_AppendsEventsBlock(t *testing.T) {
+	manager := newMinimalManagerForPipelineTest(t)
+
+	ic := &contextassemble.ImmersiveContext{
+		MessagesCount:      1,
+		Participants:       []string{"alice"},
+		SystemEventSummary: "[kind=poke_notice]: actor_name=alice direction=inbound",
+		ConversationMode:   "addressed",
+		MentionsToBot:      1,
+		AddressedToBot:     1,
+		QuestionsCount:     1,
+	}
+
+	messages, _, err := manager.buildPipelineMessages(
+		context.Background(),
+		nil, "",
+		contextassemble.Meta{},
+		"hello world",
+		ic,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	content := messages[0].Content
+	if !strings.Contains(content, "[immersive_events]") {
+		t.Fatalf("immersive_events block missing from content:\n%s", content)
+	}
+	if !strings.Contains(content, "[kind=poke_notice]: actor_name=alice direction=inbound") {
+		t.Fatalf("system event summary missing from content:\n%s", content)
+	}
+	if strings.Count(content, "hello world") != 1 {
+		t.Fatalf("expected fallback content once, got:\n%s", content)
+	}
+}
+
 func newMinimalManagerForPipelineTest(t *testing.T) *Manager {
 	t.Helper()
 	return NewManager(defaultTestLLMConfig(), ManagerDeps{})

@@ -71,17 +71,11 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	}
 	state := b.session(sessionKey)
 	now := time.Now()
-	charCount := len([]rune(trimmed))
 	mention, addressed, question := b.detectMessageSignals(ctx, trimmed)
-	msg := queuedMessage{
-		text:             trimmed,
-		speaker:          strings.TrimSpace(speaker),
-		ts:               now,
-		chars:            charCount,
-		isMentionBot:     mention,
-		isQuestion:       question,
-		isAddressedToBot: addressed,
-	}
+	msg := newQueuedMessage(EventUserMessage, trimmed, speaker, now, nil)
+	msg.isMentionBot = mention
+	msg.isQuestion = question
+	msg.isAddressedToBot = addressed
 
 	state.mu.Lock()
 	if sendFn := b.captureSendFunc(ctx); sendFn != nil {
@@ -91,7 +85,7 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		state.batchStartTime = now
 	}
 	state.nextBatch = append(state.nextBatch, msg)
-	state.nextBatchChars += charCount
+	state.nextBatchChars += msg.chars
 	state.runtimeBuffer = appendTimelineMessage(state.runtimeBuffer, msg, b.runtimeBufferLimit())
 	state.ensureBehaviorDefaultsLocked(now)
 	state.observeIncomingMessageLocked(msg, isPrivate, now)
@@ -283,6 +277,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		} else {
 			sendFn(repeatText)
 		}
+		b.RecordEvent(sessionKey, NewRepeatTriggerEvent(repeatText, b.botPrimaryName(), repeatCount, repeatParticipants, time.Now()))
 		b.recordAssistantUtterance(sessionKey, repeatText)
 		_ = b.llm.AppendAssistantEvent(sessionKey, repeatText, cutoffSeq)
 		if delivered {
@@ -323,7 +318,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	if strings.TrimSpace(debugPreview) == "" {
 		debugPreview = buildCombinedInput(processing, identity)
 	}
-	immersiveCtx := buildImmersiveContext(processing, identity, behavior, gate)
+	immersiveCtx := buildImmersiveContext(processing, runtimeSnapshot, identity, behavior, gate)
 	log.Info().
 		Str("session", sessionKey).
 		Int("debug_preview_chars", len([]rune(debugPreview))).
@@ -584,7 +579,7 @@ func (b *ImmersiveBuffer) recordAssistantUtterance(sessionKey, text string) {
 	if strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
 		return
 	}
-	b.RecordTimelineEvent(sessionKey, text, b.botPrimaryName())
+	b.RecordEvent(sessionKey, NewAssistantTextEvent(text, b.botPrimaryName(), time.Now()))
 }
 
 func (b *ImmersiveBuffer) noteAssistantDelivered(sessionKey, text string) {
@@ -597,22 +592,25 @@ func (b *ImmersiveBuffer) noteAssistantDelivered(sessionKey, text string) {
 	state.noteAssistantDeliveredLocked(text, time.Now())
 }
 
-// RecordTimelineEvent appends an event to the runtime buffer without queuing or flushing.
-func (b *ImmersiveBuffer) RecordTimelineEvent(sessionKey, text, speaker string) {
-	if b == nil || strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
+// RecordEvent appends a typed runtime event without queuing or flushing.
+func (b *ImmersiveBuffer) RecordEvent(sessionKey string, event TimelineEvent) {
+	if b == nil || strings.TrimSpace(sessionKey) == "" {
+		return
+	}
+	msg := queuedMessageFromTimelineEvent(event)
+	if strings.TrimSpace(msg.text) == "" && len(msg.metadata) == 0 {
 		return
 	}
 	state := b.session(sessionKey)
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	state.ensureBehaviorDefaultsLocked(time.Now())
-	msg := queuedMessage{
-		text:    strings.TrimSpace(text),
-		speaker: strings.TrimSpace(speaker),
-		ts:      time.Now(),
-		chars:   len([]rune(strings.TrimSpace(text))),
-	}
+	state.ensureBehaviorDefaultsLocked(msg.ts)
 	state.runtimeBuffer = appendTimelineMessage(state.runtimeBuffer, msg, b.runtimeBufferLimit())
+}
+
+// RecordTimelineEvent appends an event to the runtime buffer without queuing or flushing.
+func (b *ImmersiveBuffer) RecordTimelineEvent(sessionKey, text, speaker string) {
+	b.RecordEvent(sessionKey, NewSystemNoteEvent(text, speaker, time.Now()))
 }
 
 func (b *ImmersiveBuffer) botPrimaryName() string {
