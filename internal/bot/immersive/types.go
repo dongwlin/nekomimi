@@ -49,6 +49,22 @@ type immersiveSession struct {
 	inFlight        bool
 	sendFn          SendFunc
 	waitRounds      int
+
+	mode                   ConversationMode
+	focusSpeaker           string
+	lastBotReplyAt         time.Time
+	lastAddressedAt        time.Time
+	lastTransitionReason   string
+	energy                 float64
+	energyBaseline         float64
+	energyTarget           float64
+	lastEnergyUpdateAt     time.Time
+	energyLastDeltaReason  string
+	speakGateOpen          bool
+	pendingQuestion        bool
+	followupDueAt          time.Time
+	followupBudget         int
+	nextColdOpenEligibleAt time.Time
 }
 
 // queuedMessage represents a single message in the buffer queue.

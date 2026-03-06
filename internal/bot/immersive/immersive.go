@@ -93,6 +93,9 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.nextBatch = append(state.nextBatch, msg)
 	state.nextBatchChars += charCount
 	state.runtimeBuffer = appendTimelineMessage(state.runtimeBuffer, msg, b.runtimeBufferLimit())
+	state.ensureBehaviorDefaultsLocked(now)
+	state.observeIncomingMessageLocked(msg, isPrivate, now)
+	behavior := state.snapshotBehaviorLocked(now)
 
 	cooldown := b.computeFlushDelay(sessionKey, state, now)
 	queueLen := len(state.nextBatch)
@@ -115,6 +118,10 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		Bool("question", question).
 		Int("queue_len", queueLen).
 		Int("queue_chars", queueChars).
+		Str("mode", string(behavior.Mode)).
+		Str("focus_speaker", behavior.FocusSpeaker).
+		Int("energy_value", behavior.EnergyValue).
+		Str("energy_band", behavior.EnergyBand).
 		Int64("cooldown_ms", cooldown.Milliseconds()).
 		Msg("immersive enqueue scheduled")
 }
@@ -133,6 +140,7 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	state.runtimeBuffer = nil
 	state.sendFn = nil
 	state.waitRounds = 0
+	state.resetBehaviorStateLocked(time.Now())
 	if state.timer != nil {
 		state.timer.Stop()
 		state.timer = nil
@@ -259,23 +267,14 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		}
 	}
 
-	state.mu.Lock()
-	runtimeSnapshot := make([]queuedMessage, len(state.runtimeBuffer))
-	copy(runtimeSnapshot, state.runtimeBuffer)
-	state.mu.Unlock()
+	runtimeSnapshot := state.snapshotRuntimeBuffer()
 
 	identity := b.currentIdentity()
 	b.llm.SetAssistantSpeaker(assistantSpeakerLabel(identity))
-	timelineSlice := trimTimelineTail(runtimeSnapshot, b.runtimeBufferLimit())
-	input := buildCombinedInput(timelineSlice, identity)
-	if strings.TrimSpace(input) == "" {
-		timelineSlice = processing
-		input = buildCombinedInput(processing, identity)
-	}
-	immersiveCtx := buildImmersiveContext(timelineSlice, identity)
 	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(processing)
 	if repeatText != "" {
-		if sendFn == nil {
+		delivered := sendFn != nil
+		if !delivered {
 			log.Warn().
 				Str("session", sessionKey).
 				Str("delivery", "repeat").
@@ -286,14 +285,46 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		}
 		b.recordAssistantUtterance(sessionKey, repeatText)
 		_ = b.llm.AppendAssistantEvent(sessionKey, repeatText, cutoffSeq)
+		if delivered {
+			b.noteAssistantDelivered(sessionKey, repeatText)
+		}
 		log.Info().
 			Str("session", sessionKey).
 			Str("repeat_text", repeatText).
 			Int("repeat_count", repeatCount).
 			Int("repeat_participants", repeatParticipants).
+			Bool("delivered", delivered).
 			Msg("immersive repeat triggered")
 		return
 	}
+
+	now := time.Now()
+	gateMeta := summarizeQueueMeta(processing, now, identity)
+	state.mu.Lock()
+	behavior, gate := state.evaluateSpeakGateLocked(sessionKey, gateMeta, now)
+	state.mu.Unlock()
+	log.Info().
+		Str("session", sessionKey).
+		Bool("allow", gate.Allow).
+		Bool("strong_call", gate.StrongCall).
+		Str("mode", string(behavior.Mode)).
+		Str("focus_speaker", behavior.FocusSpeaker).
+		Int("energy_value", behavior.EnergyValue).
+		Str("energy_band", behavior.EnergyBand).
+		Int("signal_score", gate.SignalScore).
+		Str("reason", gate.Reason).
+		Msg("immersive speak gate evaluated")
+	if !gate.Allow {
+		return
+	}
+
+	timelineSlice := trimTimelineTail(runtimeSnapshot, b.runtimeBufferLimit())
+	input := buildCombinedInput(timelineSlice, identity)
+	if strings.TrimSpace(input) == "" {
+		timelineSlice = processing
+		input = buildCombinedInput(processing, identity)
+	}
+	immersiveCtx := buildImmersiveContext(timelineSlice, identity, behavior, gate)
 	if strings.TrimSpace(input) == "" {
 		return
 	}
@@ -303,18 +334,22 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Str("input_preview", previewForLog(input, immersiveLogPreviewChars)).
 		Msg("immersive control intent input prepared")
 
-	recordReply := func(reply, reason string) {
+	recordReply := func(reply, reason string, delivered bool) {
 		trimmed := strings.TrimSpace(reply)
 		if trimmed == "" {
 			return
 		}
 		b.recordAssistantUtterance(sessionKey, trimmed)
 		_ = b.llm.AppendAssistantEvent(sessionKey, trimmed, cutoffSeq)
+		if delivered {
+			b.noteAssistantDelivered(sessionKey, trimmed)
+		}
 		log.Info().
 			Str("session", sessionKey).
 			Str("reason", reason).
 			Int("reply_chars", len([]rune(trimmed))).
 			Int64("reply_to_cutoff_seq", cutoffSeq).
+			Bool("delivered", delivered).
 			Msg("immersive reply recorded into runtime buffer and llm history")
 	}
 
@@ -422,7 +457,7 @@ func (b *ImmersiveBuffer) handleReply(
 	sessionKey string,
 	input string,
 	immersiveCtx *contextassemble.ImmersiveContext,
-	recordReply func(reply, reason string),
+	recordReply func(reply, reason string, delivered bool),
 ) error {
 	onReplyEvent := func(event llm.StreamEvent) error {
 		switch event.Type {
@@ -520,7 +555,7 @@ func (b *ImmersiveBuffer) handleReply(
 			Int("sent_chars", sentChars).
 			Msg("immersive reply sent")
 	}
-	recordReply(finalReply, "reply_action")
+	recordReply(finalReply, "reply_action", canSend)
 	return nil
 }
 
@@ -534,7 +569,7 @@ func (b *ImmersiveBuffer) session(sessionKey string) *immersiveSession {
 	if state, ok := b.sessions[sessionKey]; ok {
 		return state
 	}
-	state := &immersiveSession{}
+	state := newImmersiveSession(time.Now())
 	b.sessions[sessionKey] = state
 	return state
 }
@@ -555,6 +590,16 @@ func (b *ImmersiveBuffer) recordAssistantUtterance(sessionKey, text string) {
 	b.RecordTimelineEvent(sessionKey, text, b.botPrimaryName())
 }
 
+func (b *ImmersiveBuffer) noteAssistantDelivered(sessionKey, text string) {
+	if strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+	state := b.session(sessionKey)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.noteAssistantDeliveredLocked(text, time.Now())
+}
+
 // RecordTimelineEvent appends an event to the runtime buffer without queuing or flushing.
 func (b *ImmersiveBuffer) RecordTimelineEvent(sessionKey, text, speaker string) {
 	if b == nil || strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
@@ -563,6 +608,7 @@ func (b *ImmersiveBuffer) RecordTimelineEvent(sessionKey, text, speaker string) 
 	state := b.session(sessionKey)
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	state.ensureBehaviorDefaultsLocked(time.Now())
 	msg := queuedMessage{
 		text:    strings.TrimSpace(text),
 		speaker: strings.TrimSpace(speaker),

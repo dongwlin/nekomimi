@@ -425,7 +425,7 @@ func TestFlush_PersistsAtomicUserEventsWithoutBatchEnvelope(t *testing.T) {
 
 	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
 	seedQueueForFlushTest(buffer, sessionKey, 0,
-		queuedMessage{text: "hello-1", speaker: "name=alice", ts: time.Now().Add(-2 * time.Second), chars: len([]rune("hello-1"))},
+		queuedMessage{text: "neko hello-1", speaker: "name=alice", ts: time.Now().Add(-2 * time.Second), chars: len([]rune("neko hello-1")), isAddressedToBot: true},
 		queuedMessage{text: "hello-2", speaker: "name=bob", ts: time.Now().Add(-1 * time.Second), chars: len([]rune("hello-2"))},
 	)
 	buffer.flush(sessionKey)
@@ -670,10 +670,12 @@ func seedQueueForFlushTest(buffer *ImmersiveBuffer, sessionKey string, waitRound
 	if len(messages) == 0 {
 		messages = []queuedMessage{
 			{
-				text:    "hello",
-				speaker: "name=alice",
-				ts:      time.Now(),
-				chars:   len([]rune("hello")),
+				text:             "neko 在吗",
+				speaker:          "name=alice",
+				ts:               time.Now(),
+				chars:            len([]rune("neko 在吗")),
+				isAddressedToBot: true,
+				isQuestion:       true,
 			},
 		}
 	}
@@ -720,9 +722,9 @@ func TestEnqueue_FlushPolicyDebouncesGroupMessages(t *testing.T) {
 		},
 	})
 
-	buffer.Enqueue(nil, sessionKey, "hello", "name=alice", false)
+	buffer.Enqueue(nil, sessionKey, "neko hello", "name=alice", false)
 	time.Sleep(20 * time.Millisecond)
-	buffer.Enqueue(nil, sessionKey, "world", "name=bob", false)
+	buffer.Enqueue(nil, sessionKey, "neko world", "name=bob", false)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

@@ -240,10 +240,15 @@ func limitRunes(text string, maxRunes int) string {
 }
 
 // buildImmersiveContext constructs an ImmersiveContext from the queue that
-// carries batch signals into the LLM pipeline so the model can see
-// mentions_to_bot, addressed_to_bot, questions_count, etc.
-func buildImmersiveContext(queue []queuedMessage, identity botIdentity) *contextassemble.ImmersiveContext {
-	meta := summarizeQueueMeta(queue, time.Now(), identity)
+// carries both batch signals and session behavior state into the LLM pipeline.
+func buildImmersiveContext(
+	queue []queuedMessage,
+	identity botIdentity,
+	behavior behaviorSnapshot,
+	gate speakGateDecision,
+) *contextassemble.ImmersiveContext {
+	now := time.Now()
+	meta := summarizeQueueMeta(queue, now, identity)
 	var transcript strings.Builder
 	for _, msg := range queue {
 		formatted := formatQueuedMessage(msg)
@@ -255,15 +260,50 @@ func buildImmersiveContext(queue []queuedMessage, identity botIdentity) *context
 		transcript.WriteString("\n")
 	}
 	return &contextassemble.ImmersiveContext{
-		MessagesCount:  meta.MessagesCount,
-		Participants:   meta.Participants,
-		MentionsToBot:  meta.MentionsToBot,
-		AddressedToBot: meta.AddressedToBot,
-		QuestionsCount: meta.QuestionsCount,
-		LastSpeaker:    meta.LastSpeaker,
-		TimeSpanMS:     meta.TimeSpanMS,
-		Transcript:     strings.TrimSpace(transcript.String()),
+		MessagesCount:          meta.MessagesCount,
+		Participants:           meta.Participants,
+		MentionsToBot:          meta.MentionsToBot,
+		AddressedToBot:         meta.AddressedToBot,
+		QuestionsCount:         meta.QuestionsCount,
+		LastSpeaker:            meta.LastSpeaker,
+		TimeSpanMS:             meta.TimeSpanMS,
+		ConversationMode:       string(behavior.Mode),
+		FocusSpeaker:           behavior.FocusSpeaker,
+		EnergyValue:            behavior.EnergyValue,
+		EnergyBaseline:         behavior.EnergyBaseline,
+		EnergyTarget:           behavior.EnergyTarget,
+		EnergyBand:             behavior.EnergyBand,
+		SpeakGateOpen:          behavior.SpeakGateOpen,
+		SignalScore:            gate.SignalScore,
+		StrongCall:             gate.StrongCall,
+		LastBotReplyMS:         elapsedSinceMS(now, behavior.LastBotReplyAt),
+		LastAddressedMS:        elapsedSinceMS(now, behavior.LastAddressedAt),
+		PendingQuestion:        behavior.PendingQuestion,
+		FollowupDueMS:          durationUntilMS(now, behavior.FollowupDueAt),
+		FollowupBudget:         behavior.FollowupBudget,
+		NextColdOpenEligibleMS: durationUntilMS(now, behavior.NextColdOpenEligibleAt),
+		ReplyTier:              gate.ReplyTier,
+		MaxReplySegments:       gate.MaxReplySegments,
+		FollowupAllowed:        gate.FollowupAllowed,
+		Transcript:             strings.TrimSpace(transcript.String()),
 	}
+}
+
+func elapsedSinceMS(now, at time.Time) int64 {
+	if at.IsZero() {
+		return -1
+	}
+	if now.Before(at) {
+		return 0
+	}
+	return now.Sub(at).Milliseconds()
+}
+
+func durationUntilMS(now, at time.Time) int64 {
+	if at.IsZero() {
+		return -1
+	}
+	return at.Sub(now).Milliseconds()
 }
 
 // summarizeQueueMeta computes aggregated metadata from a queue of messages,
