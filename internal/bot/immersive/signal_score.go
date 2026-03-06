@@ -61,6 +61,7 @@ const (
 	featureModeCooling       = "mode_cooling"
 	featureBatchVolume       = "batch_volume"
 	featureRecentReply       = "recent_reply_penalty"
+	featureColdOpen          = "cold_open_bonus"
 )
 
 const (
@@ -85,6 +86,7 @@ const (
 	scoreModeCooling      = -4
 	scoreBatchVolume      = 1
 	scoreRecentReply      = -2
+	scoreColdOpen         = 4
 
 	recentReplyWindow = 45 * time.Second
 )
@@ -149,6 +151,10 @@ func scoreSignals(sessionKey string, meta queueMeta, snapshot behaviorSnapshot, 
 
 	if !snapshot.LastBotReplyAt.IsZero() && now.Sub(snapshot.LastBotReplyAt) < recentReplyWindow {
 		add(featureRecentReply, scoreRecentReply)
+	}
+
+	if snapshot.ColdOpenEligible {
+		add(featureColdOpen, scoreColdOpen)
 	}
 
 	total := 0

@@ -67,6 +67,13 @@ type TimelineEvent struct {
 	Metadata map[string]string
 }
 
+// FlushDecision represents the adaptive scheduling result for a message batch.
+type FlushDecision struct {
+	Delay    time.Duration
+	Reason   string
+	Priority string // "immediate", "fast", "normal", "deferred"
+}
+
 // immersiveSession holds the runtime scheduling buffer for one conversation session.
 // nextBatch/processingBatch are short-lived flush buffers, while runtimeBuffer is an
 // in-memory prompt aid and not a durable history source.
@@ -96,7 +103,11 @@ type immersiveSession struct {
 	pendingQuestion        bool
 	followupDueAt          time.Time
 	followupBudget         int
+	followupTimer          *time.Timer
 	nextColdOpenEligibleAt time.Time
+	lastMessageAt          time.Time
+	coldOpenEligible       bool
+	coldOpenActivityCount  int
 }
 
 // queuedMessage represents a single message in the buffer queue.

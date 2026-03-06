@@ -41,6 +41,12 @@ llm:
       window_ms: 180000
       mild_threshold: 3
       annoyed_threshold: 6
+    scheduler:
+      post_reply_delay_ms: 8000
+      strong_call_min_delay_ms: 200
+      followup_wait_ms: 90000
+      cold_open_min_interval_ms: 600000
+      quiet_threshold_ms: 300000
 
 driver:
   websocket:

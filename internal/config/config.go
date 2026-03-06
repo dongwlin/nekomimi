@@ -67,6 +67,15 @@ type ImmersiveConfig struct {
 	RuntimeBuffer RuntimeBufferConfig `yaml:"runtime_buffer"`
 	FlushPolicy   FlushPolicyConfig   `yaml:"flush_policy"`
 	PokeReaction  PokeReactionConfig  `yaml:"poke_reaction"`
+	Scheduler     SchedulerConfig     `yaml:"scheduler"`
+}
+
+type SchedulerConfig struct {
+	PostReplyDelayMS      int `yaml:"post_reply_delay_ms"`
+	StrongCallMinDelayMS  int `yaml:"strong_call_min_delay_ms"`
+	FollowupWaitMS        int `yaml:"followup_wait_ms"`
+	ColdOpenMinIntervalMS int `yaml:"cold_open_min_interval_ms"`
+	QuietThresholdMS      int `yaml:"quiet_threshold_ms"`
 }
 
 type RuntimeBufferConfig struct {

@@ -89,10 +89,11 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.nextBatchChars += msg.chars
 	state.runtimeBuffer = appendTimelineMessage(state.runtimeBuffer, msg, b.runtimeBufferLimit())
 	state.ensureBehaviorDefaultsLocked(now)
+	b.detectColdOpenEligibilityLocked(state, now)
 	state.observeIncomingMessageLocked(msg, isPrivate, now)
 	behavior := state.snapshotBehaviorLocked(now)
 
-	cooldown := b.computeFlushDelay(sessionKey, state, now)
+	decision := b.computeFlushDecision(sessionKey, state, now)
 	queueLen := len(state.nextBatch)
 	queueChars := state.nextBatchChars
 
@@ -100,7 +101,7 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		state.timer.Stop()
 		state.timer = nil
 	}
-	state.timer = time.AfterFunc(cooldown, func() {
+	state.timer = time.AfterFunc(decision.Delay, func() {
 		b.flush(sessionKey)
 	})
 	state.mu.Unlock()
@@ -118,7 +119,9 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		Str("focus_speaker", behavior.FocusSpeaker).
 		Int("energy_value", behavior.EnergyValue).
 		Str("energy_band", behavior.EnergyBand).
-		Int64("cooldown_ms", cooldown.Milliseconds()).
+		Int64("cooldown_ms", decision.Delay.Milliseconds()).
+		Str("schedule_reason", decision.Reason).
+		Str("schedule_priority", decision.Priority).
 		Msg("immersive enqueue scheduled")
 }
 
@@ -141,6 +144,10 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 		state.timer.Stop()
 		state.timer = nil
 	}
+	if state.followupTimer != nil {
+		state.followupTimer.Stop()
+		state.followupTimer = nil
+	}
 	state.mu.Unlock()
 	log.Info().Str("session", sessionKey).Msg("immersive session buffer cleared")
 }
@@ -156,12 +163,12 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			if state.batchStartTime.IsZero() {
 				state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
 			}
-			delay := b.computeFlushDelay(sessionKey, state, time.Now())
+			flushDec := b.computeFlushDecision(sessionKey, state, time.Now())
 			if state.timer != nil {
 				state.timer.Stop()
 				state.timer = nil
 			}
-			state.timer = time.AfterFunc(delay, func() {
+			state.timer = time.AfterFunc(flushDec.Delay, func() {
 				b.flush(sessionKey)
 			})
 		}
@@ -209,9 +216,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		if pending && state.batchStartTime.IsZero() {
 			state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
 		}
-		delay := time.Duration(0)
+		var deferDec FlushDecision
 		if pending {
-			delay = b.computeFlushDelay(sessionKey, state, time.Now())
+			deferDec = b.computeFlushDecision(sessionKey, state, time.Now())
 		} else {
 			state.batchStartTime = time.Time{}
 		}
@@ -220,7 +227,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			state.timer = nil
 		}
 		if pending {
-			state.timer = time.AfterFunc(delay, func() {
+			state.timer = time.AfterFunc(deferDec.Delay, func() {
 				b.flush(sessionKey)
 			})
 		}
@@ -228,7 +235,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		if pending {
 			log.Info().
 				Str("session", sessionKey).
-				Int64("next_delay_ms", delay.Milliseconds()).
+				Int64("next_delay_ms", deferDec.Delay.Milliseconds()).
+				Str("next_reason", deferDec.Reason).
+				Str("next_priority", deferDec.Priority).
 				Msg("pending messages detected, flushing again")
 		}
 	}()
@@ -409,7 +418,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 	if action == controlActionWait {
 		skipFinalize = true
-		waitDelay := time.Duration(waitMS) * time.Millisecond
 		state.mu.Lock()
 		state.nextBatch = prependMessages(processing, state.nextBatch)
 		state.nextBatchChars += sumQueueChars(processing)
@@ -423,21 +431,29 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		state.processingBatch = nil
 		state.inFlight = false
 		state.waitRounds++
+
+		localDec := b.computeFlushDecision(sessionKey, state, time.Now())
+		merged := mergeWaitDecision(localDec, waitMS)
+
 		if state.timer != nil {
 			state.timer.Stop()
 			state.timer = nil
 		}
-		state.timer = time.AfterFunc(waitDelay, func() {
+		state.timer = time.AfterFunc(merged.Delay, func() {
 			b.flush(sessionKey)
 		})
 		state.mu.Unlock()
 		log.Info().
 			Str("session", sessionKey).
-			Int64("next_wait_ms", waitDelay.Milliseconds()).
+			Int("llm_wait_ms", waitMS).
+			Int64("local_delay_ms", localDec.Delay.Milliseconds()).
+			Int64("merged_delay_ms", merged.Delay.Milliseconds()).
+			Str("merged_reason", merged.Reason).
+			Str("merged_priority", merged.Priority).
 			Int("wait_rounds", waitRounds+1).
 			Str("reason", decisionReason).
 			Str("reason_code", decisionReasonCode).
-			Msg("immersive flush deferred by wait action")
+			Msg("immersive flush deferred by wait action (merged)")
 		return
 	}
 
@@ -591,9 +607,24 @@ func (b *ImmersiveBuffer) noteAssistantDelivered(sessionKey, text string) {
 		return
 	}
 	state := b.session(sessionKey)
+	now := time.Now()
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	state.noteAssistantDeliveredLocked(text, time.Now())
+	state.noteAssistantDeliveredLocked(text, now)
+
+	state.nextColdOpenEligibleAt = now.Add(time.Duration(b.cfg.Scheduler.ColdOpenMinIntervalMS) * time.Millisecond)
+	state.coldOpenEligible = false
+
+	if state.pendingQuestion && state.followupBudget > 0 {
+		followupDelay := time.Duration(b.cfg.Scheduler.FollowupWaitMS) * time.Millisecond
+		state.followupDueAt = now.Add(followupDelay)
+		if state.followupTimer != nil {
+			state.followupTimer.Stop()
+		}
+		state.followupTimer = time.AfterFunc(followupDelay, func() {
+			b.tryFollowup(sessionKey)
+		})
+	}
 }
 
 // RecordEvent appends a typed runtime event without queuing or flushing.

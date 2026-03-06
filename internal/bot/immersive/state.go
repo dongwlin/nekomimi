@@ -43,6 +43,7 @@ type behaviorSnapshot struct {
 	FollowupDueAt          time.Time
 	FollowupBudget         int
 	NextColdOpenEligibleAt time.Time
+	ColdOpenEligible       bool
 }
 
 func newImmersiveSession(now time.Time) *immersiveSession {
@@ -94,6 +95,7 @@ func (s *immersiveSession) snapshotBehaviorLocked(now time.Time) behaviorSnapsho
 		FollowupDueAt:          s.followupDueAt,
 		FollowupBudget:         s.followupBudget,
 		NextColdOpenEligibleAt: s.nextColdOpenEligibleAt,
+		ColdOpenEligible:       s.coldOpenEligible,
 	}
 }
 
@@ -129,7 +131,14 @@ func (s *immersiveSession) resetBehaviorStateLocked(now time.Time) {
 	s.pendingQuestion = false
 	s.followupDueAt = time.Time{}
 	s.followupBudget = 0
+	if s.followupTimer != nil {
+		s.followupTimer.Stop()
+		s.followupTimer = nil
+	}
 	s.nextColdOpenEligibleAt = time.Time{}
+	s.lastMessageAt = time.Time{}
+	s.coldOpenEligible = false
+	s.coldOpenActivityCount = 0
 }
 
 func (s *immersiveSession) ensureBehaviorDefaultsLocked(now time.Time) {
@@ -200,6 +209,10 @@ func (s *immersiveSession) clearPendingQuestionLocked() {
 	s.pendingQuestion = false
 	s.followupDueAt = time.Time{}
 	s.followupBudget = 0
+	if s.followupTimer != nil {
+		s.followupTimer.Stop()
+		s.followupTimer = nil
+	}
 }
 
 func (s *immersiveSession) decayBehaviorLocked(now time.Time) {
