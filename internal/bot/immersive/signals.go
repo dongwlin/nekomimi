@@ -14,7 +14,7 @@ import (
 // - question: whether the message appears to be a question
 func (b *ImmersiveBuffer) detectMessageSignals(ctx *zero.Ctx, text string) (bool, bool, bool) {
 	mention := b.isExplicitMention(ctx)
-	addressed := mention || b.containsNickname(text) || strings.Contains(text, "@")
+	addressed := mention || b.containsNickname(text)
 	question := looksLikeQuestion(text)
 	return mention, addressed, question
 }
@@ -65,12 +65,23 @@ func (b *ImmersiveBuffer) containsNickname(text string) bool {
 	return false
 }
 
+var questionIndicators = []string{
+	"?", "？",
+	"吗", "呢", "么",
+	"能否", "是否", "有没有", "能不能", "会不会", "可不可以",
+	"什么", "怎么", "为什么", "哪里", "哪个", "哪些",
+	"几", "多少", "多久", "多大", "多远",
+	"谁", "何时", "何处", "如何",
+}
+
 // looksLikeQuestion determines if the text appears to be a question by checking
 // for question marks (both English and Chinese) or question-forming keywords.
 func looksLikeQuestion(text string) bool {
-	if strings.Contains(text, "?") || strings.Contains(text, "？") {
-		return true
-	}
 	lower := strings.ToLower(text)
-	return strings.Contains(lower, "吗") || strings.Contains(lower, "能否")
+	for _, indicator := range questionIndicators {
+		if strings.Contains(lower, indicator) {
+			return true
+		}
+	}
+	return false
 }
