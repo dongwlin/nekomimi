@@ -10,7 +10,6 @@ import (
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
 	"github.com/dongwlin/nekomimi/internal/metrics"
-	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
 // ImmersiveBuffer manages message buffering and response timing for a bot session.
@@ -25,6 +24,10 @@ type ImmersiveBuffer struct {
 	mu        sync.Mutex
 	sessions  map[string]*immersiveSession
 }
+
+// SendFunc captures how to deliver a payload for the current session.
+// It is created while the incoming context is still valid and reused by async flushes.
+type SendFunc func(payload interface{})
 
 type botIdentity struct {
 	ConfigNicknames []string
@@ -44,7 +47,7 @@ type immersiveSession struct {
 	runtimeBuffer   []queuedMessage
 	timer           *time.Timer
 	inFlight        bool
-	lastCtx         *zero.Ctx
+	sendFn          SendFunc
 	waitRounds      int
 }
 

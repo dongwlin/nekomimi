@@ -218,6 +218,103 @@ func TestFlush_IntentReplyGeneratesAndPersistsAssistant(t *testing.T) {
 	}
 }
 
+func TestFlush_IntentReplyUsesSendFunc(t *testing.T) {
+	control := mustMarshalJSON(t, map[string]any{
+		"action": "reply",
+	})
+	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
+		if !stream {
+			return scriptedResponse{
+				JSONBody: responsesOutputTextJSON(control),
+			}
+		}
+		return scriptedResponse{
+			SSEEvents: []string{
+				mustResponsesDeltaEventRaw(t, "ok"),
+				`{"type":"response.completed"}`,
+			},
+		}
+	})
+	defer server.Close()
+
+	buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	var delivered []string
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	state.sendFn = func(payload interface{}) {
+		delivered = append(delivered, fmt.Sprint(payload))
+	}
+	state.mu.Unlock()
+
+	buffer.flush(sessionKey)
+
+	if len(delivered) != 1 {
+		t.Fatalf("expected exactly one outbound send, got %d (%v)", len(delivered), delivered)
+	}
+	if delivered[0] != "ok" {
+		t.Fatalf("expected sendFn payload 'ok', got %q", delivered[0])
+	}
+}
+
+func TestFlush_IntentReplyWithoutSendFuncStillPersistsAssistant(t *testing.T) {
+	control := mustMarshalJSON(t, map[string]any{
+		"action": "reply",
+	})
+	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
+		if !stream {
+			return scriptedResponse{
+				JSONBody: responsesOutputTextJSON(control),
+			}
+		}
+		return scriptedResponse{
+			SSEEvents: []string{
+				mustResponsesDeltaEventRaw(t, "ok"),
+				`{"type":"response.completed"}`,
+			},
+		}
+	})
+	defer server.Close()
+
+	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	events := captureLogEvents(t, func() {
+		buffer.flush(sessionKey)
+	})
+
+	entries := mustListChatEvents(t, manager, sessionKey, 20)
+	foundAssistant := false
+	for _, entry := range entries {
+		if entry.Role != chatlog.RoleAssistant {
+			continue
+		}
+		if strings.Contains(entry.Content, "ok") {
+			foundAssistant = true
+			break
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected assistant reply 'ok' in history even without sendFn, entries=%+v", entries)
+	}
+
+	foundWarn := false
+	for _, event := range events {
+		if event["message"] != "immersive send function missing, skipping outbound send" {
+			continue
+		}
+		if toString(event["delivery"]) != "reply" {
+			continue
+		}
+		foundWarn = true
+		break
+	}
+	if !foundWarn {
+		t.Fatalf("expected missing sendFn warning log, events=%+v", events)
+	}
+}
+
 func TestFlush_ReplyDelimiterSegmentsAreSentWithoutControlMarker(t *testing.T) {
 	control := mustMarshalJSON(t, map[string]any{
 		"action": "reply",
@@ -416,10 +513,14 @@ func TestClear_ResetsRuntimeBuffers(t *testing.T) {
 		queuedMessage{text: "hello", speaker: "name=alice", ts: time.Now(), chars: len([]rune("hello"))},
 	)
 	buffer.RecordTimelineEvent(sessionKey, "assistant note", "assistant")
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	state.sendFn = func(payload interface{}) {}
+	state.mu.Unlock()
 
 	buffer.Clear(sessionKey)
 
-	state := buffer.session(sessionKey)
+	state = buffer.session(sessionKey)
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if len(state.nextBatch) != 0 || len(state.processingBatch) != 0 || len(state.runtimeBuffer) != 0 {
@@ -427,6 +528,9 @@ func TestClear_ResetsRuntimeBuffers(t *testing.T) {
 	}
 	if state.waitRounds != 0 {
 		t.Fatalf("expected waitRounds reset to 0, got %d", state.waitRounds)
+	}
+	if state.sendFn != nil {
+		t.Fatal("expected sendFn reset to nil")
 	}
 }
 
@@ -582,7 +686,7 @@ func seedQueueForFlushTest(buffer *ImmersiveBuffer, sessionKey string, waitRound
 	state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
 	state.runtimeBuffer = append(state.runtimeBuffer[:0], messages...)
 	state.waitRounds = waitRounds
-	state.lastCtx = nil
+	state.sendFn = nil
 }
 
 func mustListChatEvents(t *testing.T, manager *llm.Manager, sessionKey string, limit int) []chatlog.Entry {

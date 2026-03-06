@@ -84,7 +84,9 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	}
 
 	state.mu.Lock()
-	state.lastCtx = ctx
+	if sendFn := b.captureSendFunc(ctx); sendFn != nil {
+		state.sendFn = sendFn
+	}
 	if len(state.nextBatch) == 0 {
 		state.batchStartTime = now
 	}
@@ -129,6 +131,7 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	state.batchStartTime = time.Time{}
 	state.processingBatch = nil
 	state.runtimeBuffer = nil
+	state.sendFn = nil
 	state.waitRounds = 0
 	if state.timer != nil {
 		state.timer.Stop()
@@ -186,7 +189,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state.processingBatch = processing
 	state.inFlight = true
 	waitRounds := state.waitRounds
-	ctx := state.lastCtx
+	sendFn := state.sendFn
 	state.mu.Unlock()
 
 	skipFinalize := false
@@ -271,8 +274,16 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 	immersiveCtx := buildImmersiveContext(timelineSlice, identity)
 	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(processing)
-	if repeatText != "" && ctx != nil {
-		b.sendTracked(ctx, repeatText)
+	if repeatText != "" {
+		if sendFn == nil {
+			log.Warn().
+				Str("session", sessionKey).
+				Str("delivery", "repeat").
+				Int("reply_chars", len([]rune(repeatText))).
+				Msg("immersive send function missing, skipping outbound send")
+		} else {
+			sendFn(repeatText)
+		}
 		b.recordAssistantUtterance(sessionKey, repeatText)
 		_ = b.llm.AppendAssistantEvent(sessionKey, repeatText, cutoffSeq)
 		log.Info().
@@ -400,14 +411,14 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 
 	if action == controlActionReply {
-		_ = b.handleReply(ctx, sessionKey, input, immersiveCtx, recordReply)
+		_ = b.handleReply(sendFn, sessionKey, input, immersiveCtx, recordReply)
 	}
 }
 
 // handleReply generates and sends an LLM reply for the given session,
 // splitting multi-segment responses and recording the result.
 func (b *ImmersiveBuffer) handleReply(
-	ctx *zero.Ctx,
+	sendFn SendFunc,
 	sessionKey string,
 	input string,
 	immersiveCtx *contextassemble.ImmersiveContext,
@@ -467,19 +478,27 @@ func (b *ImmersiveBuffer) handleReply(
 	sentMessages := 0
 	sentChars := 0
 	replyParts := make([]string, 0, len(segments))
+	canSend := sendFn != nil
+	if !canSend {
+		log.Warn().
+			Str("session", sessionKey).
+			Str("delivery", "reply").
+			Int("segment_count", len(segments)).
+			Msg("immersive send function missing, skipping outbound send")
+	}
 	for _, segment := range segments {
 		trimmed := strings.TrimSpace(segment)
 		if trimmed == "" {
 			continue
 		}
 		replyParts = append(replyParts, trimmed)
-		if ctx == nil {
+		if !canSend {
 			continue
 		}
 		if sentMessages > 0 {
 			time.Sleep(NextReplySegmentDelay(trimmed))
 		}
-		b.sendTracked(ctx, trimmed)
+		sendFn(trimmed)
 		sentMessages++
 		sentChars += len([]rune(trimmed))
 	}
@@ -488,11 +507,11 @@ func (b *ImmersiveBuffer) handleReply(
 		finalReply = immersiveEmptyReplyFallback
 	}
 
-	if ctx == nil {
+	if !canSend {
 		log.Info().
 			Str("session", sessionKey).
 			Int("reply_chars", len([]rune(finalReply))).
-			Msg("immersive reply prepared without ctx")
+			Msg("immersive reply prepared without outbound delivery")
 	} else {
 		log.Info().
 			Str("session", sessionKey).
@@ -518,6 +537,15 @@ func (b *ImmersiveBuffer) session(sessionKey string) *immersiveSession {
 	state := &immersiveSession{}
 	b.sessions[sessionKey] = state
 	return state
+}
+
+func (b *ImmersiveBuffer) captureSendFunc(ctx *zero.Ctx) SendFunc {
+	if b == nil || ctx == nil {
+		return nil
+	}
+	return func(payload interface{}) {
+		b.sendTracked(ctx, payload)
+	}
 }
 
 func (b *ImmersiveBuffer) recordAssistantUtterance(sessionKey, text string) {
