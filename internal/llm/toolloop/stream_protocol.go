@@ -85,7 +85,7 @@ func validateModelStreamFrame(frame StreamMessage) *ErrorPayload {
 				Retryable: false,
 			}
 		}
-		if !validStopReason(frame.Final.StopReason) {
+		if !validModelStopReason(frame.Final.StopReason) {
 			return &ErrorPayload{
 				Code:      ErrorCodeInvalidProtocol,
 				Message:   "invalid final.stop_reason",

@@ -792,8 +792,12 @@ func parseResponsesStreamEvent(data string) (delta string, done bool, err error)
 	if strings.Contains(eventType, "completed") {
 		return "", true, nil
 	}
-	rawDelta := toString(payload["delta"])
-	return rawDelta, false, nil
+	switch eventType {
+	case "response.output_text.delta", "response.refusal.delta":
+		return toString(payload["delta"]), false, nil
+	default:
+		return "", false, nil
+	}
 }
 
 func responsesErrorMessage(payload map[string]any) string {

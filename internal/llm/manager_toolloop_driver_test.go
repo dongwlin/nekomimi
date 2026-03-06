@@ -46,3 +46,22 @@ func TestParseToolLoopFrame_DefaultsFinalStopReason(t *testing.T) {
 		t.Fatalf("stop reason mismatch: got %q, want %q", frame.Final.StopReason, toolloop.StopReasonFinal)
 	}
 }
+
+func TestParseToolLoopFrame_RejectsOrdinaryJSON(t *testing.T) {
+	if _, ok := parseToolLoopFrame(`{"type":"final","content":"plain json"}`); ok {
+		t.Fatal("ordinary JSON should not be treated as a tool-loop frame")
+	}
+}
+
+func TestParseToolLoopFrame_VersionedInvalidProtocolStillParses(t *testing.T) {
+	frame, ok := parseToolLoopFrame(`{"version":"v1","type":"final"}`)
+	if !ok {
+		t.Fatal("versioned protocol-like JSON should still be parsed for validation")
+	}
+	if frame.Type != toolloop.MessageTypeFinal {
+		t.Fatalf("frame type mismatch: got %q, want %q", frame.Type, toolloop.MessageTypeFinal)
+	}
+	if frame.Final != nil {
+		t.Fatalf("expected missing final payload to remain nil, got %+v", frame.Final)
+	}
+}

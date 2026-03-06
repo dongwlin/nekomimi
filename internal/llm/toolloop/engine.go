@@ -413,7 +413,7 @@ func validateModelMessage(msg Message) *ErrorPayload {
 				Retryable: false,
 			}
 		}
-		if !validStopReason(msg.Final.StopReason) {
+		if !validModelStopReason(msg.Final.StopReason) {
 			return &ErrorPayload{
 				Code:      ErrorCodeInvalidProtocol,
 				Message:   "invalid final.stop_reason",
@@ -505,6 +505,10 @@ func validStopReason(reason StopReason) bool {
 	default:
 		return false
 	}
+}
+
+func validModelStopReason(reason StopReason) bool {
+	return reason == StopReasonFinal
 }
 
 func validErrorCode(code ErrorCode) bool {

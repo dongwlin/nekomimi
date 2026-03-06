@@ -73,6 +73,24 @@ func TestNDJSONParser_NonJSONFallbackDelta(t *testing.T) {
 	}
 }
 
+func TestNDJSONParser_ReservedTypeWithoutProtocolPayloadFallsBackToText(t *testing.T) {
+	parser := NewNDJSONParser()
+
+	items, err := parser.Feed(`{"type":"final","content":"plain json"}` + "\n")
+	if err != nil {
+		t.Fatalf("feed failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("item count mismatch: got %d, want 1", len(items))
+	}
+	if items[0].Frame != nil {
+		t.Fatalf("plain JSON should not be parsed as a stream frame")
+	}
+	if items[0].Text != `{"type":"final","content":"plain json"}` {
+		t.Fatalf("fallback text mismatch: got %q", items[0].Text)
+	}
+}
+
 func TestNDJSONParser_InvalidJSONFrame_ReturnsTextFallback(t *testing.T) {
 	parser := NewNDJSONParser()
 

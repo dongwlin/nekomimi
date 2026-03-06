@@ -272,6 +272,9 @@ func parseToolLoopFrame(raw string) (toolloop.Message, bool) {
 	if candidate == "" {
 		return toolloop.Message{}, false
 	}
+	if !looksLikeToolLoopFrame(candidate) {
+		return toolloop.Message{}, false
+	}
 
 	var frame toolloop.Message
 	if err := json.Unmarshal([]byte(candidate), &frame); err != nil {
@@ -282,6 +285,51 @@ func parseToolLoopFrame(raw string) (toolloop.Message, bool) {
 	}
 	toolloop.NormalizeModelMessage(&frame)
 	return frame, true
+}
+
+func looksLikeToolLoopFrame(candidate string) bool {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(candidate), &payload); err != nil {
+		return false
+	}
+
+	switch frameType := strings.TrimSpace(readJSONStringField(payload, "type")); frameType {
+	case string(toolloop.MessageTypeDelta):
+		return hasJSONField(payload, "delta") || hasJSONField(payload, "version")
+	case string(toolloop.MessageTypeToolCall):
+		return hasJSONField(payload, "tool_call") || hasJSONField(payload, "version")
+	case string(toolloop.MessageTypeToolResult):
+		return hasJSONField(payload, "tool_result") || hasJSONField(payload, "version")
+	case string(toolloop.MessageTypeFinal):
+		return hasJSONField(payload, "final") || hasJSONField(payload, "version")
+	case string(toolloop.MessageTypeError):
+		return hasJSONField(payload, "error") || hasJSONField(payload, "version")
+	default:
+		return false
+	}
+}
+
+func readJSONStringField(payload map[string]json.RawMessage, key string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	raw, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return value
+}
+
+func hasJSONField(payload map[string]json.RawMessage, key string) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	_, ok := payload[key]
+	return ok
 }
 
 func extractJSONObjectCandidate(raw string) string {

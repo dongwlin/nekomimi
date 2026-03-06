@@ -79,6 +79,9 @@ func parseNDJSONLine(line string) (item NDJSONItem, ok bool, err error) {
 	if !json.Valid([]byte(trimmed)) {
 		return NDJSONItem{Text: raw}, true, nil
 	}
+	if !looksLikeStreamFrameJSON(trimmed) {
+		return NDJSONItem{Text: raw}, true, nil
+	}
 
 	var frame StreamMessage
 	if err := json.Unmarshal([]byte(trimmed), &frame); err != nil {
@@ -89,4 +92,49 @@ func parseNDJSONLine(line string) (item NDJSONItem, ok bool, err error) {
 		return NDJSONItem{}, false, fmt.Errorf("invalid stream frame: %s", protocolErr.Message)
 	}
 	return NDJSONItem{Frame: &frame}, true, nil
+}
+
+func looksLikeStreamFrameJSON(candidate string) bool {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(candidate), &payload); err != nil {
+		return false
+	}
+
+	switch frameType := strings.TrimSpace(readJSONStringField(payload, "type")); frameType {
+	case string(MessageTypeDelta):
+		return hasJSONField(payload, "delta") || hasJSONField(payload, "version")
+	case string(MessageTypeToolCall):
+		return hasJSONField(payload, "tool_call") || hasJSONField(payload, "version")
+	case string(MessageTypeToolResult):
+		return hasJSONField(payload, "tool_result") || hasJSONField(payload, "version")
+	case string(MessageTypeFinal):
+		return hasJSONField(payload, "final") || hasJSONField(payload, "version")
+	case string(MessageTypeError):
+		return hasJSONField(payload, "error") || hasJSONField(payload, "version")
+	default:
+		return false
+	}
+}
+
+func readJSONStringField(payload map[string]json.RawMessage, key string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	raw, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return value
+}
+
+func hasJSONField(payload map[string]json.RawMessage, key string) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	_, ok := payload[key]
+	return ok
 }
