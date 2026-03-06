@@ -8,6 +8,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	"github.com/rs/zerolog/log"
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
@@ -89,23 +90,10 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.nextBatchChars += charCount
 	state.runtimeBuffer = appendTimelineMessage(state.runtimeBuffer, msg, b.runtimeBufferLimit())
 
-	// Cooldown is intentionally disabled: flush immediately after enqueue.
 	cooldown := time.Duration(0)
-	queueSnapshot := make([]queuedMessage, len(state.nextBatch))
-	copy(queueSnapshot, state.nextBatch)
-	log.Info().
-		Str("session", sessionKey).
-		Bool("is_private", isPrivate).
-		Bool("mention", mention).
-		Bool("addressed", addressed).
-		Bool("question", question).
-		Int("queue_len", len(queueSnapshot)).
-		Int("queue_chars", state.nextBatchChars).
-		Int64("cooldown_ms", cooldown.Milliseconds()).
-		Msg("immersive enqueue scheduled")
-	state.mu.Unlock()
+	queueLen := len(state.nextBatch)
+	queueChars := state.nextBatchChars
 
-	state.mu.Lock()
 	if state.timer != nil {
 		state.timer.Stop()
 	}
@@ -113,6 +101,17 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		b.flush(sessionKey)
 	})
 	state.mu.Unlock()
+
+	log.Info().
+		Str("session", sessionKey).
+		Bool("is_private", isPrivate).
+		Bool("mention", mention).
+		Bool("addressed", addressed).
+		Bool("question", question).
+		Int("queue_len", queueLen).
+		Int("queue_chars", queueChars).
+		Int64("cooldown_ms", cooldown.Milliseconds()).
+		Msg("immersive enqueue scheduled")
 }
 
 // Clear removes all queued messages and resets the session state for the given session key.
@@ -169,16 +168,42 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		state.mu.Unlock()
 		return
 	}
-	processing := make([]queuedMessage, len(state.nextBatch))
-	copy(processing, state.nextBatch)
-	state.processingBatch = make([]queuedMessage, len(processing))
-	copy(state.processingBatch, processing)
+	processing := state.nextBatch
 	state.nextBatch = nil
 	state.nextBatchChars = 0
+	state.processingBatch = processing
 	state.inFlight = true
 	waitRounds := state.waitRounds
 	ctx := state.lastCtx
 	state.mu.Unlock()
+
+	skipFinalize := false
+	defer func() {
+		if skipFinalize {
+			return
+		}
+		delay := time.Duration(defaultPendingFlushDelayMS) * time.Millisecond
+		state.mu.Lock()
+		state.inFlight = false
+		state.processingBatch = nil
+		state.waitRounds = 0
+		pending := len(state.nextBatch) > 0
+		if state.timer != nil {
+			state.timer.Stop()
+		}
+		if pending {
+			state.timer = time.AfterFunc(delay, func() {
+				b.flush(sessionKey)
+			})
+		}
+		state.mu.Unlock()
+		if pending {
+			log.Info().
+				Str("session", sessionKey).
+				Int64("next_delay_ms", delay.Milliseconds()).
+				Msg("pending messages detected, flushing again")
+		}
+	}()
 
 	log.Info().
 		Str("session", sessionKey).
@@ -211,8 +236,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 
 	state.mu.Lock()
-	state.processingBatch = make([]queuedMessage, len(processing))
-	copy(state.processingBatch, processing)
 	runtimeSnapshot := make([]queuedMessage, len(state.runtimeBuffer))
 	copy(runtimeSnapshot, state.runtimeBuffer)
 	state.mu.Unlock()
@@ -237,28 +260,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Int("repeat_count", repeatCount).
 			Int("repeat_participants", repeatParticipants).
 			Msg("immersive repeat triggered")
-		state.mu.Lock()
-		state.inFlight = false
-		state.processingBatch = nil
-		state.waitRounds = 0
-		pending := len(state.nextBatch) > 0
-		state.mu.Unlock()
-		if pending {
-			log.Info().Str("session", sessionKey).Msg("pending messages detected, flushing again")
-			b.flush(sessionKey)
-		}
 		return
 	}
 	if strings.TrimSpace(input) == "" {
-		state.mu.Lock()
-		state.inFlight = false
-		state.processingBatch = nil
-		state.waitRounds = 0
-		pending := len(state.nextBatch) > 0
-		state.mu.Unlock()
-		if pending {
-			b.flush(sessionKey)
-		}
 		return
 	}
 	log.Info().
@@ -341,6 +345,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	decisionLog.Msg("immersive control decision evaluated")
 
 	if action == controlActionWait {
+		skipFinalize = true
 		waitDelay := time.Duration(waitMS) * time.Millisecond
 		state.mu.Lock()
 		state.nextBatch = prependMessages(processing, state.nextBatch)
@@ -366,119 +371,109 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 
 	if action == controlActionReply {
-		onReplyEvent := func(event llm.StreamEvent) error {
-			switch event.Type {
-			case llm.StreamEventToolCall, llm.StreamEventToolResult, llm.StreamEventFinal, llm.StreamEventError:
-				log.Debug().
-					Str("session", sessionKey).
-					Int64("stream_seq", event.Seq).
-					Int("stream_step", event.Step).
-					Str("stream_event_type", string(event.Type)).
-					Msg("immersive reply stream event")
-			}
-			return nil
-		}
+		_ = b.handleReply(ctx, sessionKey, input, immersiveCtx, recordReply)
+	}
+}
 
-		replyCtx, cancelReply := context.WithCancel(context.Background())
-		reply, replyErr := b.llm.ReplyStreamWithExtraPromptAllowTools(
-			replyCtx,
-			input,
-			sessionKey,
-			"",
-			"",
-			onReplyEvent,
-			immersiveCtx,
-		)
-		cancelReply()
-		replyLog := log.Info().
+// handleReply generates and sends an LLM reply for the given session,
+// splitting multi-segment responses and recording the result.
+func (b *ImmersiveBuffer) handleReply(
+	ctx *zero.Ctx,
+	sessionKey string,
+	input string,
+	immersiveCtx *contextassemble.ImmersiveContext,
+	recordReply func(reply, reason string),
+) error {
+	onReplyEvent := func(event llm.StreamEvent) error {
+		switch event.Type {
+		case llm.StreamEventToolCall, llm.StreamEventToolResult, llm.StreamEventFinal, llm.StreamEventError:
+			log.Debug().
+				Str("session", sessionKey).
+				Int64("stream_seq", event.Seq).
+				Int("stream_step", event.Step).
+				Str("stream_event_type", string(event.Type)).
+				Msg("immersive reply stream event")
+		}
+		return nil
+	}
+
+	replyCtx, cancelReply := context.WithCancel(context.Background())
+	reply, replyErr := b.llm.ReplyStreamWithExtraPromptAllowTools(
+		replyCtx,
+		input,
+		sessionKey,
+		"",
+		"",
+		onReplyEvent,
+		immersiveCtx,
+	)
+	cancelReply()
+	replyLog := log.Info().
+		Str("session", sessionKey).
+		Int("output_chars", len([]rune(reply))).
+		Str("output_first_line", firstLineForLog(reply)).
+		Str("output_preview", previewForLog(reply, immersiveLogPreviewChars))
+	if replyErr != nil {
+		replyLog = replyLog.Err(replyErr)
+	}
+	replyLog.Msg("immersive reply llm raw output captured")
+	if replyErr != nil {
+		log.Warn().
 			Str("session", sessionKey).
-			Int("output_chars", len([]rune(reply))).
-			Str("output_first_line", firstLineForLog(reply)).
-			Str("output_preview", previewForLog(reply, immersiveLogPreviewChars))
-		if replyErr != nil {
-			replyLog = replyLog.Err(replyErr)
-		}
-		replyLog.Msg("immersive reply llm raw output captured")
-		if replyErr != nil {
-			log.Warn().
-				Str("session", sessionKey).
-				Err(replyErr).
-				Msg("immersive reply generation failed")
-			goto finalizeState
-		}
+			Err(replyErr).
+			Msg("immersive reply generation failed")
+		return replyErr
+	}
 
-		reply = strings.TrimSpace(reply)
-		if reply == "" {
-			reply = immersiveEmptyReplyFallback
-		}
+	reply = strings.TrimSpace(reply)
+	if reply == "" {
+		reply = immersiveEmptyReplyFallback
+	}
 
-		segments := SplitReplySegments(reply)
-		if len(segments) == 0 {
-			segments = []string{reply}
-		}
+	segments := SplitReplySegments(reply)
+	if len(segments) == 0 {
+		segments = []string{reply}
+	}
 
-		sentMessages := 0
-		sentChars := 0
-		replyParts := make([]string, 0, len(segments))
-		for _, segment := range segments {
-			trimmed := strings.TrimSpace(segment)
-			if trimmed == "" {
-				continue
-			}
-			replyParts = append(replyParts, trimmed)
-			if ctx == nil {
-				continue
-			}
-			if sentMessages > 0 {
-				time.Sleep(NextReplySegmentDelay(trimmed))
-			}
-			b.sendTracked(ctx, trimmed)
-			sentMessages++
-			sentChars += len([]rune(trimmed))
+	sentMessages := 0
+	sentChars := 0
+	replyParts := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		trimmed := strings.TrimSpace(segment)
+		if trimmed == "" {
+			continue
 		}
-		finalReply := strings.TrimSpace(strings.Join(replyParts, "\n"))
-		if finalReply == "" {
-			finalReply = immersiveEmptyReplyFallback
-		}
-
+		replyParts = append(replyParts, trimmed)
 		if ctx == nil {
-			log.Info().
-				Str("session", sessionKey).
-				Int("reply_chars", len([]rune(finalReply))).
-				Msg("immersive reply prepared without ctx")
-		} else {
-			log.Info().
-				Str("session", sessionKey).
-				Int("reply_chars", len([]rune(finalReply))).
-				Int("reply_messages", sentMessages).
-				Int("sent_chars", sentChars).
-				Msg("immersive reply sent")
+			continue
 		}
-		recordReply(finalReply, "reply_action")
+		if sentMessages > 0 {
+			time.Sleep(NextReplySegmentDelay(trimmed))
+		}
+		b.sendTracked(ctx, trimmed)
+		sentMessages++
+		sentChars += len([]rune(trimmed))
+	}
+	finalReply := strings.TrimSpace(strings.Join(replyParts, "\n"))
+	if finalReply == "" {
+		finalReply = immersiveEmptyReplyFallback
 	}
 
-finalizeState:
-	delay := time.Duration(defaultPendingFlushDelayMS) * time.Millisecond
-	state.mu.Lock()
-	state.inFlight = false
-	state.processingBatch = nil
-	state.waitRounds = 0
-	pending := len(state.nextBatch) > 0
-	if state.timer != nil {
-		state.timer.Stop()
-	}
-	if pending {
-		state.timer = time.AfterFunc(delay, func() {
-			b.flush(sessionKey)
-		})
-	}
-	state.mu.Unlock()
-	if pending {
+	if ctx == nil {
 		log.Info().
 			Str("session", sessionKey).
-			Int64("next_delay_ms", delay.Milliseconds()).
-			Msg("pending messages detected, flushing again")
+			Int("reply_chars", len([]rune(finalReply))).
+			Msg("immersive reply prepared without ctx")
+	} else {
+		log.Info().
+			Str("session", sessionKey).
+			Int("reply_chars", len([]rune(finalReply))).
+			Int("reply_messages", sentMessages).
+			Int("sent_chars", sentChars).
+			Msg("immersive reply sent")
 	}
+	recordReply(finalReply, "reply_action")
+	return nil
 }
 
 // session retrieves or creates the session state for the given session key.
@@ -572,6 +567,7 @@ func (b *ImmersiveBuffer) RefreshIdentityFromCtx(ctx *zero.Ctx) {
 	defer b.mu.Unlock()
 	updated := b.identity
 	updated.ConfigNicknames = normalizedBotNames(b.nicknames)
+	updated.AccountIDs = nil
 	if ctx.Event != nil {
 		if ctx.Event.SelfID != 0 {
 			updated.AccountIDs = append(updated.AccountIDs, strconv.FormatInt(ctx.Event.SelfID, 10))

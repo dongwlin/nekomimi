@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -590,4 +591,39 @@ func mustListChatEvents(t *testing.T, manager *llm.Manager, sessionKey string, l
 		t.Fatalf("list chat events failed: %v", err)
 	}
 	return result.Entries
+}
+
+func TestEnqueue_ConcurrentDoesNotPanic(t *testing.T) {
+	manager := llm.NewManager(config.LLMConfig{
+		Enabled:  false,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		Key:      "test-key",
+	}, llm.ManagerDeps{})
+	buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, manager, []string{"neko"})
+	sessionKey := "group:concurrent"
+	const goroutines = 20
+	const messagesPerGoroutine = 50
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < messagesPerGoroutine; i++ {
+				text := fmt.Sprintf("msg-%d-%d", id, i)
+				buffer.Enqueue(nil, sessionKey, text, fmt.Sprintf("name=user%d", id), false)
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	time.Sleep(50 * time.Millisecond)
+
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.runtimeBuffer) == 0 {
+		t.Fatal("expected messages in runtime buffer after concurrent enqueue")
+	}
 }
