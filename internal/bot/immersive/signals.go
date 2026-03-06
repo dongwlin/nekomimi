@@ -7,16 +7,14 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
-// detectMessageSignals analyzes a message to determine if it contains signals
-// that indicate the bot should respond. Returns three booleans:
-// - mention: whether the bot was explicitly mentioned
-// - addressed: whether the message appears to be directed at the bot
-// - question: whether the message appears to be a question
-func (b *ImmersiveBuffer) detectMessageSignals(ctx *zero.Ctx, text string) (bool, bool, bool) {
+// detectMessageSignals analyzes a message to determine signal strength.
+// Returns mention, addressed, question booleans plus the nickname position.
+func (b *ImmersiveBuffer) detectMessageSignals(ctx *zero.Ctx, text string) (bool, bool, bool, NicknamePosition) {
 	mention := b.isExplicitMention(ctx)
-	addressed := mention || b.containsNickname(text)
+	nickPos := b.detectNicknamePosition(text)
+	addressed := mention || nickPos != NickNotFound
 	question := looksLikeQuestion(text)
-	return mention, addressed, question
+	return mention, addressed, question, nickPos
 }
 
 // isExplicitMention checks if the message contains an explicit @mention of the bot
@@ -45,24 +43,40 @@ func (b *ImmersiveBuffer) isExplicitMention(ctx *zero.Ctx) bool {
 	return false
 }
 
-// containsNickname checks if the message text contains any of the bot's nicknames.
-func (b *ImmersiveBuffer) containsNickname(text string) bool {
-	lower := strings.ToLower(text)
+// detectNicknamePosition checks all bot nicknames and returns the strongest
+// position match found in the text.
+func (b *ImmersiveBuffer) detectNicknamePosition(text string) NicknamePosition {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return NickNotFound
+	}
+
 	identity := b.currentIdentity()
 	allNames := append([]string{}, identity.ConfigNicknames...)
 	if trimmed := strings.TrimSpace(identity.AccountNickname); trimmed != "" {
 		allNames = append(allNames, trimmed)
 	}
+
+	best := NickNotFound
 	for _, name := range allNames {
-		trimmed := strings.ToLower(strings.TrimSpace(name))
-		if trimmed == "" {
+		trimmedName := strings.ToLower(strings.TrimSpace(name))
+		if trimmedName == "" {
 			continue
 		}
-		if strings.Contains(lower, trimmed) {
-			return true
+		if !strings.Contains(lower, trimmedName) {
+			continue
+		}
+		pos := classifyNicknamePosition(lower, trimmedName)
+		if pos > best {
+			best = pos
 		}
 	}
-	return false
+	return best
+}
+
+// containsNickname checks if the message text contains any of the bot's nicknames.
+func (b *ImmersiveBuffer) containsNickname(text string) bool {
+	return b.detectNicknamePosition(text) != NickNotFound
 }
 
 var questionIndicators = []string{

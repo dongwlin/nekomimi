@@ -20,6 +20,7 @@ func TestBehaviorTransitions_IdleAddressedInThreadCoolingDown(t *testing.T) {
 		chars:            len([]rune("neko 在吗")),
 		isAddressedToBot: true,
 		isQuestion:       true,
+		nicknamePosition: NickStart,
 	}, false, now)
 	snapshot := session.snapshotBehaviorLocked(now)
 	if snapshot.Mode != ModeAddressed {
@@ -157,6 +158,7 @@ func TestFlush_StrongAddressedReopensCoolingDown(t *testing.T) {
 		chars:            len([]rune("neko 在吗")),
 		isAddressedToBot: true,
 		isQuestion:       true,
+		nicknamePosition: NickStart,
 	}
 
 	var before, after float64
@@ -216,6 +218,8 @@ func TestFlush_WaitingUserNoiseSkipsBeforeLLM(t *testing.T) {
 	seedQueueForFlushTest(buffer, sessionKey, 0, msg)
 	buffer.flush(sessionKey)
 
+	// The speak gate should reject this: non-focus speaker in waiting_user mode
+	// produces a score near zero (mode_waiting_noise penalty).
 	if got := atomic.LoadInt64(&callCount); got != 0 {
 		t.Fatalf("expected waiting_user ambient noise to be skipped before control call, got %d", got)
 	}

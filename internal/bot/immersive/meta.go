@@ -360,6 +360,8 @@ func buildImmersiveContext(
 		EnergyBand:             behavior.EnergyBand,
 		SpeakGateOpen:          behavior.SpeakGateOpen,
 		SignalScore:            gate.SignalScore,
+		SignalBand:             string(gate.SignalBand),
+		SignalFeatureSummary:   formatSignalFeatures(gate.SignalFeatures),
 		StrongCall:             gate.StrongCall,
 		LastBotReplyMS:         elapsedSinceMS(now, behavior.LastBotReplyAt),
 		LastAddressedMS:        elapsedSinceMS(now, behavior.LastAddressedAt),
@@ -457,6 +459,19 @@ func summarizeQueueMeta(queue []queuedMessage, now time.Time, identity botIdenti
 		}
 		if msg.isQuestion {
 			meta.QuestionsCount++
+		}
+		switch msg.nicknamePosition {
+		case NickIsolated:
+			meta.NicknameIsolatedCount++
+		case NickStart:
+			meta.NicknameStartCount++
+		case NickEnd:
+			meta.NicknameEndCount++
+		case NickMiddle:
+			meta.NicknameMiddleCount++
+		}
+		if msg.isQuestion && msg.isAddressedToBot {
+			meta.DirectedQuestions++
 		}
 		if !msg.ts.IsZero() {
 			if first.IsZero() || msg.ts.Before(first) {

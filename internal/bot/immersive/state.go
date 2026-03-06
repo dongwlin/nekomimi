@@ -12,6 +12,7 @@ const (
 	defaultFollowupDelay    = 90 * time.Second
 	defaultFollowupBudget   = 1
 	defaultColdOpenCooldown = 10 * time.Minute
+	defaultWeakAddressNudge = 2.0
 )
 
 // ConversationMode describes the bot's current social position in a session.
@@ -248,7 +249,10 @@ func (s *immersiveSession) observeIncomingMessageLocked(msg queuedMessage, isPri
 		return
 	}
 
-	if msg.isMentionBot || msg.isAddressedToBot {
+	isStrongAddress := msg.isMentionBot || msg.nicknamePosition >= NickStart
+	isWeakAddress := !isStrongAddress && msg.isAddressedToBot
+
+	if isStrongAddress {
 		sameFocus := sameSpeaker(speaker, s.focusSpeaker)
 		if speaker != "" {
 			s.focusSpeaker = speaker
@@ -260,10 +264,15 @@ func (s *immersiveSession) observeIncomingMessageLocked(msg queuedMessage, isPri
 		} else if s.mode == ModeInThread && sameFocus {
 			s.transitionToLocked(ModeInThread, "explicit_thread_continuation", now)
 		} else {
-			s.transitionToLocked(ModeAddressed, "explicit_address", now)
+			s.transitionToLocked(ModeAddressed, "strong_address", now)
 		}
-		s.raiseEnergyTowardsTargetLocked(defaultAddressBoost, "explicit_address_boost")
-		s.maybeFastRecoveryLocked(defaultFastRecoveryChance, defaultFastRecoveryBoost, "explicit_address_fast_recovery")
+		s.raiseEnergyTowardsTargetLocked(defaultAddressBoost, "strong_address_boost")
+		s.maybeFastRecoveryLocked(defaultFastRecoveryChance, defaultFastRecoveryBoost, "strong_address_fast_recovery")
+		return
+	}
+
+	if isWeakAddress {
+		s.applyTrafficNudgeLocked(defaultWeakAddressNudge, "weak_address_nudge")
 		return
 	}
 

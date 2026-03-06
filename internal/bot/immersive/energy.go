@@ -24,16 +24,19 @@ const (
 	defaultReplyEnergyCost         = 18.0
 	defaultQuestionReplyEnergyCost = 12.0
 
-	defaultSpeakOpenThreshold    = 56
-	defaultSpeakCloseThreshold   = 44
-	defaultSpeakOpenSignalScore  = 5
-	defaultSpeakCloseSignalScore = 2
+	defaultSpeakOpenThreshold  = 56
+	defaultSpeakCloseThreshold = 44
+
+	defaultHighPriorityScoreBoost = 5.0
+	defaultEngageScoreNudge       = 2.0
 )
 
 type speakGateDecision struct {
 	Allow            bool
 	StrongCall       bool
 	SignalScore      int
+	SignalBand       SignalBand
+	SignalFeatures   []SignalFeature
 	Reason           string
 	ReplyTier        string
 	MaxReplySegments int
@@ -181,83 +184,53 @@ func (s *immersiveSession) evaluateSpeakGateLocked(sessionKey string, meta queue
 	s.decayBehaviorLocked(now)
 
 	snapshot := s.snapshotBehaviorLocked(now)
-	score := computeSignalScore(sessionKey, meta, snapshot, now)
-	strongCall := isPrivateSessionKey(sessionKey) || meta.MentionsToBot > 0 || meta.AddressedToBot > 0
+	score := scoreSignals(sessionKey, meta, snapshot, now)
+	strongCall := score.Band == BandHighPriority
+
+	switch score.Band {
+	case BandHighPriority:
+		s.raiseEnergyTowardsTargetLocked(defaultHighPriorityScoreBoost, "high_priority_score_boost")
+	case BandEngage:
+		s.applyTrafficNudgeLocked(defaultEngageScoreNudge, "engage_score_nudge")
+	}
 
 	allow := false
-	reason := "energy_or_signal_below_threshold"
+	reason := "signal_below_threshold"
 	switch {
-	case strongCall:
+	case score.Band == BandHighPriority:
 		allow = true
-		reason = "strong_call"
+		reason = "high_priority_signal"
 	case snapshot.Mode == ModeInThread && sameSpeaker(meta.LastSpeaker, snapshot.FocusSpeaker) && snapshot.EnergyValue >= defaultSpeakCloseThreshold:
 		allow = true
 		reason = "active_thread"
-	default:
+	case score.Band == BandEngage && snapshot.EnergyValue >= defaultSpeakCloseThreshold:
+		allow = true
+		reason = "engage_signal"
+	case score.Band == BandObserve:
 		energyThreshold := defaultSpeakOpenThreshold
-		signalThreshold := defaultSpeakOpenSignalScore
 		if snapshot.SpeakGateOpen {
 			energyThreshold = defaultSpeakCloseThreshold
-			signalThreshold = defaultSpeakCloseSignalScore
 		}
-		if snapshot.EnergyValue >= energyThreshold && score >= signalThreshold {
+		if snapshot.EnergyValue >= energyThreshold {
 			allow = true
-			reason = "energy_signal_pass"
+			reason = "observe_energy_pass"
 		}
 	}
 
 	s.speakGateOpen = allow
 	snapshot = s.snapshotBehaviorLocked(now)
 	decision := speakGateDecision{
-		Allow:       allow,
-		StrongCall:  strongCall,
-		SignalScore: score,
-		Reason:      reason,
+		Allow:          allow,
+		StrongCall:     strongCall,
+		SignalScore:    score.TotalScore,
+		SignalBand:     score.Band,
+		SignalFeatures: score.Features,
+		Reason:         reason,
 	}
 	decision.ReplyTier = replyTierForSnapshot(snapshot, strongCall)
 	decision.MaxReplySegments = maxReplySegmentsForTier(decision.ReplyTier)
 	decision.FollowupAllowed = followupAllowedForSnapshot(snapshot, decision.ReplyTier)
 	return snapshot, decision
-}
-
-func computeSignalScore(sessionKey string, meta queueMeta, snapshot behaviorSnapshot, now time.Time) int {
-	score := 0
-	if isPrivateSessionKey(sessionKey) {
-		score += 10
-	}
-	score += meta.MentionsToBot * 8
-	score += meta.AddressedToBot * 6
-	score += meta.QuestionsCount * 2
-	if meta.MessagesCount >= 3 {
-		score++
-	}
-	if sameSpeaker(meta.LastSpeaker, snapshot.FocusSpeaker) {
-		score += 3
-	}
-	switch snapshot.Mode {
-	case ModeAddressed:
-		score += 3
-	case ModeInThread:
-		score += 5
-	case ModeWaitingUser:
-		if sameSpeaker(meta.LastSpeaker, snapshot.FocusSpeaker) {
-			score += 4
-		} else {
-			score -= 3
-		}
-	case ModeCoolingDown:
-		score -= 4
-	}
-	if snapshot.PendingQuestion && sameSpeaker(meta.LastSpeaker, snapshot.FocusSpeaker) {
-		score += 4
-	}
-	if !snapshot.LastBotReplyAt.IsZero() && now.Sub(snapshot.LastBotReplyAt) < 45*time.Second {
-		score -= 2
-	}
-	if score < 0 {
-		return 0
-	}
-	return score
 }
 
 func replyTierForSnapshot(snapshot behaviorSnapshot, strongCall bool) string {

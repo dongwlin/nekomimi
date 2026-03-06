@@ -29,6 +29,8 @@ type ImmersiveContext struct {
 	EnergyBand             string
 	SpeakGateOpen          bool
 	SignalScore            int
+	SignalBand             string
+	SignalFeatureSummary   string
 	StrongCall             bool
 	LastBotReplyMS         int64
 	LastAddressedMS        int64
@@ -151,7 +153,13 @@ func formatImmersiveSignals(ic *ImmersiveContext) string {
 	b.WriteString(strconv.Itoa(ic.QuestionsCount))
 	b.WriteString("\nsignal_score: ")
 	b.WriteString(strconv.Itoa(ic.SignalScore))
+	b.WriteString("\nsignal_band: ")
+	b.WriteString(strings.TrimSpace(ic.SignalBand))
 	b.WriteString("\nstrong_call: ")
 	b.WriteString(strconv.FormatBool(ic.StrongCall))
+	if summary := strings.TrimSpace(ic.SignalFeatureSummary); summary != "" {
+		b.WriteString("\nsignal_features: ")
+		b.WriteString(summary)
+	}
 	return b.String()
 }

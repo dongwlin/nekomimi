@@ -19,6 +19,7 @@ func TestDetectMessageSignals_Addressed(t *testing.T) {
 		wantMention   bool
 		wantAddressed bool
 		wantQuestion  bool
+		wantNickPos   NicknamePosition
 	}{
 		{
 			name:          "other user handle does not address bot",
@@ -26,6 +27,7 @@ func TestDetectMessageSignals_Addressed(t *testing.T) {
 			wantMention:   false,
 			wantAddressed: false,
 			wantQuestion:  false,
+			wantNickPos:   NickNotFound,
 		},
 		{
 			name:          "email address does not address bot",
@@ -33,13 +35,15 @@ func TestDetectMessageSignals_Addressed(t *testing.T) {
 			wantMention:   false,
 			wantAddressed: false,
 			wantQuestion:  false,
+			wantNickPos:   NickNotFound,
 		},
 		{
-			name:          "bot nickname marks addressed",
+			name:          "bot nickname at start marks addressed",
 			text:          "Neko 帮我记一下",
 			wantMention:   false,
 			wantAddressed: true,
 			wantQuestion:  false,
+			wantNickPos:   NickStart,
 		},
 		{
 			name: "explicit at mention marks mention and addressed",
@@ -53,12 +57,21 @@ func TestDetectMessageSignals_Addressed(t *testing.T) {
 			wantMention:   true,
 			wantAddressed: true,
 			wantQuestion:  false,
+			wantNickPos:   NickNotFound,
+		},
+		{
+			name:          "bot nickname in middle",
+			text:          "我觉得Neko说得对",
+			wantMention:   false,
+			wantAddressed: true,
+			wantQuestion:  false,
+			wantNickPos:   NickMiddle,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mention, addressed, question := buffer.detectMessageSignals(tt.ctx, tt.text)
+			mention, addressed, question, nickPos := buffer.detectMessageSignals(tt.ctx, tt.text)
 			if mention != tt.wantMention {
 				t.Fatalf("mention = %v, want %v", mention, tt.wantMention)
 			}
@@ -67,6 +80,9 @@ func TestDetectMessageSignals_Addressed(t *testing.T) {
 			}
 			if question != tt.wantQuestion {
 				t.Fatalf("question = %v, want %v", question, tt.wantQuestion)
+			}
+			if nickPos != tt.wantNickPos {
+				t.Fatalf("nickPos = %d, want %d", nickPos, tt.wantNickPos)
 			}
 		})
 	}

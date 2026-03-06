@@ -112,6 +112,7 @@ type queuedMessage struct {
 	isMentionBot     bool
 	isQuestion       bool
 	isAddressedToBot bool
+	nicknamePosition NicknamePosition
 }
 
 // queueMeta contains aggregated metadata about the message queue.
@@ -131,6 +132,12 @@ type queueMeta struct {
 	QuestionsCount int
 	LastSpeaker    string
 	TimeSpanMS     int64
+
+	NicknameIsolatedCount int
+	NicknameStartCount    int
+	NicknameEndCount      int
+	NicknameMiddleCount   int
+	DirectedQuestions     int
 }
 
 func normalizeEventKind(kind EventKind) EventKind {

@@ -71,11 +71,12 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	}
 	state := b.session(sessionKey)
 	now := time.Now()
-	mention, addressed, question := b.detectMessageSignals(ctx, trimmed)
+	mention, addressed, question, nickPos := b.detectMessageSignals(ctx, trimmed)
 	msg := newQueuedMessage(EventUserMessage, trimmed, speaker, now, nil)
 	msg.isMentionBot = mention
 	msg.isQuestion = question
 	msg.isAddressedToBot = addressed
+	msg.nicknamePosition = nickPos
 
 	state.mu.Lock()
 	if sendFn := b.captureSendFunc(ctx); sendFn != nil {
@@ -110,6 +111,7 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		Bool("mention", mention).
 		Bool("addressed", addressed).
 		Bool("question", question).
+		Int("nick_pos", int(nickPos)).
 		Int("queue_len", queueLen).
 		Int("queue_chars", queueChars).
 		Str("mode", string(behavior.Mode)).
@@ -302,11 +304,13 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Str("session", sessionKey).
 		Bool("allow", gate.Allow).
 		Bool("strong_call", gate.StrongCall).
+		Str("signal_band", string(gate.SignalBand)).
 		Str("mode", string(behavior.Mode)).
 		Str("focus_speaker", behavior.FocusSpeaker).
 		Int("energy_value", behavior.EnergyValue).
 		Str("energy_band", behavior.EnergyBand).
 		Int("signal_score", gate.SignalScore).
+		Str("signal_features", formatSignalFeatures(gate.SignalFeatures)).
 		Str("reason", gate.Reason).
 		Msg("immersive speak gate evaluated")
 	if !gate.Allow {

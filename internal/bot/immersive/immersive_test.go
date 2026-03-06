@@ -489,7 +489,7 @@ func TestFlush_PersistsAtomicUserEventsWithoutBatchEnvelope(t *testing.T) {
 
 	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
 	seedQueueForFlushTest(buffer, sessionKey, 0,
-		queuedMessage{text: "neko hello-1", speaker: "name=alice", ts: time.Now().Add(-2 * time.Second), chars: len([]rune("neko hello-1")), isAddressedToBot: true},
+		queuedMessage{text: "neko hello-1", speaker: "name=alice", ts: time.Now().Add(-2 * time.Second), chars: len([]rune("neko hello-1")), isAddressedToBot: true, nicknamePosition: NickStart},
 		queuedMessage{text: "hello-2", speaker: "name=bob", ts: time.Now().Add(-1 * time.Second), chars: len([]rune("hello-2"))},
 	)
 	buffer.flush(sessionKey)
@@ -740,6 +740,7 @@ func seedQueueForFlushTest(buffer *ImmersiveBuffer, sessionKey string, waitRound
 				chars:            len([]rune("neko 在吗")),
 				isAddressedToBot: true,
 				isQuestion:       true,
+				nicknamePosition: NickStart,
 			},
 		}
 	}
