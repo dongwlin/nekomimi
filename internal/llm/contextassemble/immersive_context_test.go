@@ -39,11 +39,13 @@ func TestFormatImmersiveContext_AllFields(t *testing.T) {
 		ReplyTier:              "engaged",
 		MaxReplySegments:       3,
 		FollowupAllowed:        false,
-		Transcript:             "- [alice]: hello\n- [bob]: hi",
 	}
 	result := FormatImmersiveContext(ic)
 
 	checks := []string{
+		"[immersive_state]",
+		"[immersive_batch]",
+		"[immersive_signals]",
 		"messages_count: 5",
 		"participants: [alice,bob]",
 		"mentions_to_bot: 2",
@@ -69,9 +71,6 @@ func TestFormatImmersiveContext_AllFields(t *testing.T) {
 		"reply_tier: engaged",
 		"max_reply_segments: 3",
 		"followup_allowed: false",
-		"transcript:",
-		"- [alice]: hello",
-		"- [bob]: hi",
 	}
 	for _, check := range checks {
 		if !strings.Contains(result, check) {
@@ -80,14 +79,19 @@ func TestFormatImmersiveContext_AllFields(t *testing.T) {
 	}
 }
 
-func TestFormatImmersiveContext_EmptyTranscript(t *testing.T) {
-	ic := &ImmersiveContext{
-		MessagesCount: 0,
-		LastSpeaker:   "unknown",
+func TestRenderImmersiveBlocks_ReturnsStableBlocks(t *testing.T) {
+	blocks := RenderImmersiveBlocks(&ImmersiveContext{MessagesCount: 1})
+	if len(blocks) != 3 {
+		t.Fatalf("expected 3 immersive blocks, got %d", len(blocks))
 	}
-	result := FormatImmersiveContext(ic)
-	if strings.Contains(result, "transcript:") {
-		t.Fatalf("empty transcript should not produce transcript section, got:\n%s", result)
+	if blocks[0].Name != BlockImmersiveState {
+		t.Fatalf("unexpected first block %q", blocks[0].Name)
+	}
+	if blocks[1].Name != BlockImmersiveBatch {
+		t.Fatalf("unexpected second block %q", blocks[1].Name)
+	}
+	if blocks[2].Name != BlockImmersiveSignals {
+		t.Fatalf("unexpected third block %q", blocks[2].Name)
 	}
 }
 

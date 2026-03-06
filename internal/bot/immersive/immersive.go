@@ -319,20 +319,17 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 
 	timelineSlice := trimTimelineTail(runtimeSnapshot, b.runtimeBufferLimit())
-	input := buildCombinedInput(timelineSlice, identity)
-	if strings.TrimSpace(input) == "" {
-		timelineSlice = processing
-		input = buildCombinedInput(processing, identity)
+	debugPreview := buildCombinedInput(timelineSlice, identity)
+	if strings.TrimSpace(debugPreview) == "" {
+		debugPreview = buildCombinedInput(processing, identity)
 	}
-	immersiveCtx := buildImmersiveContext(timelineSlice, identity, behavior, gate)
-	if strings.TrimSpace(input) == "" {
-		return
-	}
+	immersiveCtx := buildImmersiveContext(processing, identity, behavior, gate)
 	log.Info().
 		Str("session", sessionKey).
-		Int("input_chars", len([]rune(input))).
-		Str("input_preview", previewForLog(input, immersiveLogPreviewChars)).
-		Msg("immersive control intent input prepared")
+		Int("debug_preview_chars", len([]rune(debugPreview))).
+		Str("debug_preview", previewForLog(debugPreview, immersiveLogPreviewChars)).
+		Str("prompt_source", "pipeline_blocks").
+		Msg("immersive debug preview prepared")
 
 	recordReply := func(reply, reason string, delivered bool) {
 		trimmed := strings.TrimSpace(reply)
@@ -353,7 +350,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Msg("immersive reply recorded into runtime buffer and llm history")
 	}
 
-	intent, intentErr := b.llm.DecideImmersiveIntent(context.Background(), input, sessionKey, "", immersiveCtx)
+	intent, intentErr := b.llm.DecideImmersiveIntent(context.Background(), "", sessionKey, "", immersiveCtx)
 	decision := decisionFromIntent(intent)
 	action := decision.action
 	waitMS := decision.waitMS
@@ -446,7 +443,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 
 	if action == controlActionReply {
-		_ = b.handleReply(sendFn, sessionKey, input, immersiveCtx, recordReply)
+		_ = b.handleReply(sendFn, sessionKey, "", immersiveCtx, recordReply)
 	}
 }
 

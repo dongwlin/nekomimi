@@ -156,18 +156,23 @@ func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
 		Key:      "test-key",
 	}, ManagerDeps{})
 
-	ic := &contextassemble.ImmersiveContext{
-		MessagesCount:  4,
-		Participants:   []string{"alice", "bob"},
-		MentionsToBot:  2,
-		AddressedToBot: 1,
-		QuestionsCount: 1,
-		LastSpeaker:    "alice",
-		TimeSpanMS:     3000,
-		Transcript:     "- [alice]: @bot what time is it?",
+	if _, ok := manager.AppendUserEvent("session-intent-ic", "neko what time is it?", "alice"); !ok {
+		t.Fatal("append user event failed")
 	}
 
-	decision, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-ic", "alice", ic)
+	ic := &contextassemble.ImmersiveContext{
+		MessagesCount:    4,
+		Participants:     []string{"alice", "bob"},
+		MentionsToBot:    2,
+		AddressedToBot:   1,
+		QuestionsCount:   1,
+		LastSpeaker:      "alice",
+		TimeSpanMS:       3000,
+		ConversationMode: "addressed",
+		SignalScore:      9,
+	}
+
+	decision, err := manager.DecideImmersiveIntent(context.Background(), "", "session-intent-ic", "alice", ic)
 	if err != nil {
 		t.Fatalf("decide immersive intent failed: %v", err)
 	}
@@ -180,16 +185,23 @@ func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
 	mu.Unlock()
 
 	signals := []string{
+		"[immersive_state]",
+		"[immersive_batch]",
+		"[immersive_signals]",
 		"mentions_to_bot: 2",
 		"addressed_to_bot: 1",
 		"questions_count: 1",
 		"last_speaker: alice",
-		"@bot what time is it?",
+		"conversation_mode: addressed",
+		"neko what time is it?",
 	}
 	for _, signal := range signals {
 		if !strings.Contains(allText, signal) {
 			t.Errorf("expected signal %q in model input, got:\n%s", signal, allText)
 		}
+	}
+	if strings.Count(allText, "neko what time is it?") != 1 {
+		t.Fatalf("expected current batch text once, got:\n%s", allText)
 	}
 }
 
@@ -222,8 +234,14 @@ func TestDecideImmersiveIntent_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 	allText := strings.Join(capturedInputs, "\n")
 	mu.Unlock()
 
-	if strings.Contains(allText, "immersive_signals") {
-		t.Fatalf("immersive_signals should not be present when ImmersiveContext is nil:\n%s", allText)
+	for _, blockName := range []string{
+		contextassemble.BlockImmersiveState,
+		contextassemble.BlockImmersiveBatch,
+		contextassemble.BlockImmersiveSignals,
+	} {
+		if strings.Contains(allText, blockName) {
+			t.Fatalf("%s should not be present when ImmersiveContext is nil:\n%s", blockName, allText)
+		}
 	}
 }
 

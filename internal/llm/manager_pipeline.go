@@ -311,46 +311,48 @@ func (m *Manager) snapshotPipelineState() pipelineState {
 
 func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contextassemble.Assembler, sessionKey string, meta contextassemble.Meta, fallbackContent string, immersiveCtx *contextassemble.ImmersiveContext) ([]model.Message, bool, error) {
 	session := strings.TrimSpace(sessionKey)
-	if assembler == nil || session == "" {
-		content := strings.TrimSpace(fallbackContent)
-		if content == "" {
-			return nil, false, errors.New("input is empty")
-		}
-		return []model.Message{{Role: "user", Content: content}}, false, nil
-	}
-
-	assembled, err := assembler.Assemble(ctx, contextassemble.Request{
-		SessionKey: session,
-		Meta:       meta,
-	})
+	blocks, compressed, err := m.buildPipelineBlocks(ctx, assembler, session, meta, immersiveCtx)
 	if err != nil {
-		return nil, false, fmt.Errorf("assemble context: %w", err)
+		return nil, false, err
 	}
-
-	compressed := false
-	for _, block := range assembled.Blocks {
-		if block.Truncated {
-			compressed = true
-			break
-		}
-	}
-
-	blocks := assembled.Blocks
-	if immersiveCtx != nil {
-		blocks = append(blocks, contextassemble.Block{
-			Name:    contextassemble.BlockImmersiveSignals,
-			Content: contextassemble.FormatImmersiveContext(immersiveCtx),
-		})
-	}
-
 	content := renderAssembledBlocks(blocks)
-	if strings.TrimSpace(content) == "" {
-		content = strings.TrimSpace(fallbackContent)
+	fallback := strings.TrimSpace(fallbackContent)
+	hasPersistentSource := assembler != nil && session != ""
+	if !hasPersistentSource && fallback != "" {
+		if strings.TrimSpace(content) == "" {
+			content = fallback
+		} else {
+			content = fallback + "\n\n" + content
+		}
+	} else if strings.TrimSpace(content) == "" {
+		content = fallback
 	}
 	if strings.TrimSpace(content) == "" {
 		return nil, false, errors.New("input is empty")
 	}
 	return []model.Message{{Role: "user", Content: content}}, compressed, nil
+}
+
+func (m *Manager) buildPipelineBlocks(ctx context.Context, assembler *contextassemble.Assembler, sessionKey string, meta contextassemble.Meta, immersiveCtx *contextassemble.ImmersiveContext) ([]contextassemble.Block, bool, error) {
+	blocks := make([]contextassemble.Block, 0, 6)
+	compressed := false
+	if assembler != nil && sessionKey != "" {
+		assembled, err := assembler.Assemble(ctx, contextassemble.Request{
+			SessionKey: sessionKey,
+			Meta:       meta,
+		})
+		if err != nil {
+			return nil, false, fmt.Errorf("assemble context: %w", err)
+		}
+		for _, block := range assembled.Blocks {
+			if block.Truncated {
+				compressed = true
+			}
+		}
+		blocks = append(blocks, assembled.Blocks...)
+	}
+	blocks = append(blocks, contextassemble.RenderImmersiveBlocks(immersiveCtx)...)
+	return blocks, compressed, nil
 }
 
 func renderAssembledBlocks(blocks []contextassemble.Block) string {

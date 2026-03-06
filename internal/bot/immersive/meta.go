@@ -9,8 +9,7 @@ import (
 	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 )
 
-// buildRecentPreview creates a formatted input string from the last 'keep' messages
-// in the queue for use in LLM prompts.
+// buildRecentPreview creates a formatted debug preview from the last 'keep' messages.
 func buildRecentPreview(queue []queuedMessage, keep int, identity botIdentity) string {
 	if len(queue) == 0 || keep <= 0 {
 		return ""
@@ -22,8 +21,7 @@ func buildRecentPreview(queue []queuedMessage, keep int, identity botIdentity) s
 	return buildCombinedInput(queue[start:], identity)
 }
 
-// buildCombinedInput builds a complete formatted input string from the queue,
-// including metadata about the batch and all messages in transcript format.
+// buildCombinedInput builds a complete formatted debug preview from the queue.
 func buildCombinedInput(queue []queuedMessage, identity botIdentity) string {
 	meta := summarizeQueueMeta(queue, time.Now(), identity)
 	var builder strings.Builder
@@ -249,16 +247,6 @@ func buildImmersiveContext(
 ) *contextassemble.ImmersiveContext {
 	now := time.Now()
 	meta := summarizeQueueMeta(queue, now, identity)
-	var transcript strings.Builder
-	for _, msg := range queue {
-		formatted := formatQueuedMessage(msg)
-		if formatted == "" {
-			continue
-		}
-		transcript.WriteString("  - ")
-		transcript.WriteString(formatted)
-		transcript.WriteString("\n")
-	}
 	return &contextassemble.ImmersiveContext{
 		MessagesCount:          meta.MessagesCount,
 		Participants:           meta.Participants,
@@ -285,7 +273,6 @@ func buildImmersiveContext(
 		ReplyTier:              gate.ReplyTier,
 		MaxReplySegments:       gate.MaxReplySegments,
 		FollowupAllowed:        gate.FollowupAllowed,
-		Transcript:             strings.TrimSpace(transcript.String()),
 	}
 }
 

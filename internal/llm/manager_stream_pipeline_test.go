@@ -13,6 +13,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
+	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 )
 
 func TestReplyStream_ToolsDisabled_UsesProviderStreaming(t *testing.T) {
@@ -121,6 +122,65 @@ func TestReplyStreamWithExtraPrompt_DoesNotAppendHistory(t *testing.T) {
 	usage := manager.SessionContextUsage("session-extra")
 	if usage.RecentChatCount != 0 {
 		t.Fatalf("recent chat should remain empty for extra prompt stream, got %d", usage.RecentChatCount)
+	}
+}
+
+func TestReplyStreamWithExtraPromptAllowTools_ImmersiveContextUsesSingleBlockLayout(t *testing.T) {
+	var capturedInputs []string
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		capturedInputs = extractResponsesInputTexts(body)
+		return []string{
+			mustResponsesDeltaEvent(t, "ok"),
+			`{"type":"response.completed"}`,
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+	}, ManagerDeps{})
+
+	if _, ok := manager.AppendUserEvent("session-immersive-reply-layout", "neko current batch", "alice"); !ok {
+		t.Fatal("append user event failed")
+	}
+
+	ic := &contextassemble.ImmersiveContext{
+		MessagesCount:    1,
+		Participants:     []string{"alice"},
+		MentionsToBot:    1,
+		AddressedToBot:   1,
+		QuestionsCount:   1,
+		LastSpeaker:      "alice",
+		ConversationMode: "addressed",
+		SignalScore:      8,
+	}
+
+	reply, err := manager.ReplyStreamWithExtraPromptAllowTools(context.Background(), "", "session-immersive-reply-layout", "", "extra", func(event StreamEvent) error {
+		return nil
+	}, ic)
+	if err != nil {
+		t.Fatalf("reply stream with immersive context failed: %v", err)
+	}
+	if reply != "ok" {
+		t.Fatalf("reply mismatch: got %q, want %q", reply, "ok")
+	}
+
+	allText := strings.Join(capturedInputs, "\n")
+	for _, blockName := range []string{
+		contextassemble.BlockImmersiveState,
+		contextassemble.BlockImmersiveBatch,
+		contextassemble.BlockImmersiveSignals,
+	} {
+		if !strings.Contains(allText, "["+blockName+"]") {
+			t.Fatalf("%s block missing from reply prompt:\n%s", blockName, allText)
+		}
+	}
+	if strings.Count(allText, "neko current batch") != 1 {
+		t.Fatalf("expected current batch text once in reply prompt, got:\n%s", allText)
 	}
 }
 
