@@ -257,22 +257,23 @@ func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speake
 }
 
 func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error) {
-	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, true)
+	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, true, nil)
 }
 
-func (m *Manager) ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error) {
-	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, false)
+func (m *Manager) ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, immersiveCtx *contextassemble.ImmersiveContext) (string, error) {
+	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, false, immersiveCtx)
 }
 
-func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string) (llmintent.ControlIntent, error) {
+func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *contextassemble.ImmersiveContext) (llmintent.ControlIntent, error) {
 	startedAt := time.Now()
 	intent, err := m.decideIntentWithPipeline(ctx, pipelineRequest{
-		UserInput:   userInput,
-		SessionKey:  sessionKey,
-		Speaker:     speaker,
-		ExtraPrompt: llmprompt.ImmersiveControlPrompt,
-		Source:      "immersive_control_intent",
-		AppendTurn:  false,
+		UserInput:        userInput,
+		SessionKey:       sessionKey,
+		Speaker:          speaker,
+		ExtraPrompt:      llmprompt.ImmersiveControlPrompt,
+		Source:           "immersive_control_intent",
+		AppendTurn:       false,
+		ImmersiveContext: immersiveCtx,
 	})
 	if err != nil {
 		log.Warn().
@@ -293,16 +294,17 @@ func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionK
 	return intent, nil
 }
 
-func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, disableTools bool) (string, error) {
+func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, disableTools bool, immersiveCtx *contextassemble.ImmersiveContext) (string, error) {
 	startedAt := time.Now()
 	reply, err := m.replyStreamWithPipeline(ctx, pipelineRequest{
-		UserInput:    userInput,
-		SessionKey:   sessionKey,
-		Speaker:      speaker,
-		ExtraPrompt:  extraPrompt,
-		Source:       "extra_prompt_reply_stream",
-		AppendTurn:   false,
-		DisableTools: disableTools,
+		UserInput:        userInput,
+		SessionKey:       sessionKey,
+		Speaker:          speaker,
+		ExtraPrompt:      extraPrompt,
+		Source:           "extra_prompt_reply_stream",
+		AppendTurn:       false,
+		DisableTools:     disableTools,
+		ImmersiveContext: immersiveCtx,
 	}, onEvent)
 	if err != nil {
 		log.Warn().

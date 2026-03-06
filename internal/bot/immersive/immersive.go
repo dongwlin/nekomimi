@@ -219,10 +219,13 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 	identity := b.currentIdentity()
 	b.llm.SetAssistantSpeaker(assistantSpeakerLabel(identity))
-	input := buildCombinedInput(trimTimelineTail(runtimeSnapshot, b.runtimeBufferLimit()), identity)
+	timelineSlice := trimTimelineTail(runtimeSnapshot, b.runtimeBufferLimit())
+	input := buildCombinedInput(timelineSlice, identity)
 	if strings.TrimSpace(input) == "" {
+		timelineSlice = processing
 		input = buildCombinedInput(processing, identity)
 	}
+	immersiveCtx := buildImmersiveContext(timelineSlice, identity)
 	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(processing)
 	if repeatText != "" && ctx != nil {
 		b.sendTracked(ctx, repeatText)
@@ -279,7 +282,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Msg("immersive reply recorded into runtime buffer and llm history")
 	}
 
-	intent, intentErr := b.llm.DecideImmersiveIntent(context.Background(), input, sessionKey, "")
+	intent, intentErr := b.llm.DecideImmersiveIntent(context.Background(), input, sessionKey, "", immersiveCtx)
 	decision := decisionFromIntent(intent)
 	action := decision.action
 	waitMS := decision.waitMS
@@ -384,6 +387,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			"",
 			"",
 			onReplyEvent,
+			immersiveCtx,
 		)
 		cancelReply()
 		replyLog := log.Info().

@@ -209,7 +209,7 @@ func TestReplyStreamWithExtraPromptAllowTools_UsesToolLoop(t *testing.T) {
 	reply, err := manager.ReplyStreamWithExtraPromptAllowTools(context.Background(), "hello", "session-extra-tools-on", "alice", "extra", func(event StreamEvent) error {
 		events = append(events, event)
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("reply stream with extra prompt allow tools failed: %v", err)
 	}

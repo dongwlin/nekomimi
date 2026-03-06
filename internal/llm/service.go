@@ -6,6 +6,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
+	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 )
 
@@ -18,8 +19,8 @@ type Service interface {
 	Reply(ctx context.Context, userInput, sessionKey, speaker string) (string, error)
 	ReplyStream(ctx context.Context, userInput, sessionKey, speaker string, onEvent StreamEventHandler) (string, error)
 	ReplyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error)
-	ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error)
-	DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string) (llmintent.ControlIntent, error)
+	ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, immersiveCtx *contextassemble.ImmersiveContext) (string, error)
+	DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *contextassemble.ImmersiveContext) (llmintent.ControlIntent, error)
 
 	// --- history ---
 

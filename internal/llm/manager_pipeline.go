@@ -17,14 +17,15 @@ import (
 )
 
 type pipelineRequest struct {
-	UserInput    string
-	SessionKey   string
-	Speaker      string
-	ExtraPrompt  string
-	Source       string
-	AppendTurn   bool
-	DisableTools bool
-	Meta         contextassemble.Meta
+	UserInput        string
+	SessionKey       string
+	Speaker          string
+	ExtraPrompt      string
+	Source           string
+	AppendTurn       bool
+	DisableTools     bool
+	Meta             contextassemble.Meta
+	ImmersiveContext *contextassemble.ImmersiveContext
 }
 
 type pipelineState struct {
@@ -72,7 +73,7 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 
 	requestPrompt := composeSystemPrompt(state.systemPrompt, req.ExtraPrompt)
 	meta := buildPipelineMeta(req.SessionKey, state.assistantSpeaker, req.Meta)
-	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent)
+	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent, req.ImmersiveContext)
 	if err != nil {
 		return "", err
 	}
@@ -144,7 +145,7 @@ func (m *Manager) decideIntentWithPipeline(ctx context.Context, req pipelineRequ
 
 	requestPrompt := composeSystemPrompt(state.systemPrompt, req.ExtraPrompt)
 	meta := buildPipelineMeta(req.SessionKey, state.assistantSpeaker, req.Meta)
-	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent)
+	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent, req.ImmersiveContext)
 	if err != nil {
 		return llmintent.ControlIntent{}, err
 	}
@@ -199,7 +200,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 
 	requestPrompt := composeSystemPrompt(state.systemPrompt, req.ExtraPrompt)
 	meta := buildPipelineMeta(req.SessionKey, state.assistantSpeaker, req.Meta)
-	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent)
+	messages, compressed, err := m.buildPipelineMessages(ctx, state.assembler, req.SessionKey, meta, userContent, req.ImmersiveContext)
 	if err != nil {
 		return "", err
 	}
@@ -308,7 +309,7 @@ func (m *Manager) snapshotPipelineState() pipelineState {
 	}
 }
 
-func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contextassemble.Assembler, sessionKey string, meta contextassemble.Meta, fallbackContent string) ([]model.Message, bool, error) {
+func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contextassemble.Assembler, sessionKey string, meta contextassemble.Meta, fallbackContent string, immersiveCtx *contextassemble.ImmersiveContext) ([]model.Message, bool, error) {
 	session := strings.TrimSpace(sessionKey)
 	if assembler == nil || session == "" {
 		content := strings.TrimSpace(fallbackContent)
@@ -334,7 +335,15 @@ func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contexta
 		}
 	}
 
-	content := renderAssembledBlocks(assembled.Blocks)
+	blocks := assembled.Blocks
+	if immersiveCtx != nil {
+		blocks = append(blocks, contextassemble.Block{
+			Name:    contextassemble.BlockImmersiveSignals,
+			Content: contextassemble.FormatImmersiveContext(immersiveCtx),
+		})
+	}
+
+	content := renderAssembledBlocks(blocks)
 	if strings.TrimSpace(content) == "" {
 		content = strings.TrimSpace(fallbackContent)
 	}

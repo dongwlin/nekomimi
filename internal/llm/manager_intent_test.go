@@ -6,10 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 )
 
@@ -30,7 +33,7 @@ func TestDecideImmersiveIntent_ParsesValidIntent(t *testing.T) {
 		},
 	}, ManagerDeps{})
 
-	decision, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent", "alice")
+	decision, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent", "alice", nil)
 	if err != nil {
 		t.Fatalf("decide immersive intent failed: %v", err)
 	}
@@ -59,7 +62,7 @@ func TestDecideImmersiveIntent_ProtocolError(t *testing.T) {
 		Key:      "test-key",
 	}, ManagerDeps{})
 
-	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-bad", "alice")
+	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-bad", "alice", nil)
 	if err == nil {
 		t.Fatal("expected protocol error, got nil")
 	}
@@ -87,7 +90,7 @@ func TestDecideImmersiveIntent_DoesNotUseToolLoop(t *testing.T) {
 		},
 	}, ManagerDeps{})
 
-	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-toolloop", "alice")
+	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-toolloop", "alice", nil)
 	if err != nil {
 		t.Fatalf("decide immersive intent failed: %v", err)
 	}
@@ -131,4 +134,124 @@ func responsesOutputTextJSONForIntent(t *testing.T, text string) string {
 		t.Fatalf("marshal intent text failed: %v", err)
 	}
 	return `{"output":[{"content":[{"type":"output_text","text":` + string(textJSON) + `}]}]}`
+}
+
+func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
+	var capturedInputs []string
+	var mu sync.Mutex
+
+	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
+		mu.Lock()
+		capturedInputs = extractResponsesInputTexts(body)
+		mu.Unlock()
+		return responsesOutputTextJSONForIntent(t, `{"action":"reply","reason":"mentioned"}`)
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+	}, ManagerDeps{})
+
+	ic := &contextassemble.ImmersiveContext{
+		MessagesCount:  4,
+		Participants:   []string{"alice", "bob"},
+		MentionsToBot:  2,
+		AddressedToBot: 1,
+		QuestionsCount: 1,
+		LastSpeaker:    "alice",
+		TimeSpanMS:     3000,
+		Transcript:     "- [alice]: @bot what time is it?",
+	}
+
+	decision, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-ic", "alice", ic)
+	if err != nil {
+		t.Fatalf("decide immersive intent failed: %v", err)
+	}
+	if decision.Action != llmintent.ActionReply {
+		t.Fatalf("intent action mismatch: got %q, want %q", decision.Action, llmintent.ActionReply)
+	}
+
+	mu.Lock()
+	allText := strings.Join(capturedInputs, "\n")
+	mu.Unlock()
+
+	signals := []string{
+		"mentions_to_bot: 2",
+		"addressed_to_bot: 1",
+		"questions_count: 1",
+		"last_speaker: alice",
+		"@bot what time is it?",
+	}
+	for _, signal := range signals {
+		if !strings.Contains(allText, signal) {
+			t.Errorf("expected signal %q in model input, got:\n%s", signal, allText)
+		}
+	}
+}
+
+func TestDecideImmersiveIntent_NilImmersiveContext_NoSignalsBlock(t *testing.T) {
+	var capturedInputs []string
+	var mu sync.Mutex
+
+	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
+		mu.Lock()
+		capturedInputs = extractResponsesInputTexts(body)
+		mu.Unlock()
+		return responsesOutputTextJSONForIntent(t, `{"action":"skip","reason":"quiet"}`)
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+	}, ManagerDeps{})
+
+	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-no-ic", "alice", nil)
+	if err != nil {
+		t.Fatalf("decide immersive intent failed: %v", err)
+	}
+
+	mu.Lock()
+	allText := strings.Join(capturedInputs, "\n")
+	mu.Unlock()
+
+	if strings.Contains(allText, "immersive_signals") {
+		t.Fatalf("immersive_signals should not be present when ImmersiveContext is nil:\n%s", allText)
+	}
+}
+
+// extractResponsesInputTexts extracts all text content from a responses API request body.
+func extractResponsesInputTexts(body map[string]any) []string {
+	var texts []string
+	inputList, ok := body["input"].([]any)
+	if !ok {
+		return texts
+	}
+	for _, item := range inputList {
+		msg, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		contentList, ok := msg["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, c := range contentList {
+			cMap, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, ok := cMap["text"].(string); ok {
+				texts = append(texts, text)
+			}
+		}
+	}
+	return texts
 }

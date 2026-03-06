@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 )
 
 // buildRecentPreview creates a formatted input string from the last 'keep' messages
@@ -235,6 +237,33 @@ func limitRunes(text string, maxRunes int) string {
 		return text
 	}
 	return string(runes[:maxRunes]) + "..."
+}
+
+// buildImmersiveContext constructs an ImmersiveContext from the queue that
+// carries batch signals into the LLM pipeline so the model can see
+// mentions_to_bot, addressed_to_bot, questions_count, etc.
+func buildImmersiveContext(queue []queuedMessage, identity botIdentity) *contextassemble.ImmersiveContext {
+	meta := summarizeQueueMeta(queue, time.Now(), identity)
+	var transcript strings.Builder
+	for _, msg := range queue {
+		formatted := formatQueuedMessage(msg)
+		if formatted == "" {
+			continue
+		}
+		transcript.WriteString("  - ")
+		transcript.WriteString(formatted)
+		transcript.WriteString("\n")
+	}
+	return &contextassemble.ImmersiveContext{
+		MessagesCount:  meta.MessagesCount,
+		Participants:   meta.Participants,
+		MentionsToBot:  meta.MentionsToBot,
+		AddressedToBot: meta.AddressedToBot,
+		QuestionsCount: meta.QuestionsCount,
+		LastSpeaker:    meta.LastSpeaker,
+		TimeSpanMS:     meta.TimeSpanMS,
+		Transcript:     strings.TrimSpace(transcript.String()),
+	}
 }
 
 // summarizeQueueMeta computes aggregated metadata from a queue of messages,
