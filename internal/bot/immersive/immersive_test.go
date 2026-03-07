@@ -664,9 +664,16 @@ func mustJSONString(text string) string {
 
 func mustResponsesDeltaEventRaw(t *testing.T, delta string) string {
 	t.Helper()
+	frame := map[string]any{
+		"type": "final",
+		"final": map[string]any{
+			"content":     delta,
+			"stop_reason": "final",
+		},
+	}
 	event := map[string]any{
 		"type":  "response.output_text.delta",
-		"delta": delta,
+		"delta": mustMarshalJSON(t, frame) + "\n",
 	}
 	return mustMarshalJSON(t, event)
 }

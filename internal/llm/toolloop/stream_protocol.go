@@ -8,14 +8,6 @@ import (
 )
 
 func validateModelStreamFrame(frame StreamMessage) *ErrorPayload {
-	if strings.TrimSpace(frame.Version) != StreamProtocolVersion {
-		return &ErrorPayload{
-			Code:      ErrorCodeInvalidProtocol,
-			Message:   fmt.Sprintf("version must be %q", StreamProtocolVersion),
-			Retryable: false,
-		}
-	}
-
 	switch frame.Type {
 	case MessageTypeDelta:
 		if frame.Delta == nil {
@@ -92,6 +84,13 @@ func validateModelStreamFrame(frame StreamMessage) *ErrorPayload {
 				Retryable: false,
 			}
 		}
+		if strings.TrimSpace(frame.Final.Content) == "" {
+			return &ErrorPayload{
+				Code:      ErrorCodeInvalidProtocol,
+				Message:   "final.content is required",
+				Retryable: false,
+			}
+		}
 		return nil
 	case MessageTypeError:
 		if frame.Error == nil {
@@ -142,21 +141,18 @@ func streamFrameToMessage(frame StreamMessage) (Message, bool) {
 	switch frame.Type {
 	case MessageTypeToolCall:
 		return Message{
-			Version:  ProtocolVersion,
 			Type:     MessageTypeToolCall,
 			ToolCall: cloneToolCallPayload(frame.ToolCall),
 		}, true
 	case MessageTypeFinal:
 		return Message{
-			Version: ProtocolVersion,
-			Type:    MessageTypeFinal,
-			Final:   cloneFinalPayload(frame.Final),
+			Type:  MessageTypeFinal,
+			Final: cloneFinalPayload(frame.Final),
 		}, true
 	case MessageTypeError:
 		return Message{
-			Version: ProtocolVersion,
-			Type:    MessageTypeError,
-			Error:   cloneErrorPayload(frame.Error),
+			Type:  MessageTypeError,
+			Error: cloneErrorPayload(frame.Error),
 		}, true
 	default:
 		return Message{}, false
@@ -165,7 +161,6 @@ func streamFrameToMessage(frame StreamMessage) (Message, bool) {
 
 func messageToStreamFrame(msg Message) StreamMessage {
 	return StreamMessage{
-		Version:    StreamProtocolVersion,
 		Type:       msg.Type,
 		ToolCall:   cloneToolCallPayload(msg.ToolCall),
 		ToolResult: cloneToolResultPayload(msg.ToolResult),

@@ -225,8 +225,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 				return nil
 			}
 			return emit(0, toolloop.StreamMessage{
-				Version: toolloop.StreamProtocolVersion,
-				Type:    toolloop.MessageTypeDelta,
+				Type: toolloop.MessageTypeDelta,
 				Delta: &toolloop.DeltaPayload{
 					Text: delta,
 				},
@@ -236,8 +235,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 			return "", err
 		}
 		if err := emit(0, toolloop.StreamMessage{
-			Version: toolloop.StreamProtocolVersion,
-			Type:    toolloop.MessageTypeFinal,
+			Type: toolloop.MessageTypeFinal,
 			Final: &toolloop.FinalPayload{
 				Content:    strings.TrimSpace(reply),
 				StopReason: toolloop.StopReasonFinal,

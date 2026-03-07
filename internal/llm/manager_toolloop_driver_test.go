@@ -8,12 +8,12 @@ import (
 )
 
 func TestParseToolLoopFrame_NormalizesLegacyToolCall(t *testing.T) {
-	frame, ok := parseToolLoopFrame(`{"version":"v2","type":"tool_call","tool_call":{"name":"internal/read_diary","arguments":"{\"session_key\":\"group:1\",\"limit\":1}"}}`)
-	if !ok {
-		t.Fatal("expected tool-loop frame to parse")
+	frame, err := parseToolLoopFrame(`{"version":"v2","type":"tool_call","tool_call":{"name":"internal/read_diary","arguments":"{\"session_key\":\"group:1\",\"limit\":1}"}}`)
+	if err != nil {
+		t.Fatalf("expected tool-loop frame to parse: %v", err)
 	}
-	if frame.Version != toolloop.ProtocolVersion {
-		t.Fatalf("version mismatch: got %q, want %q", frame.Version, toolloop.ProtocolVersion)
+	if frame.Version != "" {
+		t.Fatalf("version should be cleared, got %q", frame.Version)
 	}
 	if frame.Type != toolloop.MessageTypeToolCall || frame.ToolCall == nil {
 		t.Fatalf("unexpected frame: %+v", frame)
@@ -32,12 +32,12 @@ func TestParseToolLoopFrame_NormalizesLegacyToolCall(t *testing.T) {
 }
 
 func TestParseToolLoopFrame_DefaultsFinalStopReason(t *testing.T) {
-	frame, ok := parseToolLoopFrame(`{"type":"final","final":{"content":"ok"}}`)
-	if !ok {
-		t.Fatal("expected final frame to parse")
+	frame, err := parseToolLoopFrame(`{"type":"final","final":{"content":"ok"}}`)
+	if err != nil {
+		t.Fatalf("expected final frame to parse: %v", err)
 	}
-	if frame.Version != toolloop.ProtocolVersion {
-		t.Fatalf("version mismatch: got %q, want %q", frame.Version, toolloop.ProtocolVersion)
+	if frame.Version != "" {
+		t.Fatalf("version should be cleared, got %q", frame.Version)
 	}
 	if frame.Final == nil {
 		t.Fatal("final payload should exist")
@@ -48,20 +48,13 @@ func TestParseToolLoopFrame_DefaultsFinalStopReason(t *testing.T) {
 }
 
 func TestParseToolLoopFrame_RejectsOrdinaryJSON(t *testing.T) {
-	if _, ok := parseToolLoopFrame(`{"type":"final","content":"plain json"}`); ok {
-		t.Fatal("ordinary JSON should not be treated as a tool-loop frame")
+	if _, err := parseToolLoopFrame(`{"type":"final","content":"plain json"}`); err == nil {
+		t.Fatal("ordinary JSON should be rejected as invalid protocol")
 	}
 }
 
-func TestParseToolLoopFrame_VersionedInvalidProtocolStillParses(t *testing.T) {
-	frame, ok := parseToolLoopFrame(`{"version":"v1","type":"final"}`)
-	if !ok {
-		t.Fatal("versioned protocol-like JSON should still be parsed for validation")
-	}
-	if frame.Type != toolloop.MessageTypeFinal {
-		t.Fatalf("frame type mismatch: got %q, want %q", frame.Type, toolloop.MessageTypeFinal)
-	}
-	if frame.Final != nil {
-		t.Fatalf("expected missing final payload to remain nil, got %+v", frame.Final)
+func TestParseToolLoopFrame_VersionedInvalidProtocolReturnsError(t *testing.T) {
+	if _, err := parseToolLoopFrame(`{"version":"v1","type":"final"}`); err == nil {
+		t.Fatal("expected invalid protocol error")
 	}
 }

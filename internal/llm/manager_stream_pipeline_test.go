@@ -414,11 +414,61 @@ func TestReplyStream_ToolsEnabled_EmitsToolEvents(t *testing.T) {
 	}
 }
 
-func TestReplyStream_ToolsEnabled_PlainTextFallbackPreservesLineBreaks(t *testing.T) {
+func TestReplyStream_ToolsEnabled_ProtocolErrorRetriesThenRecovers(t *testing.T) {
+	var observedCall int64
 	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		atomic.StoreInt64(&observedCall, call)
+		switch call {
+		case 1:
+			return []string{
+				mustResponsesDeltaEvent(t, `{"final":{"content":"bad","stop_reason":"final"}}`+"\n"),
+				`{"type":"response.completed"}`,
+			}
+		case 2:
+			return []string{
+				mustResponsesDeltaEvent(t, `{"type":"final","final":{"content":"answer","stop_reason":"final"}}`+"\n"),
+				`{"type":"response.completed"}`,
+			}
+		default:
+			return []string{
+				mustResponsesDeltaEvent(t, `{"type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
+				`{"type":"response.completed"}`,
+			}
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:  true,
+		Provider: "responses",
+		Model:    "gpt-4.1-mini",
+		API:      server.URL + "/responses",
+		Key:      "test-key",
+		Tools: config.ToolsConfig{
+			Enabled: true,
+		},
+	}, ManagerDeps{})
+
+	reply, err := manager.ReplyStream(context.Background(), "hello", "session-tools-plaintext", "alice", func(event StreamEvent) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reply stream failed: %v", err)
+	}
+	if atomic.LoadInt64(&observedCall) != 2 {
+		t.Fatalf("expected two provider calls, got %d", atomic.LoadInt64(&observedCall))
+	}
+	if reply != "answer" {
+		t.Fatalf("reply mismatch: got %q, want %q", reply, "answer")
+	}
+}
+
+func TestReplyStream_ToolsEnabled_ProtocolErrorStopsAfterThreeAttempts(t *testing.T) {
+	var observedCall int64
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		atomic.StoreInt64(&observedCall, call)
 		return []string{
-			mustResponsesDeltaEvent(t, "REPLY\n"),
-			mustResponsesDeltaEvent(t, "ok"),
+			mustResponsesDeltaEvent(t, `{"final":{"content":"bad","stop_reason":"final"}}`+"\n"),
 			`{"type":"response.completed"}`,
 		}
 	})
@@ -435,23 +485,17 @@ func TestReplyStream_ToolsEnabled_PlainTextFallbackPreservesLineBreaks(t *testin
 		},
 	}, ManagerDeps{})
 
-	deltas := make([]string, 0, 2)
-	reply, err := manager.ReplyStream(context.Background(), "hello", "session-tools-plaintext", "alice", func(event StreamEvent) error {
-		if event.Type == StreamEventDelta {
-			deltas = append(deltas, event.Delta)
-		}
+	_, err := manager.ReplyStream(context.Background(), "hello", "session-tools-protocol-error", "alice", func(event StreamEvent) error {
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("reply stream failed: %v", err)
+	if err == nil {
+		t.Fatal("expected reply stream to fail after protocol retry limit")
 	}
-
-	const want = "REPLY\nok"
-	if reply != want {
-		t.Fatalf("reply mismatch: got %q, want %q", reply, want)
+	if atomic.LoadInt64(&observedCall) != 3 {
+		t.Fatalf("expected three provider calls, got %d", atomic.LoadInt64(&observedCall))
 	}
-	if got := strings.Join(deltas, ""); got != want {
-		t.Fatalf("delta stream mismatch: got %q, want %q", got, want)
+	if !strings.Contains(err.Error(), "protocol retry limit exceeded") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

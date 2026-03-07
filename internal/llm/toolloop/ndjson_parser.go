@@ -2,7 +2,6 @@ package toolloop
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
@@ -79,19 +78,19 @@ func parseNDJSONLine(line string) (item NDJSONItem, ok bool, err error) {
 		return NDJSONItem{}, false, nil
 	}
 	if !json.Valid([]byte(trimmed)) {
-		return NDJSONItem{Text: raw}, true, nil
+		return NDJSONItem{}, false, NewProtocolError("stream line must be a JSON object")
 	}
 	if !looksLikeStreamFrameJSON(trimmed) {
-		return NDJSONItem{Text: raw}, true, nil
+		return NDJSONItem{}, false, NewProtocolError("stream line must include type and matching payload")
 	}
 
 	var frame StreamMessage
 	if err := json.Unmarshal([]byte(trimmed), &frame); err != nil {
-		return NDJSONItem{}, false, fmt.Errorf("invalid ndjson frame: %w", err)
+		return NDJSONItem{}, false, NewProtocolError("invalid stream frame JSON")
 	}
 	NormalizeModelStreamFrame(&frame)
 	if protocolErr := validateModelStreamFrame(frame); protocolErr != nil {
-		return NDJSONItem{}, false, fmt.Errorf("invalid stream frame: %s", protocolErr.Message)
+		return NDJSONItem{}, false, protocolErr
 	}
 	return NDJSONItem{Frame: &frame}, true, nil
 }
@@ -104,15 +103,15 @@ func looksLikeStreamFrameJSON(candidate string) bool {
 
 	switch frameType := strings.TrimSpace(jsonutil.ReadJSONStringField(payload, "type")); frameType {
 	case string(MessageTypeDelta):
-		return jsonutil.HasJSONField(payload, "delta") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "delta")
 	case string(MessageTypeToolCall):
-		return jsonutil.HasJSONField(payload, "tool_call") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "tool_call")
 	case string(MessageTypeToolResult):
-		return jsonutil.HasJSONField(payload, "tool_result") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "tool_result")
 	case string(MessageTypeFinal):
-		return jsonutil.HasJSONField(payload, "final") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "final")
 	case string(MessageTypeError):
-		return jsonutil.HasJSONField(payload, "error") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "error")
 	default:
 		return false
 	}

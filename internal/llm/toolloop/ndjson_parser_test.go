@@ -58,54 +58,24 @@ func TestNDJSONParser_MultiLineOrderAndWhitespace(t *testing.T) {
 func TestNDJSONParser_NonJSONFallbackDelta(t *testing.T) {
 	parser := NewNDJSONParser()
 
-	items, err := parser.Feed("plain text line\n")
-	if err != nil {
-		t.Fatalf("feed failed: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("item count mismatch: got %d, want 1", len(items))
-	}
-	if items[0].Frame != nil {
-		t.Fatalf("non-json line should not parse as frame")
-	}
-	if items[0].Text != "plain text line" {
-		t.Fatalf("fallback text mismatch: got %q", items[0].Text)
+	if _, err := parser.Feed("plain text line\n"); err == nil {
+		t.Fatal("expected plain text line to fail protocol parsing")
 	}
 }
 
-func TestNDJSONParser_ReservedTypeWithoutProtocolPayloadFallsBackToText(t *testing.T) {
+func TestNDJSONParser_ReservedTypeWithoutProtocolPayloadReturnsError(t *testing.T) {
 	parser := NewNDJSONParser()
 
-	items, err := parser.Feed(`{"type":"final","content":"plain json"}` + "\n")
-	if err != nil {
-		t.Fatalf("feed failed: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("item count mismatch: got %d, want 1", len(items))
-	}
-	if items[0].Frame != nil {
-		t.Fatalf("plain JSON should not be parsed as a stream frame")
-	}
-	if items[0].Text != `{"type":"final","content":"plain json"}` {
-		t.Fatalf("fallback text mismatch: got %q", items[0].Text)
+	if _, err := parser.Feed(`{"type":"final","content":"plain json"}` + "\n"); err == nil {
+		t.Fatal("expected invalid stream frame error")
 	}
 }
 
-func TestNDJSONParser_InvalidJSONFrame_ReturnsTextFallback(t *testing.T) {
+func TestNDJSONParser_InvalidJSONFrame_ReturnsError(t *testing.T) {
 	parser := NewNDJSONParser()
 
-	items, err := parser.Feed(`{"version":"v2","type":"delta","delta":{"text":"x"` + "\n")
-	if err != nil {
-		t.Fatalf("feed failed: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("item count mismatch: got %d, want 1", len(items))
-	}
-	if items[0].Frame != nil {
-		t.Fatalf("invalid json should fallback to text")
-	}
-	if items[0].Text == "" {
-		t.Fatalf("fallback text should not be empty")
+	if _, err := parser.Feed(`{"version":"v2","type":"delta","delta":{"text":"x"` + "\n"); err == nil {
+		t.Fatal("expected invalid JSON frame error")
 	}
 }
 
@@ -144,8 +114,8 @@ func TestNDJSONParser_NormalizesLegacyToolCallFrame(t *testing.T) {
 	if frame == nil {
 		t.Fatal("expected parsed frame")
 	}
-	if frame.Version != StreamProtocolVersion {
-		t.Fatalf("version mismatch: got %q, want %q", frame.Version, StreamProtocolVersion)
+	if frame.Version != "" {
+		t.Fatalf("version should be cleared, got %q", frame.Version)
 	}
 	if frame.Type != MessageTypeToolCall || frame.ToolCall == nil {
 		t.Fatalf("unexpected frame: %+v", frame)

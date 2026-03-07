@@ -3,6 +3,7 @@ package toolloop
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/dongwlin/nekomimi/internal/llm/model"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
@@ -77,9 +78,34 @@ type ErrorPayload struct {
 	Retryable bool      `json:"retryable"`
 }
 
+func (e *ErrorPayload) Error() string {
+	if e == nil {
+		return ""
+	}
+	if text := strings.TrimSpace(e.Message); text != "" {
+		return text
+	}
+	if code := strings.TrimSpace(string(e.Code)); code != "" {
+		return code
+	}
+	return "protocol error"
+}
+
+func NewProtocolError(message string) *ErrorPayload {
+	text := strings.TrimSpace(message)
+	if text == "" {
+		text = "invalid protocol response"
+	}
+	return &ErrorPayload{
+		Code:      ErrorCodeInvalidProtocol,
+		Message:   text,
+		Retryable: false,
+	}
+}
+
 // Message is the protocol frame shape frozen in package-0.
 type Message struct {
-	Version    string             `json:"version"`
+	Version    string             `json:"version,omitempty"`
 	Type       MessageType        `json:"type"`
 	ToolCall   *ToolCallPayload   `json:"tool_call,omitempty"`
 	ToolResult *ToolResultPayload `json:"tool_result,omitempty"`
@@ -89,7 +115,7 @@ type Message struct {
 
 // StreamMessage is the v2 streaming frame shape.
 type StreamMessage struct {
-	Version    string             `json:"version"`
+	Version    string             `json:"version,omitempty"`
 	Type       MessageType        `json:"type"`
 	Delta      *DeltaPayload      `json:"delta,omitempty"`
 	ToolCall   *ToolCallPayload   `json:"tool_call,omitempty"`

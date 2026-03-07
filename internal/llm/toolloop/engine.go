@@ -12,6 +12,7 @@ import (
 )
 
 const defaultMaxSteps = 8
+const defaultMaxProtocolAttempts = 3
 
 var (
 	ErrRouterRequired = errors.New("tool router is required")
@@ -22,13 +23,15 @@ var (
 
 // EngineOptions controls default behavior for the loop engine.
 type EngineOptions struct {
-	DefaultMaxSteps int
+	DefaultMaxSteps     int
+	MaxProtocolAttempts int
 }
 
 type loopEngine struct {
-	router          tools.Router
-	driver          ModelDriver
-	defaultMaxSteps int
+	router              tools.Router
+	driver              ModelDriver
+	defaultMaxSteps     int
+	maxProtocolAttempts int
 }
 
 // NewEngine builds a protocol engine that drives model<->tool loop transitions.
@@ -37,10 +40,15 @@ func NewEngine(router tools.Router, driver ModelDriver, opts EngineOptions) Engi
 	if defaultSteps <= 0 {
 		defaultSteps = defaultMaxSteps
 	}
+	maxProtocolAttempts := opts.MaxProtocolAttempts
+	if maxProtocolAttempts <= 0 {
+		maxProtocolAttempts = defaultMaxProtocolAttempts
+	}
 	return &loopEngine{
-		router:          router,
-		driver:          driver,
-		defaultMaxSteps: defaultSteps,
+		router:              router,
+		driver:              driver,
+		defaultMaxSteps:     defaultSteps,
+		maxProtocolAttempts: maxProtocolAttempts,
 	}
 }
 
@@ -64,68 +72,83 @@ func (e *loopEngine) Run(ctx context.Context, req RunRequest) (RunResult, error)
 	}
 
 	trace := make([]Message, 0, maxSteps*2+1)
+stepLoop:
 	for step := 0; step < maxSteps; step++ {
 		if isTimeout(ctx.Err()) {
 			return finalize(trace, StopReasonTimeout), nil
 		}
 
-		next, err := e.driver.Next(ctx, req, copyTrace(trace))
-		if err != nil {
-			if isTimeout(err) || isTimeout(ctx.Err()) {
-				return finalize(trace, StopReasonTimeout), nil
+		for attempt := 1; attempt <= e.maxProtocolAttempts; attempt++ {
+			next, err := e.driver.Next(ctx, req, copyTrace(trace))
+			if err != nil {
+				if isTimeout(err) || isTimeout(ctx.Err()) {
+					return finalize(trace, StopReasonTimeout), nil
+				}
+				if protocolErr := protocolErrorFromError(err); protocolErr != nil {
+					trace = append(trace, protocolRetryMessage(protocolErr, attempt, e.maxProtocolAttempts))
+					if attempt >= e.maxProtocolAttempts {
+						return RunResult{
+							StopReason: StopReasonError,
+							Trace:      trace,
+						}, nil
+					}
+					continue
+				}
+				trace = append(trace, errorMessage(ErrorCodeModelResponse, err.Error(), false))
+				continue stepLoop
 			}
-			trace = append(trace, errorMessage(ErrorCodeModelResponse, err.Error(), false))
-			continue
-		}
 
-		if protocolErr := validateModelMessage(next); protocolErr != nil {
-			trace = append(trace, Message{
-				Version: ProtocolVersion,
-				Type:    MessageTypeError,
-				Error:   protocolErr,
-			})
-			continue
-		}
+			if protocolErr := validateModelMessage(next); protocolErr != nil {
+				trace = append(trace, protocolRetryMessage(protocolErr, attempt, e.maxProtocolAttempts))
+				if attempt >= e.maxProtocolAttempts {
+					return RunResult{
+						StopReason: StopReasonError,
+						Trace:      trace,
+					}, nil
+				}
+				continue
+			}
 
-		next.Version = ProtocolVersion
-		trace = append(trace, next)
+			next.Version = ""
+			trace = append(trace, next)
 
-		switch next.Type {
-		case MessageTypeToolCall:
-			toolResult, callErr := e.executeTool(ctx, *next.ToolCall)
-			if callErr != nil {
-				trace = append(trace, Message{
-					Version: ProtocolVersion,
-					Type:    MessageTypeError,
-					Error:   callErr,
-				})
+			switch next.Type {
+			case MessageTypeToolCall:
+				toolResult, callErr := e.executeTool(ctx, *next.ToolCall)
+				if callErr != nil {
+					trace = append(trace, Message{
+						Type:  MessageTypeError,
+						Error: callErr,
+					})
+					return RunResult{
+						StopReason: StopReasonError,
+						Trace:      trace,
+					}, nil
+				}
+				trace = append(trace, toolResult)
+				continue stepLoop
+			case MessageTypeFinal:
+				return RunResult{
+					FinalMessage: next.Final.Content,
+					StopReason:   next.Final.StopReason,
+					Trace:        trace,
+				}, nil
+			case MessageTypeError:
+				return RunResult{
+					StopReason: StopReasonError,
+					Trace:      trace,
+				}, nil
+			default:
+				trace = append(trace, errorMessage(
+					ErrorCodeInvalidProtocol,
+					fmt.Sprintf("unsupported model message type %q", next.Type),
+					false,
+				))
 				return RunResult{
 					StopReason: StopReasonError,
 					Trace:      trace,
 				}, nil
 			}
-			trace = append(trace, toolResult)
-		case MessageTypeFinal:
-			return RunResult{
-				FinalMessage: next.Final.Content,
-				StopReason:   next.Final.StopReason,
-				Trace:        trace,
-			}, nil
-		case MessageTypeError:
-			return RunResult{
-				StopReason: StopReasonError,
-				Trace:      trace,
-			}, nil
-		default:
-			trace = append(trace, errorMessage(
-				ErrorCodeInvalidProtocol,
-				fmt.Sprintf("unsupported model message type %q", next.Type),
-				false,
-			))
-			return RunResult{
-				StopReason: StopReasonError,
-				Trace:      trace,
-			}, nil
 		}
 	}
 
@@ -154,8 +177,7 @@ func (e *loopEngine) RunStream(ctx context.Context, req RunRequest, onEvent Stre
 				if err := onEvent(StreamEvent{
 					Step: 0,
 					Frame: StreamMessage{
-						Version: StreamProtocolVersion,
-						Type:    MessageTypeDelta,
+						Type: MessageTypeDelta,
 						Delta: &DeltaPayload{
 							Text: result.FinalMessage,
 						},
@@ -167,8 +189,7 @@ func (e *loopEngine) RunStream(ctx context.Context, req RunRequest, onEvent Stre
 			if err := onEvent(StreamEvent{
 				Step: 0,
 				Frame: StreamMessage{
-					Version: StreamProtocolVersion,
-					Type:    MessageTypeFinal,
+					Type: MessageTypeFinal,
 					Final: &FinalPayload{
 						Content:    result.FinalMessage,
 						StopReason: result.StopReason,
@@ -190,6 +211,7 @@ func (e *loopEngine) RunStream(ctx context.Context, req RunRequest, onEvent Stre
 	}
 
 	trace := make([]Message, 0, maxSteps*2+1)
+stepLoop:
 	for step := 0; step < maxSteps; step++ {
 		if isTimeout(ctx.Err()) {
 			result := finalize(trace, StopReasonTimeout)
@@ -199,68 +221,115 @@ func (e *loopEngine) RunStream(ctx context.Context, req RunRequest, onEvent Stre
 			return result, nil
 		}
 
-		next, err := streamDriver.NextStream(ctx, req, copyTrace(trace), func(frame StreamMessage) error {
-			if frame.Type != MessageTypeDelta {
-				return errors.New("stream driver emitted non-delta frame")
-			}
-			if frame.Delta == nil {
-				return errors.New("stream delta payload is required")
-			}
-			if onEvent == nil {
+		for attempt := 1; attempt <= e.maxProtocolAttempts; attempt++ {
+			next, err := streamDriver.NextStream(ctx, req, copyTrace(trace), func(frame StreamMessage) error {
+				if frame.Type != MessageTypeDelta {
+					return errors.New("stream driver emitted non-delta frame")
+				}
+				if frame.Delta == nil {
+					return errors.New("stream delta payload is required")
+				}
+				if onEvent == nil {
+					return nil
+				}
+				if err := onEvent(StreamEvent{Step: step, Frame: frame}); err != nil {
+					return fmt.Errorf("%w: %v", errStreamEventCallback, err)
+				}
 				return nil
-			}
-			if err := onEvent(StreamEvent{Step: step, Frame: frame}); err != nil {
-				return fmt.Errorf("%w: %v", errStreamEventCallback, err)
-			}
-			return nil
-		})
-		if err != nil {
-			if errors.Is(err, errStreamEventCallback) {
-				return RunResult{}, err
-			}
-			if isTimeout(err) || isTimeout(ctx.Err()) {
-				result := finalize(trace, StopReasonTimeout)
-				if emitErr := emitSafetyFinalEvent(onEvent, step, StopReasonTimeout); emitErr != nil {
+			})
+			if err != nil {
+				if errors.Is(err, errStreamEventCallback) {
+					return RunResult{}, err
+				}
+				if isTimeout(err) || isTimeout(ctx.Err()) {
+					result := finalize(trace, StopReasonTimeout)
+					if emitErr := emitSafetyFinalEvent(onEvent, step, StopReasonTimeout); emitErr != nil {
+						return RunResult{}, emitErr
+					}
+					return result, nil
+				}
+				if protocolErr := protocolErrorFromError(err); protocolErr != nil {
+					message := protocolRetryMessage(protocolErr, attempt, e.maxProtocolAttempts)
+					trace = append(trace, message)
+					if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
+						return RunResult{}, emitErr
+					}
+					if attempt >= e.maxProtocolAttempts {
+						return RunResult{
+							StopReason: StopReasonError,
+							Trace:      trace,
+						}, nil
+					}
+					continue
+				}
+				trace = append(trace, errorMessage(ErrorCodeModelResponse, err.Error(), false))
+				errorFrame := messageToStreamFrame(trace[len(trace)-1])
+				if emitErr := emitEvent(onEvent, step, errorFrame); emitErr != nil {
 					return RunResult{}, emitErr
 				}
-				return result, nil
+				continue stepLoop
 			}
-			trace = append(trace, errorMessage(ErrorCodeModelResponse, err.Error(), false))
-			errorFrame := messageToStreamFrame(trace[len(trace)-1])
-			if emitErr := emitEvent(onEvent, step, errorFrame); emitErr != nil {
-				return RunResult{}, emitErr
-			}
-			continue
-		}
 
-		if protocolErr := validateModelMessage(next); protocolErr != nil {
-			message := Message{
-				Version: ProtocolVersion,
-				Type:    MessageTypeError,
-				Error:   protocolErr,
-			}
-			trace = append(trace, message)
-			if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
-				return RunResult{}, emitErr
-			}
-			continue
-		}
-
-		next.Version = ProtocolVersion
-		trace = append(trace, next)
-		if emitErr := emitEvent(onEvent, step, messageToStreamFrame(next)); emitErr != nil {
-			return RunResult{}, emitErr
-		}
-
-		switch next.Type {
-		case MessageTypeToolCall:
-			toolResult, callErr := e.executeTool(ctx, *next.ToolCall)
-			if callErr != nil {
-				message := Message{
-					Version: ProtocolVersion,
-					Type:    MessageTypeError,
-					Error:   callErr,
+			if protocolErr := validateModelMessage(next); protocolErr != nil {
+				message := protocolRetryMessage(protocolErr, attempt, e.maxProtocolAttempts)
+				trace = append(trace, message)
+				if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
+					return RunResult{}, emitErr
 				}
+				if attempt >= e.maxProtocolAttempts {
+					return RunResult{
+						StopReason: StopReasonError,
+						Trace:      trace,
+					}, nil
+				}
+				continue
+			}
+
+			next.Version = ""
+			trace = append(trace, next)
+			if emitErr := emitEvent(onEvent, step, messageToStreamFrame(next)); emitErr != nil {
+				return RunResult{}, emitErr
+			}
+
+			switch next.Type {
+			case MessageTypeToolCall:
+				toolResult, callErr := e.executeTool(ctx, *next.ToolCall)
+				if callErr != nil {
+					message := Message{
+						Type:  MessageTypeError,
+						Error: callErr,
+					}
+					trace = append(trace, message)
+					if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
+						return RunResult{}, emitErr
+					}
+					return RunResult{
+						StopReason: StopReasonError,
+						Trace:      trace,
+					}, nil
+				}
+				trace = append(trace, toolResult)
+				if emitErr := emitEvent(onEvent, step, messageToStreamFrame(toolResult)); emitErr != nil {
+					return RunResult{}, emitErr
+				}
+				continue stepLoop
+			case MessageTypeFinal:
+				return RunResult{
+					FinalMessage: next.Final.Content,
+					StopReason:   next.Final.StopReason,
+					Trace:        trace,
+				}, nil
+			case MessageTypeError:
+				return RunResult{
+					StopReason: StopReasonError,
+					Trace:      trace,
+				}, nil
+			default:
+				message := errorMessage(
+					ErrorCodeInvalidProtocol,
+					fmt.Sprintf("unsupported model message type %q", next.Type),
+					false,
+				)
 				trace = append(trace, message)
 				if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
 					return RunResult{}, emitErr
@@ -270,35 +339,6 @@ func (e *loopEngine) RunStream(ctx context.Context, req RunRequest, onEvent Stre
 					Trace:      trace,
 				}, nil
 			}
-			trace = append(trace, toolResult)
-			if emitErr := emitEvent(onEvent, step, messageToStreamFrame(toolResult)); emitErr != nil {
-				return RunResult{}, emitErr
-			}
-		case MessageTypeFinal:
-			return RunResult{
-				FinalMessage: next.Final.Content,
-				StopReason:   next.Final.StopReason,
-				Trace:        trace,
-			}, nil
-		case MessageTypeError:
-			return RunResult{
-				StopReason: StopReasonError,
-				Trace:      trace,
-			}, nil
-		default:
-			message := errorMessage(
-				ErrorCodeInvalidProtocol,
-				fmt.Sprintf("unsupported model message type %q", next.Type),
-				false,
-			)
-			trace = append(trace, message)
-			if emitErr := emitEvent(onEvent, step, messageToStreamFrame(message)); emitErr != nil {
-				return RunResult{}, emitErr
-			}
-			return RunResult{
-				StopReason: StopReasonError,
-				Trace:      trace,
-			}, nil
 		}
 	}
 
@@ -341,8 +381,7 @@ func (e *loopEngine) executeTool(ctx context.Context, call ToolCallPayload) (Mes
 	}
 
 	return Message{
-		Version: ProtocolVersion,
-		Type:    MessageTypeToolResult,
+		Type: MessageTypeToolResult,
 		ToolResult: &ToolResultPayload{
 			CallID: strings.TrimSpace(call.CallID),
 			Name:   name,
@@ -352,14 +391,6 @@ func (e *loopEngine) executeTool(ctx context.Context, call ToolCallPayload) (Mes
 }
 
 func validateModelMessage(msg Message) *ErrorPayload {
-	if strings.TrimSpace(msg.Version) != ProtocolVersion {
-		return &ErrorPayload{
-			Code:      ErrorCodeInvalidProtocol,
-			Message:   fmt.Sprintf("version must be %q", ProtocolVersion),
-			Retryable: false,
-		}
-	}
-
 	switch msg.Type {
 	case MessageTypeToolCall:
 		if msg.ToolCall == nil {
@@ -420,6 +451,13 @@ func validateModelMessage(msg Message) *ErrorPayload {
 				Retryable: false,
 			}
 		}
+		if strings.TrimSpace(msg.Final.Content) == "" {
+			return &ErrorPayload{
+				Code:      ErrorCodeInvalidProtocol,
+				Message:   "final.content is required",
+				Retryable: false,
+			}
+		}
 		return nil
 	case MessageTypeError:
 		if msg.Error == nil {
@@ -472,8 +510,7 @@ func errorMessage(code ErrorCode, message string, retryable bool) Message {
 		text = "loop error"
 	}
 	return Message{
-		Version: ProtocolVersion,
-		Type:    MessageTypeError,
+		Type: MessageTypeError,
 		Error: &ErrorPayload{
 			Code:      code,
 			Message:   text,
@@ -484,8 +521,7 @@ func errorMessage(code ErrorCode, message string, retryable bool) Message {
 
 func finalize(trace []Message, reason StopReason) RunResult {
 	resultTrace := append(trace, Message{
-		Version: ProtocolVersion,
-		Type:    MessageTypeFinal,
+		Type: MessageTypeFinal,
 		Final: &FinalPayload{
 			Content:    "",
 			StopReason: reason,
@@ -559,14 +595,32 @@ func emitSafetyFinalEvent(onEvent StreamEventHandler, step int, reason StopReaso
 	return onEvent(StreamEvent{
 		Step: step,
 		Frame: StreamMessage{
-			Version: StreamProtocolVersion,
-			Type:    MessageTypeFinal,
+			Type: MessageTypeFinal,
 			Final: &FinalPayload{
 				Content:    "",
 				StopReason: reason,
 			},
 		},
 	})
+}
+
+func protocolErrorFromError(err error) *ErrorPayload {
+	var protocolErr *ErrorPayload
+	if errors.As(err, &protocolErr) && protocolErr != nil && protocolErr.Code == ErrorCodeInvalidProtocol {
+		return protocolErr
+	}
+	return nil
+}
+
+func protocolRetryMessage(protocolErr *ErrorPayload, attempt, maxAttempts int) Message {
+	text := "invalid protocol response"
+	if protocolErr != nil && strings.TrimSpace(protocolErr.Message) != "" {
+		text = strings.TrimSpace(protocolErr.Message)
+	}
+	if maxAttempts > 0 && attempt >= maxAttempts {
+		text = fmt.Sprintf("protocol retry limit exceeded after %d attempts: %s", maxAttempts, text)
+	}
+	return errorMessage(ErrorCodeInvalidProtocol, text, false)
 }
 
 func emitEvent(onEvent StreamEventHandler, step int, frame StreamMessage) error {

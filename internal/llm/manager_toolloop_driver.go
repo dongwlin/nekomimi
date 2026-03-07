@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
@@ -49,18 +48,7 @@ func (d *managerToolLoopDriver) Next(ctx context.Context, req toolloop.RunReques
 		return toolloop.Message{}, err
 	}
 
-	if frame, ok := parseToolLoopFrame(reply); ok {
-		return frame, nil
-	}
-
-	return toolloop.Message{
-		Version: toolloop.ProtocolVersion,
-		Type:    toolloop.MessageTypeFinal,
-		Final: &toolloop.FinalPayload{
-			Content:    strings.TrimSpace(reply),
-			StopReason: toolloop.StopReasonFinal,
-		},
-	}, nil
+	return parseToolLoopFrame(reply)
 }
 
 func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.RunRequest, trace []toolloop.Message, onFrame toolloop.StreamFrameHandler) (toolloop.Message, error) {
@@ -80,8 +68,6 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 
 	parser := toolloop.NewNDJSONParser()
 	var terminal *toolloop.Message
-	var deltaBuilder strings.Builder
-	fallbackLineCount := 0
 	consume := func(items []toolloop.NDJSONItem) error {
 		for _, item := range items {
 			if item.Frame != nil {
@@ -91,7 +77,6 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 					if frame.Delta == nil || frame.Delta.Text == "" {
 						continue
 					}
-					deltaBuilder.WriteString(frame.Delta.Text)
 					if onFrame != nil {
 						if err := onFrame(frame); err != nil {
 							return err
@@ -99,38 +84,20 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 					}
 				case toolloop.MessageTypeToolCall, toolloop.MessageTypeFinal, toolloop.MessageTypeError:
 					if terminal != nil {
-						return errors.New("invalid stream frame: multiple terminal frames in one model step")
+						return toolloop.NewProtocolError("multiple terminal frames in one model step")
 					}
 					msg, ok := streamFrameTerminalMessage(frame)
 					if !ok {
-						return errors.New("invalid stream frame: unsupported terminal type")
+						return toolloop.NewProtocolError("unsupported terminal frame type")
 					}
 					terminal = &msg
 				default:
-					return errors.New("invalid stream frame: unsupported frame type")
+					return toolloop.NewProtocolError("unsupported stream frame type")
 				}
 				continue
 			}
-
-			if item.Text == "" {
-				continue
-			}
-			deltaText := item.Text
-			if fallbackLineCount > 0 {
-				deltaText = "\n" + deltaText
-			}
-			deltaBuilder.WriteString(deltaText)
-			fallbackLineCount++
-			if onFrame != nil {
-				if err := onFrame(toolloop.StreamMessage{
-					Version: toolloop.StreamProtocolVersion,
-					Type:    toolloop.MessageTypeDelta,
-					Delta: &toolloop.DeltaPayload{
-						Text: deltaText,
-					},
-				}); err != nil {
-					return err
-				}
+			if strings.TrimSpace(item.Text) != "" {
+				return toolloop.NewProtocolError("unexpected plain-text stream content")
 			}
 		}
 		return nil
@@ -161,18 +128,7 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 		return *terminal, nil
 	}
 
-	fallback := deltaBuilder.String()
-	if strings.TrimSpace(fallback) != "" {
-		return toolloop.Message{
-			Version: toolloop.ProtocolVersion,
-			Type:    toolloop.MessageTypeFinal,
-			Final: &toolloop.FinalPayload{
-				Content:    fallback,
-				StopReason: toolloop.StopReasonFinal,
-			},
-		}, nil
-	}
-	return toolloop.Message{}, errors.New("invalid stream frame: missing terminal frame")
+	return toolloop.Message{}, toolloop.NewProtocolError("missing terminal frame")
 }
 
 func buildToolLoopInstruction(descriptors []tools.Descriptor, trace []toolloop.Message) string {
@@ -190,18 +146,17 @@ func buildToolLoopInstruction(descriptors []tools.Descriptor, trace []toolloop.M
 	}
 
 	state := map[string]any{
-		"protocol_version": toolloop.ProtocolVersion,
-		"available_tools":  toolViews,
-		"trace":            trace,
+		"available_tools": toolViews,
+		"trace":           trace,
 	}
 	stateJSON, _ := json.Marshal(state)
 
 	var builder strings.Builder
 	builder.WriteString("You are a tool-loop controller. Return EXACTLY one JSON object and no markdown.\n")
 	builder.WriteString("Allowed types: tool_call, final, error.\n")
-	builder.WriteString("When choosing tool_call, output fields: version,type,tool_call(call_id,name,arguments object).\n")
-	builder.WriteString("When choosing final, output fields: version,type,final(content,stop_reason=final).\n")
-	builder.WriteString("When choosing error, output fields: version,type,error(code,message,retryable).\n")
+	builder.WriteString("When choosing tool_call, output fields: type,tool_call(call_id,name,arguments object).\n")
+	builder.WriteString("When choosing final, output fields: type,final(content,stop_reason=final).\n")
+	builder.WriteString("When choosing error, output fields: type,error(code,message,retryable).\n")
 	builder.WriteString("State JSON:\n")
 	builder.Write(stateJSON)
 	return builder.String()
@@ -222,20 +177,19 @@ func buildToolLoopStreamInstruction(descriptors []tools.Descriptor, trace []tool
 	}
 
 	state := map[string]any{
-		"protocol_version": toolloop.StreamProtocolVersion,
-		"available_tools":  toolViews,
-		"trace":            trace,
+		"available_tools": toolViews,
+		"trace":           trace,
 	}
 	stateJSON, _ := json.Marshal(state)
 
 	var builder strings.Builder
 	builder.WriteString("You are a tool-loop controller.\n")
 	builder.WriteString("Return NDJSON only: one JSON object per line, no markdown, no code fence.\n")
-	builder.WriteString("Use version=\"v2\" and type in {delta, tool_call, final, error}.\n")
-	builder.WriteString("delta payload shape: {\"delta\":{\"text\":\"...\"}}.\n")
-	builder.WriteString("tool_call payload shape: {\"tool_call\":{\"call_id\":\"...\",\"name\":\"...\",\"arguments\":{}}}.\n")
-	builder.WriteString("final payload shape: {\"final\":{\"content\":\"...\",\"stop_reason\":\"final\"}}.\n")
-	builder.WriteString("error payload shape: {\"error\":{\"code\":\"...\",\"message\":\"...\",\"retryable\":false}}.\n")
+	builder.WriteString("Use type in {delta, tool_call, final, error}.\n")
+	builder.WriteString("delta payload shape: {\"type\":\"delta\",\"delta\":{\"text\":\"...\"}}.\n")
+	builder.WriteString("tool_call payload shape: {\"type\":\"tool_call\",\"tool_call\":{\"call_id\":\"...\",\"name\":\"...\",\"arguments\":{}}}.\n")
+	builder.WriteString("final payload shape: {\"type\":\"final\",\"final\":{\"content\":\"...\",\"stop_reason\":\"final\"}}.\n")
+	builder.WriteString("error payload shape: {\"type\":\"error\",\"error\":{\"code\":\"...\",\"message\":\"...\",\"retryable\":false}}.\n")
 	builder.WriteString("Tool-call arguments must be a JSON object.\n")
 	builder.WriteString("If no tool is needed, emit final frame.\n")
 	builder.WriteString("State JSON:\n")
@@ -247,45 +201,42 @@ func streamFrameTerminalMessage(frame toolloop.StreamMessage) (toolloop.Message,
 	switch frame.Type {
 	case toolloop.MessageTypeToolCall:
 		return toolloop.Message{
-			Version:  toolloop.ProtocolVersion,
 			Type:     toolloop.MessageTypeToolCall,
 			ToolCall: frame.ToolCall,
 		}, true
 	case toolloop.MessageTypeFinal:
 		return toolloop.Message{
-			Version: toolloop.ProtocolVersion,
-			Type:    toolloop.MessageTypeFinal,
-			Final:   frame.Final,
+			Type:  toolloop.MessageTypeFinal,
+			Final: frame.Final,
 		}, true
 	case toolloop.MessageTypeError:
 		return toolloop.Message{
-			Version: toolloop.ProtocolVersion,
-			Type:    toolloop.MessageTypeError,
-			Error:   frame.Error,
+			Type:  toolloop.MessageTypeError,
+			Error: frame.Error,
 		}, true
 	default:
 		return toolloop.Message{}, false
 	}
 }
 
-func parseToolLoopFrame(raw string) (toolloop.Message, bool) {
+func parseToolLoopFrame(raw string) (toolloop.Message, error) {
 	candidate := jsonutil.ExtractJSONObjectCandidate(raw)
 	if candidate == "" {
-		return toolloop.Message{}, false
+		return toolloop.Message{}, toolloop.NewProtocolError("expected one JSON object response")
 	}
 	if !looksLikeToolLoopFrame(candidate) {
-		return toolloop.Message{}, false
+		return toolloop.Message{}, toolloop.NewProtocolError("expected protocol object with type and matching payload")
 	}
 
 	var frame toolloop.Message
 	if err := json.Unmarshal([]byte(candidate), &frame); err != nil {
-		return toolloop.Message{}, false
+		return toolloop.Message{}, toolloop.NewProtocolError("invalid JSON object response")
 	}
 	if strings.TrimSpace(string(frame.Type)) == "" {
-		return toolloop.Message{}, false
+		return toolloop.Message{}, toolloop.NewProtocolError("missing type field")
 	}
 	toolloop.NormalizeModelMessage(&frame)
-	return frame, true
+	return frame, nil
 }
 
 func looksLikeToolLoopFrame(candidate string) bool {
@@ -296,15 +247,15 @@ func looksLikeToolLoopFrame(candidate string) bool {
 
 	switch frameType := strings.TrimSpace(jsonutil.ReadJSONStringField(payload, "type")); frameType {
 	case string(toolloop.MessageTypeDelta):
-		return jsonutil.HasJSONField(payload, "delta") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "delta")
 	case string(toolloop.MessageTypeToolCall):
-		return jsonutil.HasJSONField(payload, "tool_call") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "tool_call")
 	case string(toolloop.MessageTypeToolResult):
-		return jsonutil.HasJSONField(payload, "tool_result") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "tool_result")
 	case string(toolloop.MessageTypeFinal):
-		return jsonutil.HasJSONField(payload, "final") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "final")
 	case string(toolloop.MessageTypeError):
-		return jsonutil.HasJSONField(payload, "error") || jsonutil.HasJSONField(payload, "version")
+		return jsonutil.HasJSONField(payload, "error")
 	default:
 		return false
 	}

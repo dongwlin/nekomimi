@@ -256,6 +256,42 @@ func TestEngine_Run_ModelFinalStopReasonMustBeFinal(t *testing.T) {
 	}
 }
 
+func TestEngine_Run_ProtocolErrorStopsAfterThreeAttempts(t *testing.T) {
+	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
+		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
+	})
+	driver := &scriptedDriver{
+		t: t,
+		steps: []driverStep{
+			{msg: Message{Type: MessageTypeToolCall}},
+			{msg: Message{Type: MessageTypeToolCall}},
+			{msg: Message{Type: MessageTypeToolCall}},
+		},
+	}
+
+	engine := NewEngine(router, driver, EngineOptions{})
+	result, err := engine.Run(context.Background(), RunRequest{Config: RunConfig{MaxSteps: 4}})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if result.StopReason != StopReasonError {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonError)
+	}
+	if len(driver.calls) != 3 {
+		t.Fatalf("driver should be called three times, got %d", len(driver.calls))
+	}
+	if len(result.Trace) != 3 {
+		t.Fatalf("trace length mismatch: got %d, want 3", len(result.Trace))
+	}
+	last := result.Trace[len(result.Trace)-1]
+	if last.Type != MessageTypeError || last.Error == nil {
+		t.Fatalf("expected protocol error tail, got %+v", last)
+	}
+	if !strings.Contains(last.Error.Message, "protocol retry limit exceeded") {
+		t.Fatalf("unexpected final error message: %q", last.Error.Message)
+	}
+}
+
 func TestEngine_Run_ContextTimeoutTerminatesSafely(t *testing.T) {
 	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
 		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
@@ -746,6 +782,46 @@ func TestEngine_RunStream_ModelFinalStopReasonMustBeFinal(t *testing.T) {
 	}
 	if events[1].Frame.Type != MessageTypeFinal {
 		t.Fatalf("events[1] should be final, got %q", events[1].Frame.Type)
+	}
+}
+
+func TestEngine_RunStream_ProtocolErrorStopsAfterThreeAttempts(t *testing.T) {
+	router := buildTestRouter(t, "internal/echo", func(ctx context.Context, req tools.CallRequest) (tools.CallResult, error) {
+		return tools.CallResult{Name: req.Name, Content: "ok"}, nil
+	})
+	driver := &scriptedStreamDriver{
+		t: t,
+		steps: []streamDriverStep{
+			{msg: Message{Type: MessageTypeToolCall}},
+			{msg: Message{Type: MessageTypeToolCall}},
+			{msg: Message{Type: MessageTypeToolCall}},
+		},
+	}
+
+	engine := NewEngine(router, driver, EngineOptions{})
+	events := make([]StreamEvent, 0, 4)
+	result, err := engine.RunStream(context.Background(), RunRequest{
+		Config: RunConfig{MaxSteps: 4},
+	}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("run stream failed: %v", err)
+	}
+	if result.StopReason != StopReasonError {
+		t.Fatalf("stop reason mismatch: got %q, want %q", result.StopReason, StopReasonError)
+	}
+	if len(events) != 3 {
+		t.Fatalf("event count mismatch: got %d, want 3", len(events))
+	}
+	for i, event := range events {
+		if event.Frame.Type != MessageTypeError {
+			t.Fatalf("events[%d] should be error, got %q", i, event.Frame.Type)
+		}
+	}
+	if events[2].Frame.Error == nil || !strings.Contains(events[2].Frame.Error.Message, "protocol retry limit exceeded") {
+		t.Fatalf("unexpected final error event: %+v", events[2].Frame.Error)
 	}
 }
 

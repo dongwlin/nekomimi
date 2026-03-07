@@ -10,35 +10,23 @@ import (
 	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 )
 
-// NormalizeModelMessage makes common model deviations compatible with v1.
+// NormalizeModelMessage makes common model deviations compatible with the
+// current tool-loop message contract.
 func NormalizeModelMessage(msg *Message) {
 	if msg == nil {
 		return
 	}
-
-	switch strings.TrimSpace(msg.Version) {
-	case "", StreamProtocolVersion:
-		msg.Version = ProtocolVersion
-	default:
-		msg.Version = strings.TrimSpace(msg.Version)
-	}
-
+	msg.Version = ""
 	normalizeMessagePayload(msg.Type, msg.ToolCall, msg.Final)
 }
 
-// NormalizeModelStreamFrame makes common model deviations compatible with v2.
+// NormalizeModelStreamFrame makes common model deviations compatible with the
+// current tool-loop stream contract.
 func NormalizeModelStreamFrame(frame *StreamMessage) {
 	if frame == nil {
 		return
 	}
-
-	switch strings.TrimSpace(frame.Version) {
-	case "", ProtocolVersion:
-		frame.Version = StreamProtocolVersion
-	default:
-		frame.Version = strings.TrimSpace(frame.Version)
-	}
-
+	frame.Version = ""
 	normalizeMessagePayload(frame.Type, frame.ToolCall, frame.Final)
 }
 
