@@ -524,3 +524,94 @@ api:
 		t.Fatal("expected non-positive access ttl error, got nil")
 	}
 }
+
+func TestLoad_ParseRepeatConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+repeat:
+  enabled: true
+  flush_policy:
+    min_batch_wait_ms: 320
+    max_batch_wait_ms: 1800
+    max_batch_size: 9
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if !cfg.Repeat.Enabled {
+		t.Fatal("expected repeat.enabled to be true")
+	}
+	if cfg.Repeat.FlushPolicy.MinBatchWaitMS != 320 {
+		t.Fatalf("unexpected repeat min_batch_wait_ms: %d", cfg.Repeat.FlushPolicy.MinBatchWaitMS)
+	}
+	if cfg.Repeat.FlushPolicy.MaxBatchWaitMS != 1800 {
+		t.Fatalf("unexpected repeat max_batch_wait_ms: %d", cfg.Repeat.FlushPolicy.MaxBatchWaitMS)
+	}
+	if cfg.Repeat.FlushPolicy.MaxBatchSize != 9 {
+		t.Fatalf("unexpected repeat max_batch_size: %d", cfg.Repeat.FlushPolicy.MaxBatchSize)
+	}
+}
+
+func TestLoad_DefaultRepeatDisabledWhenOmitted(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := []byte(`
+nickname:
+  - "test"
+command_prefix: "/"
+super_users: []
+llm:
+  enabled: true
+  provider: "openai"
+  api: ""
+  key: ""
+  model: "x"
+  system_prompt: ""
+  context_max: 1000
+  context_assembly:
+    recent_chat_limit: 50
+    recent_diary_limit: 50
+  immersive:
+driver:
+  websocket:
+    url: "ws://localhost:3001"
+    token: "token"
+`)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if cfg.Repeat.Enabled {
+		t.Fatal("expected repeat.enabled to default to false")
+	}
+}

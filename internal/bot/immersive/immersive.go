@@ -319,41 +319,6 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 	identity := b.currentIdentity()
 	b.llm.SetAssistantSpeaker(assistantSpeakerLabel(identity))
-	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(processing)
-	if repeatText != "" {
-		now := time.Now()
-		delivered := sendFn != nil
-		if !delivered {
-			log.Warn().
-				Str("session", sessionKey).
-				Str("delivery", "repeat").
-				Int("reply_chars", len([]rune(repeatText))).
-				Msg("immersive send function missing, skipping outbound send")
-		} else {
-			sendFn(repeatText)
-		}
-		b.RecordEvent(sessionKey, NewRepeatTriggerEvent(repeatText, b.botPrimaryName(), repeatCount, repeatParticipants, time.Now()))
-		b.recordAssistantUtterance(sessionKey, repeatText)
-		_ = b.llm.AppendAssistantEvent(sessionKey, repeatText, cutoffSeq)
-		state.mu.Lock()
-		state.recordFinalActionLocked("reply", "repeat_trigger", "reply triggered by repeat detection", repeatText, now)
-		state.mu.Unlock()
-		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
-			Action:     "reply",
-			ReasonCode: "repeat_trigger",
-		})
-		if delivered {
-			b.noteAssistantDelivered(sessionKey, repeatText)
-		}
-		log.Info().
-			Str("session", sessionKey).
-			Str("repeat_text", repeatText).
-			Int("repeat_count", repeatCount).
-			Int("repeat_participants", repeatParticipants).
-			Bool("delivered", delivered).
-			Msg("immersive repeat triggered")
-		return
-	}
 
 	now := time.Now()
 	gateMeta := summarizeQueueMeta(processing, now, identity)

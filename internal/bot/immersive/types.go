@@ -4,7 +4,6 @@
 package immersive
 
 import (
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,17 +44,14 @@ const (
 	EventAssistantText   EventKind = "assistant_text"
 	EventPokeNotice      EventKind = "poke_notice"
 	EventAssistantAction EventKind = "assistant_action"
-	EventRepeatTrigger   EventKind = "repeat_trigger"
 	EventSystemNote      EventKind = "system_note"
 )
 
 const (
-	eventMetaAction             = "action"
-	eventMetaDirection          = "direction"
-	eventMetaActorName          = "actor_name"
-	eventMetaTargetName         = "target_name"
-	eventMetaRepeatCount        = "repeat_count"
-	eventMetaRepeatParticipants = "repeat_participants"
+	eventMetaAction     = "action"
+	eventMetaDirection  = "direction"
+	eventMetaActorName  = "actor_name"
+	eventMetaTargetName = "target_name"
 )
 
 // TimelineEvent is the external typed event shape used by commands and tests.
@@ -158,7 +154,7 @@ type queueMeta struct {
 
 func normalizeEventKind(kind EventKind) EventKind {
 	switch kind {
-	case EventAssistantText, EventPokeNotice, EventAssistantAction, EventRepeatTrigger, EventSystemNote:
+	case EventAssistantText, EventPokeNotice, EventAssistantAction, EventSystemNote:
 		return kind
 	case EventUserMessage:
 		return kind
@@ -232,13 +228,6 @@ func NewAssistantActionEvent(speaker, action string, at time.Time, metadata map[
 	}
 	next[eventMetaAction] = strings.TrimSpace(action)
 	return NewTimelineEvent(EventAssistantAction, "", speaker, at, next)
-}
-
-func NewRepeatTriggerEvent(text, speaker string, repeatCount, participants int, at time.Time) TimelineEvent {
-	return NewTimelineEvent(EventRepeatTrigger, text, speaker, at, map[string]string{
-		eventMetaRepeatCount:        strconv.Itoa(repeatCount),
-		eventMetaRepeatParticipants: strconv.Itoa(participants),
-	})
 }
 
 func NewSystemNoteEvent(text, speaker string, at time.Time) TimelineEvent {

@@ -7,6 +7,7 @@ type Config struct {
 	CommandPrefix string       `yaml:"command_prefix"`
 	SuperUsers    []int64      `yaml:"super_users"`
 	LLM           LLMConfig    `yaml:"llm"`
+	Repeat        RepeatConfig `yaml:"repeat"`
 	Driver        DriverConfig `yaml:"driver"`
 	API           APIConfig    `yaml:"api"`
 }
@@ -68,6 +69,11 @@ type ImmersiveConfig struct {
 	FlushPolicy   FlushPolicyConfig   `yaml:"flush_policy"`
 	PokeReaction  PokeReactionConfig  `yaml:"poke_reaction"`
 	Scheduler     SchedulerConfig     `yaml:"scheduler"`
+}
+
+type RepeatConfig struct {
+	Enabled     bool              `yaml:"enabled"`
+	FlushPolicy FlushPolicyConfig `yaml:"flush_policy"`
 }
 
 type SchedulerConfig struct {

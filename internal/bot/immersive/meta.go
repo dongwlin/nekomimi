@@ -195,7 +195,7 @@ func isTranscriptEvent(msg queuedMessage) bool {
 
 func isSystemEvent(msg queuedMessage) bool {
 	switch normalizeEventKind(msg.kind) {
-	case EventPokeNotice, EventAssistantAction, EventRepeatTrigger, EventSystemNote:
+	case EventPokeNotice, EventAssistantAction, EventSystemNote:
 		return true
 	default:
 		return false

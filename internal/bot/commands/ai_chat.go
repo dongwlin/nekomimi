@@ -13,7 +13,7 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
-func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine) {
+func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine, repeatEngine RepeatEngine) {
 	pokeReactions := newPokeTracker(cfg.LLM.Immersive.PokeReaction)
 
 	zero.OnCommand("ai").Handle(func(ctx *zero.Ctx) {
@@ -141,19 +141,7 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 	})
 
 	zero.OnMessage().Handle(func(ctx *zero.Ctx) {
-		engine.RefreshIdentityFromCtx(ctx)
-		if !llmManager.IsEnabled() || !llmManager.IsImmersive(sessionKey(ctx)) {
-			return
-		}
-		text := strings.TrimSpace(ctx.ExtractPlainText())
-		if text == "" {
-			return
-		}
-		if strings.HasPrefix(text, cfg.CommandPrefix) {
-			return
-		}
-		isPrivate := ctx.Event != nil && ctx.Event.DetailType == "private"
-		engine.Enqueue(ctx, sessionKey(ctx), text, speakerLabel(ctx), isPrivate)
+		handleAmbientMessage(cfg, llmManager, engine, repeatEngine, ctx)
 	})
 
 	zero.On("notice/notify/poke").Handle(func(ctx *zero.Ctx) {
@@ -211,6 +199,43 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 		}
 		recordReply(reply)
 	})
+}
+
+type ambientLLMState interface {
+	IsEnabled() bool
+	IsImmersive(sessionKey string) bool
+}
+
+func handleAmbientMessage(cfg *config.Config, llmState ambientLLMState, engine ImmersiveEngine, repeatEngine RepeatEngine, ctx *zero.Ctx) {
+	if ctx == nil {
+		return
+	}
+	if engine != nil {
+		engine.RefreshIdentityFromCtx(ctx)
+	}
+
+	text := strings.TrimSpace(ctx.ExtractPlainText())
+	if text == "" {
+		return
+	}
+	if cfg != nil && strings.HasPrefix(text, cfg.CommandPrefix) {
+		return
+	}
+
+	session := sessionKey(ctx)
+	isPrivate := ctx.Event != nil && ctx.Event.DetailType == "private"
+	speaker := speakerLabel(ctx)
+	assistantSpeaker := assistantLabel(ctx)
+
+	if repeatEngine != nil && repeatEngine.IsEnabled(session) {
+		repeatEngine.Enqueue(ctx, session, text, speaker, assistantSpeaker, isPrivate)
+		return
+	}
+
+	if engine == nil || llmState == nil || !llmState.IsEnabled() || !llmState.IsImmersive(session) {
+		return
+	}
+	engine.Enqueue(ctx, session, text, speaker, isPrivate)
 }
 
 func sendContextUsage(ctx *zero.Ctx, llmManager llm.Service) {

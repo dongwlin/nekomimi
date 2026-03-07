@@ -48,6 +48,13 @@ llm:
       cold_open_min_interval_ms: 600000
       quiet_threshold_ms: 300000
 
+repeat:
+  enabled: false
+  flush_policy:
+    min_batch_wait_ms: 600
+    max_batch_wait_ms: 3000
+    max_batch_size: 15
+
 driver:
   websocket:
     url: "ws://localhost:3001"

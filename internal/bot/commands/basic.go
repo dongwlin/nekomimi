@@ -7,7 +7,7 @@ import (
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
-func registerBasicHandlers(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine) {
+func registerBasicHandlers(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine, repeatEngine RepeatEngine) {
 	zero.OnFullMatch("ping").Handle(func(ctx *zero.Ctx) {
 		sendTracked(ctx, "pong")
 	})
@@ -27,8 +27,12 @@ func registerBasicHandlers(cfg *config.Config, llmManager llm.Service, engine Im
 		if engine != nil {
 			engine.ReloadConfig(reloaded.LLM.Immersive, reloaded.NickName)
 		}
+		if repeatEngine != nil {
+			repeatEngine.ReloadConfig(reloaded.Repeat)
+		}
 		if cfg != nil {
 			cfg.LLM = reloaded.LLM
+			cfg.Repeat = reloaded.Repeat
 			cfg.NickName = append([]string(nil), reloaded.NickName...)
 			cfg.CommandPrefix = reloaded.CommandPrefix
 			cfg.SuperUsers = append([]int64(nil), reloaded.SuperUsers...)

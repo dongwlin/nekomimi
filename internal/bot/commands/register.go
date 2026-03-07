@@ -18,10 +18,19 @@ type ImmersiveEngine interface {
 	ReloadConfig(cfg config.ImmersiveConfig, nicknames []string)
 }
 
-func Register(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine, collector *metrics.Collector) {
+type RepeatEngine interface {
+	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker, assistantSpeaker string, isPrivate bool) bool
+	Clear(sessionKey string)
+	ReloadConfig(cfg config.RepeatConfig)
+	SetEnabled(sessionKey string, enabled bool)
+	IsEnabled(sessionKey string) bool
+}
+
+func Register(cfg *config.Config, llmManager llm.Service, engine ImmersiveEngine, repeatEngine RepeatEngine, collector *metrics.Collector) {
 	setMetricsCollector(collector)
 	registerInboundMetricsMatchers()
-	registerAIHandlers(cfg, llmManager, engine)
+	registerAIHandlers(cfg, llmManager, engine, repeatEngine)
+	registerRepeatHandlers(repeatEngine)
 	registerLLMHandlers(llmManager)
-	registerBasicHandlers(cfg, llmManager, engine)
+	registerBasicHandlers(cfg, llmManager, engine, repeatEngine)
 }

@@ -61,7 +61,7 @@ func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) 
 	if !ok {
 		return
 	}
-	_ = m.appendAssistantEventFormatted(session, assistantReply, time.Now(), cutoffSeq)
+	_ = m.appendAssistantEventFormatted(session, assistantReply, "", time.Now(), cutoffSeq)
 }
 
 // AppendTurn appends a completed user-assistant turn into session history.
@@ -90,7 +90,12 @@ func (m *Manager) AppendAssistantEvent(sessionKey, assistantReply string, replyT
 
 // AppendAssistantEventAt appends one assistant atomic event with explicit event time.
 func (m *Manager) AppendAssistantEventAt(sessionKey, assistantReply string, replyToCutoffSeq int64, eventTime time.Time) bool {
-	return m.appendAssistantEventFormatted(sessionKey, assistantReply, eventTime, replyToCutoffSeq)
+	return m.appendAssistantEventFormatted(sessionKey, assistantReply, "", eventTime, replyToCutoffSeq)
+}
+
+// AppendAssistantEventWithSpeakerAt appends one assistant event with an explicit speaker label.
+func (m *Manager) AppendAssistantEventWithSpeakerAt(sessionKey, assistantReply, speaker string, replyToCutoffSeq int64, eventTime time.Time) bool {
+	return m.appendAssistantEventFormatted(sessionKey, assistantReply, speaker, eventTime, replyToCutoffSeq)
 }
 
 func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime time.Time) (int64, bool) {
@@ -127,7 +132,7 @@ func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime
 	return seq, true
 }
 
-func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply string, eventTime time.Time, replyToCutoffSeq int64) bool {
+func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply, speaker string, eventTime time.Time, replyToCutoffSeq int64) bool {
 	session := strings.TrimSpace(sessionKey)
 	reply := strings.TrimSpace(assistantReply)
 	if session == "" || reply == "" {
@@ -137,7 +142,10 @@ func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply strin
 	m.sessions.ensureStarted(session)
 	m.mu.RLock()
 	store := m.chatStore
-	assistantSpeaker := strings.TrimSpace(m.current.assistantSpeaker)
+	assistantSpeaker := strings.TrimSpace(speaker)
+	if assistantSpeaker == "" {
+		assistantSpeaker = strings.TrimSpace(m.current.assistantSpeaker)
+	}
 	m.mu.RUnlock()
 	if store == nil {
 		return false

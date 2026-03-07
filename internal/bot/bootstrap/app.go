@@ -5,6 +5,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/bot/commands"
 	"github.com/dongwlin/nekomimi/internal/bot/immersive"
+	"github.com/dongwlin/nekomimi/internal/bot/repeat"
 	"github.com/dongwlin/nekomimi/internal/bot/runtime"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
@@ -15,7 +16,13 @@ import (
 func Start(cfg *config.Config, llmManager llm.Service, collector *metrics.Collector) {
 	engine := immersive.NewEngine(cfg.LLM.Immersive, llmManager, cfg.NickName)
 	engine.SetMetricsCollector(collector)
-	commands.Register(cfg, llmManager, engine, collector)
+	var historyWriter repeat.HistoryWriter
+	if writer, ok := llmManager.(repeat.HistoryWriter); ok {
+		historyWriter = writer
+	}
+	repeatEngine := repeat.NewEngine(cfg.Repeat, historyWriter)
+	repeatEngine.SetMetricsCollector(collector)
+	commands.Register(cfg, llmManager, engine, repeatEngine, collector)
 	if collector != nil {
 		collector.SetBotStartedAt(time.Now())
 	}

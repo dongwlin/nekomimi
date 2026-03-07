@@ -76,13 +76,15 @@ func assistantLabel(ctx *zero.Ctx) string {
 		}
 	}
 
-	info := ctx.GetLoginInfo()
-	if nick := strings.TrimSpace(info.Get("nickname").String()); nick != "" {
-		name = nick
-	}
-	if speakerID == "" {
-		if id := strings.TrimSpace(info.Get("user_id").String()); id != "" {
-			speakerID = id
+	if matcher := ctx.GetMatcher(); matcher != nil && matcher.Engine != nil {
+		info := ctx.GetLoginInfo()
+		if nick := strings.TrimSpace(info.Get("nickname").String()); nick != "" {
+			name = nick
+		}
+		if speakerID == "" {
+			if id := strings.TrimSpace(info.Get("user_id").String()); id != "" {
+				speakerID = id
+			}
 		}
 	}
 
