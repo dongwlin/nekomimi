@@ -24,6 +24,7 @@ type pipelineRequest struct {
 	Source           string
 	AppendTurn       bool
 	DisableTools     bool
+	RequestOptions   llmclient.RequestOptions
 	Meta             contextassemble.Meta
 	ImmersiveContext *contextassemble.ImmersiveContext
 }
@@ -98,7 +99,7 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 
 	engine := toolloop.NewEngine(
 		state.router,
-		newManagerToolLoopDriver(m, state.provider, req.Source),
+		newManagerToolLoopDriver(m, state.provider, withRequestSource(req.RequestOptions, req.Source)),
 		toolloop.EngineOptions{DefaultMaxSteps: state.toolLoopMaxStep},
 	)
 	result, err := engine.Run(runCtx, toolloop.RunRequest{
@@ -153,9 +154,7 @@ func (m *Manager) decideIntentWithPipeline(ctx context.Context, req pipelineRequ
 		m.sessions.incrementContextTrimCount(req.SessionKey)
 	}
 
-	reply, err := m.generateWithProvider(ctx, state.provider, state.model, requestPrompt, messages, llmclient.RequestOptions{
-		Source: req.Source,
-	})
+	reply, err := m.generateWithProvider(ctx, state.provider, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source))
 	if err != nil {
 		return llmintent.ControlIntent{}, err
 	}
@@ -218,9 +217,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 	}
 
 	if req.DisableTools || !state.toolsEnabled || state.router == nil {
-		reply, err := m.generateStreamWithProvider(ctx, state.provider, state.model, requestPrompt, messages, llmclient.RequestOptions{
-			Source: req.Source,
-		}, func(delta string) error {
+		reply, err := m.generateStreamWithProvider(ctx, state.provider, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source), func(delta string) error {
 			if delta == "" {
 				return nil
 			}
@@ -263,7 +260,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 
 	engine := toolloop.NewEngine(
 		state.router,
-		newManagerToolLoopDriver(m, state.provider, req.Source),
+		newManagerToolLoopDriver(m, state.provider, withRequestSource(req.RequestOptions, req.Source)),
 		toolloop.EngineOptions{DefaultMaxSteps: state.toolLoopMaxStep},
 	)
 	result, err := engine.RunStream(runCtx, toolloop.RunRequest{
@@ -409,6 +406,12 @@ func protocolErrorMessage(trace []toolloop.Message) string {
 		}
 	}
 	return ""
+}
+
+func withRequestSource(options llmclient.RequestOptions, source string) llmclient.RequestOptions {
+	next := options
+	next.Source = strings.TrimSpace(source)
+	return next
 }
 
 func mapToolLoopStreamEvent(seq int64, step int, message toolloop.StreamMessage) StreamEvent {

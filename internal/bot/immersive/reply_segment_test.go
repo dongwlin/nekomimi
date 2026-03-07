@@ -1,6 +1,10 @@
 package immersive
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+)
 
 func TestSplitReplySegments_StrictDelimiter(t *testing.T) {
 	segments := SplitReplySegments("first\n---\nsecond")
@@ -46,6 +50,48 @@ func TestReplySegmentAccumulator_FlushTailWithoutDelimiter(t *testing.T) {
 	tail := acc.FlushTail()
 	if len(tail) != 1 || tail[0] != "single message" {
 		t.Fatalf("unexpected tail: %#v", tail)
+	}
+}
+
+func TestSplitReplySegmentsForDelivery_FallsBackToSentenceBoundaries(t *testing.T) {
+	segments := SplitReplySegmentsForDelivery("先打个招呼。再补一句！最后收尾喵~", 3)
+	if len(segments) != 3 {
+		t.Fatalf("expected 3 segments, got %#v", segments)
+	}
+	if segments[0] != "先打个招呼。" || segments[1] != "再补一句！" || segments[2] != "最后收尾喵~" {
+		t.Fatalf("unexpected sentence split: %#v", segments)
+	}
+}
+
+func TestSplitReplySegmentsForDelivery_GreetingFallback(t *testing.T) {
+	segments := SplitReplySegmentsForDelivery("晚上好刚摸完鱼啃了便利店的冰皮月亮还不错喵~", 2)
+	if len(segments) != 2 {
+		t.Fatalf("expected 2 segments, got %#v", segments)
+	}
+	if segments[0] != "晚上好" {
+		t.Fatalf("unexpected greeting segment: %#v", segments)
+	}
+	if segments[1] != "刚摸完鱼啃了便利店的冰皮月亮还不错喵~" {
+		t.Fatalf("unexpected tail segment: %#v", segments)
+	}
+}
+
+func TestSplitReplySegmentsForDelivery_RespectsMaxSegments(t *testing.T) {
+	segments := SplitReplySegmentsForDelivery("一。二。三。", 2)
+	if len(segments) != 2 {
+		t.Fatalf("expected 2 segments, got %#v", segments)
+	}
+	if segments[0] != "一。" || segments[1] != "二。\n三。" {
+		t.Fatalf("unexpected merged segments: %#v", segments)
+	}
+}
+
+func TestReplySegmentLimit_UsesImmersiveContext(t *testing.T) {
+	if got := replySegmentLimit(nil); got != 1 {
+		t.Fatalf("expected default segment limit 1, got %d", got)
+	}
+	if got := replySegmentLimit(&contextassemble.ImmersiveContext{MaxReplySegments: 3}); got != 3 {
+		t.Fatalf("expected immersive segment limit 3, got %d", got)
 	}
 }
 

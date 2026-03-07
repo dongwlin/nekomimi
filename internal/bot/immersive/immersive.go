@@ -399,6 +399,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		debugPreview = buildCombinedInput(processing, identity)
 	}
 	immersiveCtx := buildImmersiveContext(processing, runtimeSnapshot, identity, behavior, gate)
+	replyPrompt := buildImmersiveReplyPrompt(immersiveCtx)
 	log.Info().
 		Str("session", sessionKey).
 		Int("debug_preview_chars", len([]rune(debugPreview))).
@@ -439,12 +440,20 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Msg("immersive reply recorded into runtime buffer and llm history")
 	}
 
-	intent, intentErr := b.llm.DecideImmersiveIntent(context.Background(), "", sessionKey, "", immersiveCtx)
-	decision := decisionFromIntent(intent)
-	action := decision.action
-	waitMS := decision.waitMS
-	decisionReason := decision.reason
-	decisionReasonCode := "model"
+	var intentErr error
+	action := controlActionReply
+	waitMS := 0
+	decisionReason := "private strong call bypassed control intent"
+	decisionReasonCode := "private_strong_call_fast_path"
+	if !shouldBypassControlIntent(sessionKey, gateMeta, gate) {
+		intent, err := b.llm.DecideImmersiveIntent(context.Background(), "", sessionKey, "", immersiveCtx)
+		intentErr = err
+		decision := decisionFromIntent(intent)
+		action = decision.action
+		waitMS = decision.waitMS
+		decisionReason = decision.reason
+		decisionReasonCode = "model"
+	}
 
 	if intentErr != nil {
 		if isControlIntentProtocolError(intentErr) {
@@ -556,7 +565,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	}
 
 	if action == controlActionReply {
-		_ = b.handleReply(sendFn, sessionKey, "", immersiveCtx, recordReply)
+		_ = b.handleReply(sendFn, sessionKey, "", replyPrompt, immersiveCtx, recordReply)
 		return
 	}
 
@@ -580,6 +589,7 @@ func (b *ImmersiveBuffer) handleReply(
 	sendFn SendFunc,
 	sessionKey string,
 	input string,
+	extraPrompt string,
 	immersiveCtx *contextassemble.ImmersiveContext,
 	recordReply func(reply, reason string, delivered bool),
 ) error {
@@ -602,7 +612,7 @@ func (b *ImmersiveBuffer) handleReply(
 		input,
 		sessionKey,
 		"",
-		"",
+		extraPrompt,
 		onReplyEvent,
 		immersiveCtx,
 	)
@@ -639,10 +649,7 @@ func (b *ImmersiveBuffer) handleReply(
 		reply = immersiveEmptyReplyFallback
 	}
 
-	segments := SplitReplySegments(reply)
-	if len(segments) == 0 {
-		segments = []string{reply}
-	}
+	segments := SplitReplySegmentsForDelivery(reply, replySegmentLimit(immersiveCtx))
 
 	sentMessages := 0
 	sentChars := 0

@@ -184,6 +184,45 @@ func TestReplyStreamWithExtraPromptAllowTools_ImmersiveContextUsesSingleBlockLay
 	}
 }
 
+func TestReplyStreamWithExtraPromptAllowTools_DisablesReasoningAndThinking(t *testing.T) {
+	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+		if _, ok := body["reasoning"]; ok {
+			t.Fatalf("immersive reply should disable reasoning, body=%+v", body)
+		}
+		if _, ok := body["thinking"]; ok {
+			t.Fatalf("immersive reply should disable thinking, body=%+v", body)
+		}
+		return []string{
+			mustResponsesDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"ok","stop_reason":"final"}}`+"\n"),
+			`{"type":"response.completed"}`,
+		}
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:         true,
+		Provider:        "responses",
+		Model:           "gpt-4.1-mini",
+		API:             server.URL + "/responses",
+		Key:             "test-key",
+		ReasoningEffort: "medium",
+		ThinkingType:    "enabled",
+		Tools: config.ToolsConfig{
+			Enabled: true,
+		},
+	}, ManagerDeps{})
+
+	reply, err := manager.ReplyStreamWithExtraPromptAllowTools(context.Background(), "hello", "session-extra-no-reasoning", "alice", "extra", func(event StreamEvent) error {
+		return nil
+	}, &contextassemble.ImmersiveContext{MaxReplySegments: 2})
+	if err != nil {
+		t.Fatalf("immersive reply stream failed: %v", err)
+	}
+	if reply != "ok" {
+		t.Fatalf("reply mismatch: got %q, want %q", reply, "ok")
+	}
+}
+
 func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
 	var observedCall int64
 	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {

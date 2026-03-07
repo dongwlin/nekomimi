@@ -248,8 +248,9 @@ func (b *ImmersiveBuffer) tryFollowup(sessionKey string) {
 	replyCtx, cancelReply := context.WithCancel(context.Background())
 	defer cancelReply()
 
+	replyPrompt := buildImmersiveReplyPrompt(immersiveCtx)
 	reply, replyErr := b.llm.ReplyStreamWithExtraPromptAllowTools(
-		replyCtx, "", sessionKey, "", "", nil, immersiveCtx,
+		replyCtx, "", sessionKey, "", replyPrompt, nil, immersiveCtx,
 	)
 	if replyErr != nil {
 		if state := b.lookupSession(sessionKey); state != nil {

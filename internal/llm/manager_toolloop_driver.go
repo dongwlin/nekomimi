@@ -15,14 +15,14 @@ import (
 type managerToolLoopDriver struct {
 	manager  *Manager
 	provider string
-	source   string
+	options  llmclient.RequestOptions
 }
 
-func newManagerToolLoopDriver(manager *Manager, provider, source string) toolloop.ModelDriver {
+func newManagerToolLoopDriver(manager *Manager, provider string, options llmclient.RequestOptions) toolloop.ModelDriver {
 	return &managerToolLoopDriver{
 		manager:  manager,
 		provider: strings.TrimSpace(provider),
-		source:   strings.TrimSpace(source),
+		options:  options,
 	}
 }
 
@@ -34,16 +34,14 @@ func (d *managerToolLoopDriver) Next(ctx context.Context, req toolloop.RunReques
 		Content: buildToolLoopInstruction(req.Tools, trace),
 	})
 
-	source := strings.TrimSpace(d.source)
+	source := strings.TrimSpace(d.options.Source)
 	if source == "" {
 		source = "tool_loop_step"
 	} else {
 		source += "_tool_loop_step"
 	}
 
-	reply, err := d.manager.generateWithProvider(ctx, d.provider, req.ModelName, req.SystemPrompt, messages, llmclient.RequestOptions{
-		Source: source,
-	})
+	reply, err := d.manager.generateWithProvider(ctx, d.provider, req.ModelName, req.SystemPrompt, messages, withRequestSource(d.options, source))
 	if err != nil {
 		return toolloop.Message{}, err
 	}
@@ -59,7 +57,7 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 		Content: buildToolLoopStreamInstruction(req.Tools, trace),
 	})
 
-	source := strings.TrimSpace(d.source)
+	source := strings.TrimSpace(d.options.Source)
 	if source == "" {
 		source = "tool_loop_step_stream"
 	} else {
@@ -103,9 +101,7 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 		return nil
 	}
 
-	_, err := d.manager.generateStreamWithProvider(ctx, d.provider, req.ModelName, req.SystemPrompt, messages, llmclient.RequestOptions{
-		Source: source,
-	}, func(delta string) error {
+	_, err := d.manager.generateStreamWithProvider(ctx, d.provider, req.ModelName, req.SystemPrompt, messages, withRequestSource(d.options, source), func(delta string) error {
 		items, feedErr := parser.Feed(delta)
 		if feedErr != nil {
 			return feedErr

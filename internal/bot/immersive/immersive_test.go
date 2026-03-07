@@ -322,6 +322,53 @@ func TestFlush_IntentReplyUsesSendFunc(t *testing.T) {
 	}
 }
 
+func TestFlush_PrivateStrongCallBypassesIntentCall(t *testing.T) {
+	var callCount int64
+	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
+		atomic.StoreInt64(&callCount, call)
+		if !stream {
+			t.Fatalf("private strong-call fast path should not issue control request, body=%+v", body)
+		}
+		return scriptedResponse{
+			SSEEvents: []string{
+				mustResponsesDeltaEventRaw(t, "ok"),
+				`{"type":"response.completed"}`,
+			},
+		}
+	})
+	defer server.Close()
+
+	buffer, manager, _ := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	sessionKey := "private:3103744094"
+	manager.SetImmersive(sessionKey, true)
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	events := captureLogEvents(t, func() {
+		buffer.flush(sessionKey)
+	})
+
+	if atomic.LoadInt64(&callCount) != 1 {
+		t.Fatalf("expected exactly one provider call for private fast path, got %d", atomic.LoadInt64(&callCount))
+	}
+
+	found := false
+	for _, event := range events {
+		if event["message"] != "immersive control decision evaluated" {
+			continue
+		}
+		if toString(event["reason_code"]) != "private_strong_call_fast_path" {
+			continue
+		}
+		if toString(event["action"]) != string(controlActionReply) {
+			t.Fatalf("expected reply action for fast path, got %+v", event)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatalf("expected fast-path decision log, events=%+v", events)
+	}
+}
+
 func TestFlush_IntentReplyWithoutSendFuncStillPersistsAssistant(t *testing.T) {
 	control := mustMarshalJSON(t, map[string]any{
 		"action": "reply",
@@ -417,6 +464,46 @@ func TestFlush_ReplyDelimiterSegmentsAreSentWithoutControlMarker(t *testing.T) {
 	}
 	if !foundAssistant {
 		t.Fatalf("expected segmented assistant reply in history, entries=%+v", entries)
+	}
+}
+
+func TestFlush_ReplyFallbackSegmentsSendGreetingAndTailSeparately(t *testing.T) {
+	control := mustMarshalJSON(t, map[string]any{
+		"action": "reply",
+	})
+	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
+		if !stream {
+			return scriptedResponse{
+				JSONBody: responsesOutputTextJSON(control),
+			}
+		}
+		return scriptedResponse{
+			SSEEvents: []string{
+				mustResponsesDeltaEventRaw(t, "晚上好刚摸完鱼啃了便利店的冰皮月亮还不错喵~"),
+				`{"type":"response.completed"}`,
+			},
+		}
+	})
+	defer server.Close()
+
+	buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	var delivered []string
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	state.sendFn = func(payload interface{}) {
+		delivered = append(delivered, fmt.Sprint(payload))
+	}
+	state.mu.Unlock()
+
+	buffer.flush(sessionKey)
+
+	if len(delivered) != 2 {
+		t.Fatalf("expected 2 fallback segments, got %d (%v)", len(delivered), delivered)
+	}
+	if delivered[0] != "晚上好" || delivered[1] != "刚摸完鱼啃了便利店的冰皮月亮还不错喵~" {
+		t.Fatalf("unexpected fallback delivery: %#v", delivered)
 	}
 }
 

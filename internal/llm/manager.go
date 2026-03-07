@@ -257,11 +257,11 @@ func (m *Manager) ReplyStream(ctx context.Context, userInput, sessionKey, speake
 }
 
 func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler) (string, error) {
-	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, true, nil)
+	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, true, nil, llmclient.RequestOptions{})
 }
 
 func (m *Manager) ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, immersiveCtx *contextassemble.ImmersiveContext) (string, error) {
-	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, false, immersiveCtx)
+	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, false, immersiveCtx, immersiveRequestOptions())
 }
 
 func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *contextassemble.ImmersiveContext) (llmintent.ControlIntent, error) {
@@ -273,6 +273,7 @@ func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionK
 		ExtraPrompt:      llmprompt.ImmersiveControlPrompt,
 		Source:           "immersive_control_intent",
 		AppendTurn:       false,
+		RequestOptions:   immersiveRequestOptions(),
 		ImmersiveContext: immersiveCtx,
 	})
 	if err != nil {
@@ -294,7 +295,7 @@ func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionK
 	return intent, nil
 }
 
-func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, disableTools bool, immersiveCtx *contextassemble.ImmersiveContext) (string, error) {
+func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, disableTools bool, immersiveCtx *contextassemble.ImmersiveContext, options llmclient.RequestOptions) (string, error) {
 	startedAt := time.Now()
 	reply, err := m.replyStreamWithPipeline(ctx, pipelineRequest{
 		UserInput:        userInput,
@@ -304,6 +305,7 @@ func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, ses
 		Source:           "extra_prompt_reply_stream",
 		AppendTurn:       false,
 		DisableTools:     disableTools,
+		RequestOptions:   options,
 		ImmersiveContext: immersiveCtx,
 	}, onEvent)
 	if err != nil {
@@ -349,4 +351,11 @@ func (m *Manager) generateStreamWithProvider(ctx context.Context, providerName, 
 	defer cancel()
 	providerClient := m.providers.From(providerName)
 	return providerClient.GenerateStream(reqCtx, model, systemPrompt, messages, onDelta)
+}
+
+func immersiveRequestOptions() llmclient.RequestOptions {
+	return llmclient.RequestOptions{
+		ReasoningEffort: "none",
+		ThinkingType:    "none",
+	}
 }

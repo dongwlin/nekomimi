@@ -99,6 +99,33 @@ func TestDecideImmersiveIntent_DoesNotUseToolLoop(t *testing.T) {
 	}
 }
 
+func TestDecideImmersiveIntent_DisablesReasoningAndThinking(t *testing.T) {
+	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
+		if _, ok := body["reasoning"]; ok {
+			t.Fatalf("immersive intent should disable reasoning, body=%+v", body)
+		}
+		if _, ok := body["thinking"]; ok {
+			t.Fatalf("immersive intent should disable thinking, body=%+v", body)
+		}
+		return responsesOutputTextJSONForIntent(t, `{"action":"reply"}`)
+	})
+	defer server.Close()
+
+	manager := NewManager(config.LLMConfig{
+		Enabled:         true,
+		Provider:        "responses",
+		Model:           "gpt-4.1-mini",
+		API:             server.URL + "/responses",
+		Key:             "test-key",
+		ReasoningEffort: "medium",
+		ThinkingType:    "enabled",
+	}, ManagerDeps{})
+
+	if _, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-fast", "alice", nil); err != nil {
+		t.Fatalf("decide immersive intent failed: %v", err)
+	}
+}
+
 func newResponsesJSONServerForIntent(t *testing.T, script func(call int64, body map[string]any) string) *httptest.Server {
 	t.Helper()
 	var callCount int64
