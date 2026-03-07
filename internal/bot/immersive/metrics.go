@@ -32,3 +32,12 @@ func (b *ImmersiveBuffer) sendTracked(ctx *zero.Ctx, payload interface{}) messag
 	}
 	return messageID
 }
+
+func (b *ImmersiveBuffer) recordImmersiveMetrics(record metrics.ImmersiveRecord) {
+	if b == nil || b.collector == nil {
+		return
+	}
+	if err := b.collector.RecordImmersive(record); err != nil {
+		log.Warn().Err(err).Msg("record immersive metrics failed")
+	}
+}

@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -160,6 +161,42 @@ func TestCollector_DailySessionDedup(t *testing.T) {
 	}
 }
 
+func TestCollector_RecordImmersive(t *testing.T) {
+	collector := newTestCollector(t)
+	if err := collector.RecordImmersive(ImmersiveRecord{
+		Action:              "reply",
+		ReasonCode:          "reply_action",
+		SignalBand:          "high_priority",
+		ProactiveKind:       "followup",
+		ProactiveStatus:     "triggered",
+		FastRecoveryReason:  "strong_address_fast_recovery",
+		StrongCallLatencyMS: 320,
+	}); err != nil {
+		t.Fatalf("record immersive metrics failed: %v", err)
+	}
+
+	dayKey := time.Now().Format("2006-01-02")
+	if got := findImmersiveCount(t, collector, dayKey, immersiveScopeAction, "reply"); got != 1 {
+		t.Fatalf("unexpected immersive action count: %d", got)
+	}
+	if got := findImmersiveCount(t, collector, dayKey, immersiveScopeReason, "reply_action"); got != 1 {
+		t.Fatalf("unexpected immersive reason count: %d", got)
+	}
+	if got := findImmersiveCount(t, collector, dayKey, immersiveScopeSignalBand, "high_priority"); got != 1 {
+		t.Fatalf("unexpected immersive signal band count: %d", got)
+	}
+	if got := findImmersiveCount(t, collector, dayKey, immersiveScopeProactive, "followup:triggered"); got != 1 {
+		t.Fatalf("unexpected immersive proactive count: %d", got)
+	}
+	if got := findImmersiveCount(t, collector, dayKey, immersiveScopeFastRecovery, "strong_address_fast_recovery"); got != 1 {
+		t.Fatalf("unexpected immersive fast recovery count: %d", got)
+	}
+	count, sumMS := findImmersiveLatency(t, collector, dayKey, immersiveLatencyStrongCallReply)
+	if count != 1 || sumMS != 320 {
+		t.Fatalf("unexpected immersive latency aggregate: count=%d sum=%d", count, sumMS)
+	}
+}
+
 func findTypeCount(items []OverviewTypeItem, typeKey string) int64 {
 	for _, item := range items {
 		if item.Type == typeKey {
@@ -176,4 +213,30 @@ func findHourPoint(items []OverviewHourly, hour string) (OverviewHourly, bool) {
 		}
 	}
 	return OverviewHourly{}, false
+}
+
+func findImmersiveCount(t *testing.T, collector *Collector, dayKey, scope, value string) int64 {
+	t.Helper()
+	row := immersiveCounterDailyRecord{}
+	if err := collector.db.NewSelect().
+		Model(&row).
+		Where("day_key = ? AND scope = ? AND value = ?", dayKey, scope, value).
+		Limit(1).
+		Scan(context.Background()); err != nil {
+		t.Fatalf("load immersive counter failed: %v", err)
+	}
+	return row.CountTotal
+}
+
+func findImmersiveLatency(t *testing.T, collector *Collector, dayKey, metric string) (int64, int64) {
+	t.Helper()
+	row := immersiveLatencyDailyRecord{}
+	if err := collector.db.NewSelect().
+		Model(&row).
+		Where("day_key = ? AND metric = ?", dayKey, metric).
+		Limit(1).
+		Scan(context.Background()); err != nil {
+		t.Fatalf("load immersive latency failed: %v", err)
+	}
+	return row.CountTotal, row.SumMS
 }

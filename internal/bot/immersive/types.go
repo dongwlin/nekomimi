@@ -99,6 +99,8 @@ type immersiveSession struct {
 	energyTarget           float64
 	lastEnergyUpdateAt     time.Time
 	energyLastDeltaReason  string
+	energyLastFastRecover  string
+	lastFastRecoverAt      time.Time
 	speakGateOpen          bool
 	pendingQuestion        bool
 	followupDueAt          time.Time
@@ -108,6 +110,9 @@ type immersiveSession struct {
 	lastMessageAt          time.Time
 	coldOpenEligible       bool
 	coldOpenActivityCount  int
+	lastStrongCallAt       time.Time
+	strongCallPending      bool
+	debug                  DebugSnapshot
 }
 
 // queuedMessage represents a single message in the buffer queue.

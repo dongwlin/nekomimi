@@ -145,7 +145,7 @@ func (s *immersiveSession) raiseEnergyTowardsTargetLocked(amount float64, reason
 	s.energyLastDeltaReason = strings.TrimSpace(reason)
 }
 
-func (s *immersiveSession) maybeFastRecoveryLocked(chance, boost float64, reason string) bool {
+func (s *immersiveSession) maybeFastRecoveryLocked(chance, boost float64, reason string, now time.Time) bool {
 	if s == nil || chance <= 0 || boost <= 0 {
 		return false
 	}
@@ -156,6 +156,7 @@ func (s *immersiveSession) maybeFastRecoveryLocked(chance, boost float64, reason
 		return false
 	}
 	s.raiseEnergyTowardsTargetLocked(boost, reason)
+	s.recordFastRecoveryLocked(reason, now)
 	return true
 }
 
@@ -230,6 +231,7 @@ func (s *immersiveSession) evaluateSpeakGateLocked(sessionKey string, meta queue
 	decision.ReplyTier = replyTierForSnapshot(snapshot, strongCall)
 	decision.MaxReplySegments = maxReplySegmentsForTier(decision.ReplyTier)
 	decision.FollowupAllowed = followupAllowedForSnapshot(snapshot, decision.ReplyTier)
+	s.recordSpeakGateLocked(decision, now)
 	return snapshot, decision
 }
 

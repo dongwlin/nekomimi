@@ -140,6 +140,10 @@ func (c *Collector) initialize(ctx context.Context) error {
 		(*typeDailyRecord)(nil),
 		(*typeTotalRecord)(nil),
 		(*dailySessionRecord)(nil),
+		(*immersiveCounterDailyRecord)(nil),
+		(*immersiveCounterTotalRecord)(nil),
+		(*immersiveLatencyDailyRecord)(nil),
+		(*immersiveLatencyTotalRecord)(nil),
 		(*stateRecord)(nil),
 	}
 	for _, model := range models {

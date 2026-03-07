@@ -44,16 +44,16 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 		engine.RefreshIdentityFromCtx(ctx)
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		if args == "" {
-			sendTracked(ctx, "用法: /chat on|off|status")
+			sendTracked(ctx, chatUsageText())
 			return
 		}
 		action, rest := parseActionArgs(args)
-		if strings.TrimSpace(rest) != "" {
-			sendTracked(ctx, "用法: /chat on|off|status")
-			return
-		}
 		switch action {
 		case "on":
+			if strings.TrimSpace(rest) != "" {
+				sendTracked(ctx, chatUsageText())
+				return
+			}
 			if !llmManager.IsEnabled() {
 				sendTracked(ctx, "LLM 未开启，可使用 /llm on 开启")
 				return
@@ -65,6 +65,10 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 				[]string{"沉浸模式已开启，夜里也会陪你聊。"},
 			)
 		case "off":
+			if strings.TrimSpace(rest) != "" {
+				sendTracked(ctx, chatUsageText())
+				return
+			}
 			llmManager.SetImmersive(sessionKey(ctx), false)
 			engine.Clear(sessionKey(ctx))
 			sendTimeAwareRandomMessage(
@@ -73,6 +77,10 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 				[]string{"沉浸模式已关闭，先不打扰你休息。"},
 			)
 		case "status":
+			if strings.TrimSpace(rest) != "" {
+				sendTracked(ctx, chatUsageText())
+				return
+			}
 			if llmManager.IsImmersive(sessionKey(ctx)) {
 				sendTimeAwareRandomMessage(
 					ctx,
@@ -86,8 +94,14 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 				[]string{"沉浸模式当前是关闭状态。"},
 				[]string{"沉浸模式当前是关闭状态。"},
 			)
+		case "debug":
+			response, ok := buildChatDebugResponse(ctx, engine, rest)
+			if !ok {
+				return
+			}
+			sendTracked(ctx, response)
 		default:
-			sendTracked(ctx, "用法: /chat on|off|status")
+			sendTracked(ctx, chatUsageText())
 		}
 	})
 

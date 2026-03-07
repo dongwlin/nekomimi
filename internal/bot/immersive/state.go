@@ -127,6 +127,8 @@ func (s *immersiveSession) resetBehaviorStateLocked(now time.Time) {
 	s.energy = s.energyTarget
 	s.lastEnergyUpdateAt = now
 	s.energyLastDeltaReason = "session_reset"
+	s.energyLastFastRecover = ""
+	s.lastFastRecoverAt = time.Time{}
 	s.speakGateOpen = false
 	s.pendingQuestion = false
 	s.followupDueAt = time.Time{}
@@ -139,6 +141,11 @@ func (s *immersiveSession) resetBehaviorStateLocked(now time.Time) {
 	s.lastMessageAt = time.Time{}
 	s.coldOpenEligible = false
 	s.coldOpenActivityCount = 0
+	s.lastStrongCallAt = time.Time{}
+	s.strongCallPending = false
+	s.debug = DebugSnapshot{}
+	s.debug.LastStrongCallLatencyMS = -1
+	s.refreshDebugLocked(now)
 }
 
 func (s *immersiveSession) ensureBehaviorDefaultsLocked(now time.Time) {
@@ -200,6 +207,7 @@ func (s *immersiveSession) transitionToLocked(mode ConversationMode, reason stri
 		}
 		s.speakGateOpen = false
 	}
+	s.refreshDebugLocked(now)
 }
 
 func (s *immersiveSession) clearPendingQuestionLocked() {
@@ -213,6 +221,7 @@ func (s *immersiveSession) clearPendingQuestionLocked() {
 		s.followupTimer.Stop()
 		s.followupTimer = nil
 	}
+	s.refreshDebugLocked(time.Now())
 }
 
 func (s *immersiveSession) decayBehaviorLocked(now time.Time) {
@@ -258,7 +267,8 @@ func (s *immersiveSession) observeIncomingMessageLocked(msg queuedMessage, isPri
 		s.lastAddressedAt = now
 		s.transitionToLocked(ModeAddressed, "private_message", now)
 		s.raiseEnergyTowardsTargetLocked(defaultAddressBoost, "private_message_boost")
-		s.maybeFastRecoveryLocked(defaultFastRecoveryChance, defaultFastRecoveryBoost, "private_message_fast_recovery")
+		s.maybeFastRecoveryLocked(defaultFastRecoveryChance, defaultFastRecoveryBoost, "private_message_fast_recovery", now)
+		s.refreshDebugLocked(now)
 		return
 	}
 
@@ -273,6 +283,7 @@ func (s *immersiveSession) observeIncomingMessageLocked(msg queuedMessage, isPri
 		s.lastAddressedAt = now
 		if s.pendingQuestion && sameFocus {
 			s.clearPendingQuestionLocked()
+			s.recordProactiveLocked("followup", "canceled", "focus_reply_after_bot_question", false, now)
 			s.transitionToLocked(ModeInThread, "focus_reply_after_bot_question", now)
 		} else if s.mode == ModeInThread && sameFocus {
 			s.transitionToLocked(ModeInThread, "explicit_thread_continuation", now)
@@ -280,23 +291,28 @@ func (s *immersiveSession) observeIncomingMessageLocked(msg queuedMessage, isPri
 			s.transitionToLocked(ModeAddressed, "strong_address", now)
 		}
 		s.raiseEnergyTowardsTargetLocked(defaultAddressBoost, "strong_address_boost")
-		s.maybeFastRecoveryLocked(defaultFastRecoveryChance, defaultFastRecoveryBoost, "strong_address_fast_recovery")
+		s.maybeFastRecoveryLocked(defaultFastRecoveryChance, defaultFastRecoveryBoost, "strong_address_fast_recovery", now)
+		s.refreshDebugLocked(now)
 		return
 	}
 
 	if isWeakAddress {
 		s.applyTrafficNudgeLocked(defaultWeakAddressNudge, "weak_address_nudge")
+		s.refreshDebugLocked(now)
 		return
 	}
 
 	if s.mode == ModeWaitingUser {
 		if sameSpeaker(speaker, s.focusSpeaker) && speaker != "" {
 			s.clearPendingQuestionLocked()
+			s.recordProactiveLocked("followup", "canceled", "focus_reply_while_waiting_user", false, now)
 			s.transitionToLocked(ModeInThread, "focus_reply_while_waiting_user", now)
 			s.raiseEnergyTowardsTargetLocked(defaultThreadBoost, "focus_reply_energy_boost")
+			s.refreshDebugLocked(now)
 			return
 		}
 		s.applyTrafficNudgeLocked(defaultTrafficNudge, "ambient_waiting_user")
+		s.refreshDebugLocked(now)
 		return
 	}
 
@@ -306,10 +322,12 @@ func (s *immersiveSession) observeIncomingMessageLocked(msg queuedMessage, isPri
 		}
 		s.transitionToLocked(ModeInThread, "thread_continuation", now)
 		s.raiseEnergyTowardsTargetLocked(defaultThreadBoost, "thread_continuation_boost")
+		s.refreshDebugLocked(now)
 		return
 	}
 
 	s.applyTrafficNudgeLocked(defaultTrafficNudge, "ambient_traffic")
+	s.refreshDebugLocked(now)
 }
 
 func (s *immersiveSession) isLikelyThreadContinuationLocked(speaker string, now time.Time) bool {
@@ -356,6 +374,7 @@ func (s *immersiveSession) noteAssistantDeliveredLocked(reply string, now time.T
 	}
 	s.spendReplyEnergyLocked(reply, now, "assistant_reply_cost")
 	s.speakGateOpen = false
+	s.refreshDebugLocked(now)
 }
 
 func sameSpeaker(a, b string) bool {

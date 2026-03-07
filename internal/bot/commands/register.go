@@ -12,6 +12,7 @@ type ImmersiveEngine interface {
 	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool)
 	RecordEvent(sessionKey string, event immersivepkg.TimelineEvent)
 	RecordTimelineEvent(sessionKey, text, speaker string)
+	DebugSnapshot(sessionKey string) immersivepkg.DebugSnapshot
 	Clear(sessionKey string)
 	RefreshIdentityFromCtx(ctx *zero.Ctx)
 	ReloadConfig(cfg config.ImmersiveConfig, nicknames []string)

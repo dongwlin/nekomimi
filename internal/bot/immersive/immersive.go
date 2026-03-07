@@ -9,6 +9,7 @@ import (
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
 	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/metrics"
 	"github.com/rs/zerolog/log"
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
@@ -79,6 +80,7 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	msg.nicknamePosition = nickPos
 
 	state.mu.Lock()
+	fastRecoveryReason := ""
 	if sendFn := b.captureSendFunc(ctx); sendFn != nil {
 		state.sendFn = sendFn
 	}
@@ -91,9 +93,16 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.ensureBehaviorDefaultsLocked(now)
 	b.detectColdOpenEligibilityLocked(state, now)
 	state.observeIncomingMessageLocked(msg, isPrivate, now)
+	if state.lastFastRecoverAt.Equal(now) {
+		fastRecoveryReason = state.energyLastFastRecover
+	}
+	if msg.isMentionBot || msg.nicknamePosition >= NickStart {
+		state.noteStrongCallPendingLocked(now)
+	}
 	behavior := state.snapshotBehaviorLocked(now)
 
 	decision := b.computeFlushDecision(sessionKey, state, now)
+	state.recordSchedulerDecisionLocked(decision, now)
 	queueLen := len(state.nextBatch)
 	queueChars := state.nextBatchChars
 
@@ -105,6 +114,12 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		b.flush(sessionKey)
 	})
 	state.mu.Unlock()
+
+	if strings.TrimSpace(fastRecoveryReason) != "" {
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			FastRecoveryReason: fastRecoveryReason,
+		})
+	}
 
 	log.Info().
 		Str("session", sessionKey).
@@ -118,10 +133,11 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 		Str("mode", string(behavior.Mode)).
 		Str("focus_speaker", behavior.FocusSpeaker).
 		Int("energy_value", behavior.EnergyValue).
+		Int("energy_target", behavior.EnergyTarget).
 		Str("energy_band", behavior.EnergyBand).
 		Int64("cooldown_ms", decision.Delay.Milliseconds()).
-		Str("schedule_reason", decision.Reason).
-		Str("schedule_priority", decision.Priority).
+		Str("scheduler_reason", decision.Reason).
+		Str("scheduler_priority", decision.Priority).
 		Msg("immersive enqueue scheduled")
 }
 
@@ -159,11 +175,13 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state := b.session(sessionKey)
 	state.mu.Lock()
 	if state.inFlight {
+		now := time.Now()
 		if len(state.nextBatch) > 0 {
 			if state.batchStartTime.IsZero() {
 				state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
 			}
-			flushDec := b.computeFlushDecision(sessionKey, state, time.Now())
+			flushDec := b.computeFlushDecision(sessionKey, state, now)
+			state.recordSchedulerDecisionLocked(flushDec, now)
 			if state.timer != nil {
 				state.timer.Stop()
 				state.timer = nil
@@ -172,24 +190,48 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 				b.flush(sessionKey)
 			})
 		}
+		state.recordFinalActionLocked("early_drop", "inflight", "flush skipped while another batch is in flight", "", now)
 		state.mu.Unlock()
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			Action:     "early_drop",
+			ReasonCode: "inflight",
+		})
 		return
 	}
 	if len(state.nextBatch) == 0 {
+		now := time.Now()
 		state.batchStartTime = time.Time{}
+		state.recordFinalActionLocked("early_drop", "empty_queue", "flush skipped because queue is empty", "", now)
 		state.mu.Unlock()
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			Action:     "early_drop",
+			ReasonCode: "empty_queue",
+		})
 		return
 	}
 	if !b.llm.IsEnabled() || !b.llm.IsImmersive(sessionKey) {
+		now := time.Now()
+		reasonCode := "llm_disabled"
+		reasonText := "immersive flush dropped because llm is disabled"
+		if b.llm.IsEnabled() && !b.llm.IsImmersive(sessionKey) {
+			reasonCode = "immersive_disabled"
+			reasonText = "immersive flush dropped because immersive mode is disabled"
+		}
 		state.nextBatch = nil
 		state.nextBatchChars = 0
 		state.batchStartTime = time.Time{}
 		state.processingBatch = nil
+		state.recordFinalActionLocked("early_drop", reasonCode, reasonText, "", now)
+		state.clearStrongCallPendingLocked(now)
 		if state.timer != nil {
 			state.timer.Stop()
 			state.timer = nil
 		}
 		state.mu.Unlock()
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			Action:     "early_drop",
+			ReasonCode: reasonCode,
+		})
 		return
 	}
 	processing := state.nextBatch
@@ -219,6 +261,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		var deferDec FlushDecision
 		if pending {
 			deferDec = b.computeFlushDecision(sessionKey, state, time.Now())
+			state.recordSchedulerDecisionLocked(deferDec, time.Now())
 		} else {
 			state.batchStartTime = time.Time{}
 		}
@@ -278,6 +321,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	b.llm.SetAssistantSpeaker(assistantSpeakerLabel(identity))
 	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(processing)
 	if repeatText != "" {
+		now := time.Now()
 		delivered := sendFn != nil
 		if !delivered {
 			log.Warn().
@@ -291,6 +335,13 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		b.RecordEvent(sessionKey, NewRepeatTriggerEvent(repeatText, b.botPrimaryName(), repeatCount, repeatParticipants, time.Now()))
 		b.recordAssistantUtterance(sessionKey, repeatText)
 		_ = b.llm.AppendAssistantEvent(sessionKey, repeatText, cutoffSeq)
+		state.mu.Lock()
+		state.recordFinalActionLocked("reply", "repeat_trigger", "reply triggered by repeat detection", repeatText, now)
+		state.mu.Unlock()
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			Action:     "reply",
+			ReasonCode: "repeat_trigger",
+		})
 		if delivered {
 			b.noteAssistantDelivered(sessionKey, repeatText)
 		}
@@ -309,6 +360,9 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state.mu.Lock()
 	behavior, gate := state.evaluateSpeakGateLocked(sessionKey, gateMeta, now)
 	state.mu.Unlock()
+	b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+		SignalBand: string(gate.SignalBand),
+	})
 	log.Info().
 		Str("session", sessionKey).
 		Bool("allow", gate.Allow).
@@ -317,12 +371,25 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Str("mode", string(behavior.Mode)).
 		Str("focus_speaker", behavior.FocusSpeaker).
 		Int("energy_value", behavior.EnergyValue).
+		Int("energy_target", behavior.EnergyTarget).
 		Str("energy_band", behavior.EnergyBand).
 		Int("signal_score", gate.SignalScore).
 		Str("signal_features", formatSignalFeatures(gate.SignalFeatures)).
 		Str("reason", gate.Reason).
 		Msg("immersive speak gate evaluated")
 	if !gate.Allow {
+		state.mu.Lock()
+		state.recordFinalActionLocked("skip", gate.Reason, "speak gate rejected this batch", "", now)
+		if state.coldOpenEligible {
+			state.recordProactiveLocked("cold_open", "skipped", gate.Reason, true, now)
+		}
+		state.clearStrongCallPendingLocked(now)
+		state.mu.Unlock()
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			Action:     "skip",
+			ReasonCode: gate.Reason,
+			SignalBand: string(gate.SignalBand),
+		})
 		return
 	}
 
@@ -349,6 +416,20 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		if delivered {
 			b.noteAssistantDelivered(sessionKey, trimmed)
 		}
+		state.mu.Lock()
+		state.recordFinalActionLocked("reply", reason, reason, trimmed, time.Now())
+		if state.coldOpenEligible {
+			state.recordProactiveLocked("cold_open", "triggered", reason, false, time.Now())
+		}
+		if !delivered {
+			state.clearStrongCallPendingLocked(time.Now())
+		}
+		state.mu.Unlock()
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			Action:     "reply",
+			ReasonCode: reason,
+			SignalBand: string(gate.SignalBand),
+		})
 		log.Info().
 			Str("session", sessionKey).
 			Str("reason", reason).
@@ -403,12 +484,19 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		action = controlActionSkip
 		waitMS = 0
 	}
+	state.mu.Lock()
+	state.recordControlDecisionLocked(action, waitMS, decisionReason, decisionReasonCode, now)
+	state.mu.Unlock()
 
 	decisionLog := log.Info().
 		Str("session", sessionKey).
 		Str("action", string(action)).
 		Int("wait_ms", waitMS).
 		Int("wait_rounds", waitRounds).
+		Str("conversation_mode", string(behavior.Mode)).
+		Int("energy_value", behavior.EnergyValue).
+		Int("energy_target", behavior.EnergyTarget).
+		Str("signal_band", string(gate.SignalBand)).
 		Str("reason", decisionReason).
 		Str("reason_code", decisionReasonCode)
 	if intentErr != nil {
@@ -434,6 +522,11 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 		localDec := b.computeFlushDecision(sessionKey, state, time.Now())
 		merged := mergeWaitDecision(localDec, waitMS)
+		state.recordSchedulerDecisionLocked(merged, time.Now())
+		state.recordFinalActionLocked("wait", decisionReasonCode, decisionReason, "", time.Now())
+		if state.coldOpenEligible {
+			state.recordProactiveLocked("cold_open", "skipped", decisionReasonCode, true, time.Now())
+		}
 
 		if state.timer != nil {
 			state.timer.Stop()
@@ -443,6 +536,11 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			b.flush(sessionKey)
 		})
 		state.mu.Unlock()
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			Action:     "wait",
+			ReasonCode: decisionReasonCode,
+			SignalBand: string(gate.SignalBand),
+		})
 		log.Info().
 			Str("session", sessionKey).
 			Int("llm_wait_ms", waitMS).
@@ -459,7 +557,21 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 
 	if action == controlActionReply {
 		_ = b.handleReply(sendFn, sessionKey, "", immersiveCtx, recordReply)
+		return
 	}
+
+	state.mu.Lock()
+	state.recordFinalActionLocked("skip", decisionReasonCode, decisionReason, "", time.Now())
+	if state.coldOpenEligible {
+		state.recordProactiveLocked("cold_open", "skipped", decisionReasonCode, true, time.Now())
+	}
+	state.clearStrongCallPendingLocked(time.Now())
+	state.mu.Unlock()
+	b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+		Action:     "skip",
+		ReasonCode: decisionReasonCode,
+		SignalBand: string(gate.SignalBand),
+	})
 }
 
 // handleReply generates and sends an LLM reply for the given session,
@@ -505,6 +617,16 @@ func (b *ImmersiveBuffer) handleReply(
 	}
 	replyLog.Msg("immersive reply llm raw output captured")
 	if replyErr != nil {
+		if state := b.lookupSession(sessionKey); state != nil {
+			state.mu.Lock()
+			state.recordFinalActionLocked("early_drop", "reply_error", llm.UserVisibleError(replyErr), "", time.Now())
+			state.clearStrongCallPendingLocked(time.Now())
+			state.mu.Unlock()
+		}
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			Action:     "early_drop",
+			ReasonCode: "reply_error",
+		})
 		log.Warn().
 			Str("session", sessionKey).
 			Err(replyErr).
@@ -602,15 +724,16 @@ func (b *ImmersiveBuffer) recordAssistantUtterance(sessionKey, text string) {
 	b.RecordEvent(sessionKey, NewAssistantTextEvent(text, b.botPrimaryName(), time.Now()))
 }
 
-func (b *ImmersiveBuffer) noteAssistantDelivered(sessionKey, text string) {
+func (b *ImmersiveBuffer) noteAssistantDelivered(sessionKey, text string) int64 {
 	if strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
-		return
+		return -1
 	}
 	state := b.session(sessionKey)
 	now := time.Now()
+	scheduledFollowup := false
 	state.mu.Lock()
-	defer state.mu.Unlock()
 	state.noteAssistantDeliveredLocked(text, now)
+	latency := state.resolveStrongCallLatencyLocked(now)
 
 	state.nextColdOpenEligibleAt = now.Add(time.Duration(b.cfg.Scheduler.ColdOpenMinIntervalMS) * time.Millisecond)
 	state.coldOpenEligible = false
@@ -624,7 +747,29 @@ func (b *ImmersiveBuffer) noteAssistantDelivered(sessionKey, text string) {
 		state.followupTimer = time.AfterFunc(followupDelay, func() {
 			b.tryFollowup(sessionKey)
 		})
+		state.recordProactiveLocked("followup", "scheduled", "assistant_question", false, now)
+		scheduledFollowup = true
 	}
+	state.refreshDebugLocked(now)
+	state.mu.Unlock()
+
+	if scheduledFollowup {
+		log.Info().
+			Str("session", sessionKey).
+			Str("proactive_kind", "followup").
+			Str("proactive_status", "scheduled").
+			Msg("immersive proactive decision")
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			ProactiveKind:   "followup",
+			ProactiveStatus: "scheduled",
+		})
+	}
+	if latency >= 0 {
+		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+			StrongCallLatencyMS: latency,
+		})
+	}
+	return latency
 }
 
 // RecordEvent appends a typed runtime event without queuing or flushing.
