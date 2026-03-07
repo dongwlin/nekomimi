@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"time"
+
 	immersivepkg "github.com/dongwlin/nekomimi/internal/bot/immersive"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
@@ -9,9 +11,12 @@ import (
 )
 
 type ImmersiveEngine interface {
-	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool)
+	AnalyzeAmbientMessage(ctx *zero.Ctx, text, speaker string, isPrivate bool, at time.Time) immersivepkg.AmbientMessageMeta
+	EnqueueAmbient(ctx *zero.Ctx, sessionKey string, meta immersivepkg.AmbientMessageMeta, persistedSeq int64)
 	RecordEvent(sessionKey string, event immersivepkg.TimelineEvent)
 	RecordTimelineEvent(sessionKey, text, speaker string)
+	RecordAssistantDelivered(sessionKey, text, speaker string)
+	ShouldYieldToImmersive(sessionKey string, meta immersivepkg.AmbientMessageMeta) bool
 	DebugSnapshot(sessionKey string) immersivepkg.DebugSnapshot
 	Clear(sessionKey string)
 	RefreshIdentityFromCtx(ctx *zero.Ctx)
@@ -19,7 +24,7 @@ type ImmersiveEngine interface {
 }
 
 type RepeatEngine interface {
-	Enqueue(ctx *zero.Ctx, sessionKey, text, speaker, assistantSpeaker string, isPrivate bool) bool
+	TryRepeat(ctx *zero.Ctx, sessionKey string, meta immersivepkg.AmbientMessageMeta, assistantSpeaker string) bool
 	Clear(sessionKey string)
 	ReloadConfig(cfg config.RepeatConfig)
 	SetEnabled(sessionKey string, enabled bool)

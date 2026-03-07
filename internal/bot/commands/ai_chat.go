@@ -10,6 +10,7 @@ import (
 	immersivepkg "github.com/dongwlin/nekomimi/internal/bot/immersive"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/rs/zerolog/log"
 	zero "github.com/wdvxdr1123/ZeroBot"
 )
 
@@ -204,6 +205,7 @@ func registerAIHandlers(cfg *config.Config, llmManager llm.Service, engine Immer
 type ambientLLMState interface {
 	IsEnabled() bool
 	IsImmersive(sessionKey string) bool
+	AppendUserEventWithMetadataAt(sessionKey, userInput, speaker string, eventTime time.Time, metadata map[string]string) (int64, bool)
 }
 
 func handleAmbientMessage(cfg *config.Config, llmState ambientLLMState, engine ImmersiveEngine, repeatEngine RepeatEngine, ctx *zero.Ctx) {
@@ -226,16 +228,66 @@ func handleAmbientMessage(cfg *config.Config, llmState ambientLLMState, engine I
 	isPrivate := ctx.Event != nil && ctx.Event.DetailType == "private"
 	speaker := speakerLabel(ctx)
 	assistantSpeaker := assistantLabel(ctx)
+	repeatEnabled := repeatEngine != nil && repeatEngine.IsEnabled(session)
+	immersiveEnabled := engine != nil && llmState != nil && llmState.IsEnabled() && llmState.IsImmersive(session)
 
-	if repeatEngine != nil && repeatEngine.IsEnabled(session) {
-		repeatEngine.Enqueue(ctx, session, text, speaker, assistantSpeaker, isPrivate)
+	if !repeatEnabled && !immersiveEnabled {
 		return
 	}
 
-	if engine == nil || llmState == nil || !llmState.IsEnabled() || !llmState.IsImmersive(session) {
+	now := time.Now()
+	meta := immersivepkg.NewAmbientMessageMeta(text, speaker, isPrivate, now)
+	if engine != nil {
+		meta = engine.AnalyzeAmbientMessage(ctx, text, speaker, isPrivate, now)
+	}
+
+	var persistedSeq int64
+	if llmState != nil {
+		if seq, ok := llmState.AppendUserEventWithMetadataAt(session, meta.Text, meta.Speaker, meta.At, meta.HistoryMetadata()); ok {
+			persistedSeq = seq
+		}
+	}
+
+	if isPrivate {
+		log.Info().
+			Str("session", session).
+			Str("reason", "private_session").
+			Msg("ambient router chose immersive")
+		if immersiveEnabled {
+			engine.EnqueueAmbient(ctx, session, meta, persistedSeq)
+		}
 		return
 	}
-	engine.Enqueue(ctx, session, text, speaker, isPrivate)
+
+	if repeatEnabled && engine != nil && engine.ShouldYieldToImmersive(session, meta) {
+		log.Info().
+			Str("session", session).
+			Bool("mention", meta.MentionBot).
+			Bool("directed_question", meta.DirectedQuestion).
+			Int("nick_pos", int(meta.NicknamePosition)).
+			Str("reason", "addressed_to_bot_or_active_thread").
+			Msg("ambient router chose immersive")
+		if immersiveEnabled {
+			engine.EnqueueAmbient(ctx, session, meta, persistedSeq)
+		}
+		return
+	}
+
+	if repeatEnabled && repeatEngine.TryRepeat(ctx, session, meta, assistantSpeaker) {
+		log.Info().
+			Str("session", session).
+			Str("reason", "repeat_hit").
+			Msg("ambient router chose repeat")
+		return
+	}
+
+	if immersiveEnabled {
+		log.Info().
+			Str("session", session).
+			Str("reason", "repeat_miss_or_disabled").
+			Msg("ambient router chose immersive")
+		engine.EnqueueAmbient(ctx, session, meta, persistedSeq)
+	}
 }
 
 func sendContextUsage(ctx *zero.Ctx, llmManager llm.Service) {

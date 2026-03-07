@@ -5,8 +5,11 @@ import (
 	"sync"
 	"time"
 
+	immersivepkg "github.com/dongwlin/nekomimi/internal/bot/immersive"
 	"github.com/dongwlin/nekomimi/internal/bot/session"
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
 	"github.com/dongwlin/nekomimi/internal/metrics"
 	"github.com/rs/zerolog/log"
 	zero "github.com/wdvxdr1123/ZeroBot"
@@ -17,15 +20,27 @@ const (
 	defaultMinBatchWaitMS = 600
 	defaultMaxBatchWaitMS = 3000
 	defaultMaxBatchSize   = 15
+
+	defaultHistoryScanLimit = 64
 )
 
 type Engine struct {
 	mu        sync.Mutex
 	cfg       config.RepeatConfig
-	history   HistoryWriter
+	history   HistoryStore
+	recorder  AssistantDeliveryRecorder
 	collector *metrics.Collector
 	sessions  map[string]*sessionState
 	overrides map[string]sessionMode
+}
+
+type HistoryStore interface {
+	ListChatEvents(sessionKey string, opts chatlog.ListOptions) (chatlog.ListResult, error)
+	AppendAssistantEventWithSpeakerAt(sessionKey, assistantReply, speaker string, replyToCutoffSeq int64, eventTime time.Time) bool
+}
+
+type AssistantDeliveryRecorder interface {
+	RecordAssistantDelivered(sessionKey, text, speaker string)
 }
 
 type sessionMode uint8
@@ -37,39 +52,29 @@ const (
 )
 
 type sessionState struct {
-	mu             sync.Mutex
-	nextBatch      []queuedMessage
-	nextBatchChars int
-	batchStartTime time.Time
-	timer          *time.Timer
-	inFlight       bool
-	sendFn         SendFunc
-	assistantLabel string
-}
+	mu sync.Mutex
 
-type queuedMessage struct {
-	text    string
-	speaker string
-	ts      time.Time
-	chars   int
-}
-
-type flushDecision struct {
-	Delay    time.Duration
-	Reason   string
-	Priority string
+	lastRoundText      string
+	lastRoundStartSeq  int64
+	lastRoundBotJoined bool
 }
 
 type SendFunc func(payload interface{}) message.ID
 
-type HistoryWriter interface {
-	AppendUserEventAt(sessionKey, userInput, speaker string, eventTime time.Time) (int64, bool)
-	AppendAssistantEventWithSpeakerAt(sessionKey, assistantReply, speaker string, replyToCutoffSeq int64, eventTime time.Time) bool
+type repeatDecision struct {
+	Text           string
+	NormalizedText string
+	RunCount       int
+	DistinctUsers  int
+	RoundStartSeq  int64
+	LatestSeq      int64
+	Reason         string
 }
 
-func NewEngine(cfg config.RepeatConfig, history HistoryWriter) *Engine {
+func NewEngine(cfg config.RepeatConfig, history HistoryStore, recorder AssistantDeliveryRecorder) *Engine {
 	return &Engine{
 		history:   history,
+		recorder:  recorder,
 		cfg:       normalizeConfig(cfg),
 		sessions:  make(map[string]*sessionState),
 		overrides: make(map[string]sessionMode),
@@ -134,210 +139,194 @@ func (e *Engine) Clear(sessionKey string) {
 	state := e.session(sessionKey)
 	state.mu.Lock()
 	defer state.mu.Unlock()
-
-	state.nextBatch = nil
-	state.nextBatchChars = 0
-	state.batchStartTime = time.Time{}
-	state.inFlight = false
-	state.sendFn = nil
-	state.assistantLabel = ""
-	if state.timer != nil {
-		state.timer.Stop()
-		state.timer = nil
-	}
+	state.lastRoundText = ""
+	state.lastRoundStartSeq = 0
+	state.lastRoundBotJoined = false
 }
 
-func (e *Engine) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker, assistantSpeaker string, isPrivate bool) bool {
+func (e *Engine) TryRepeat(ctx *zero.Ctx, sessionKey string, meta immersivepkg.AmbientMessageMeta, assistantSpeaker string) bool {
+	return e.tryRepeatWithSend(sessionKey, meta, assistantSpeaker, e.captureSendFunc(ctx))
+}
+
+func (e *Engine) tryRepeatWithSend(sessionKey string, meta immersivepkg.AmbientMessageMeta, assistantSpeaker string, sendFn SendFunc) bool {
 	if e == nil || !e.IsEnabled(sessionKey) {
 		return false
 	}
 
-	trimmed := strings.TrimSpace(text)
-	if strings.TrimSpace(sessionKey) == "" || trimmed == "" {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" || strings.TrimSpace(meta.Text) == "" {
+		return false
+	}
+	if meta.IsPrivate {
+		log.Info().
+			Str("session", sessionKey).
+			Bool("is_private", true).
+			Msg("repeat miss: private_session")
 		return false
 	}
 
 	state := e.session(sessionKey)
-	now := time.Now()
-	msg := queuedMessage{
-		text:    trimmed,
-		speaker: strings.TrimSpace(speaker),
-		ts:      now,
-		chars:   len([]rune(trimmed)),
-	}
-
 	state.mu.Lock()
-	if sendFn := e.captureSendFunc(ctx); sendFn != nil {
-		state.sendFn = sendFn
-	}
-	if trimmedAssistant := strings.TrimSpace(assistantSpeaker); trimmedAssistant != "" {
-		state.assistantLabel = trimmedAssistant
-	}
-	if len(state.nextBatch) == 0 {
-		state.batchStartTime = now
-	}
-	state.nextBatch = append(state.nextBatch, msg)
-	state.nextBatchChars += msg.chars
+	defer state.mu.Unlock()
 
-	decision := e.computeFlushDecision(state, now)
-	queueLen := len(state.nextBatch)
-	queueChars := state.nextBatchChars
-	if state.timer != nil {
-		state.timer.Stop()
-		state.timer = nil
+	decision, err := e.evaluateLatestRound(sessionKey)
+	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("session", sessionKey).
+			Msg("repeat evaluation failed")
+		return false
 	}
-	state.timer = time.AfterFunc(decision.Delay, func() {
-		e.flush(sessionKey)
-	})
-	state.mu.Unlock()
+
+	evaluationLog := log.Info().
+		Str("session", sessionKey).
+		Bool("is_private", meta.IsPrivate).
+		Str("normalized_text", decision.NormalizedText).
+		Int("run_count", decision.RunCount).
+		Int("distinct_users", decision.DistinctUsers).
+		Int64("round_start_seq", decision.RoundStartSeq).
+		Int64("latest_seq", decision.LatestSeq)
+	evaluationLog.Msg("repeat evaluation started")
+
+	if decision.Reason != "" {
+		log.Info().
+			Str("session", sessionKey).
+			Str("normalized_text", decision.NormalizedText).
+			Int("run_count", decision.RunCount).
+			Int("distinct_users", decision.DistinctUsers).
+			Int64("round_start_seq", decision.RoundStartSeq).
+			Int64("latest_seq", decision.LatestSeq).
+			Str("reason", decision.Reason).
+			Msg("repeat miss")
+		return false
+	}
+
+	if state.lastRoundBotJoined && state.lastRoundText == decision.NormalizedText && state.lastRoundStartSeq == decision.RoundStartSeq {
+		log.Info().
+			Str("session", sessionKey).
+			Str("normalized_text", decision.NormalizedText).
+			Int64("round_start_seq", decision.RoundStartSeq).
+			Int64("latest_seq", decision.LatestSeq).
+			Str("reason", "already_joined_round").
+			Msg("repeat miss")
+		return false
+	}
+
+	if sendFn == nil {
+		log.Warn().
+			Str("session", sessionKey).
+			Str("normalized_text", decision.NormalizedText).
+			Msg("repeat send function missing, skipping outbound send")
+		return false
+	}
+
+	sendFn(decision.Text)
+
+	now := meta.At
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if e.history != nil {
+		_ = e.history.AppendAssistantEventWithSpeakerAt(sessionKey, decision.Text, assistantSpeaker, decision.LatestSeq, now)
+	}
+	if e.recorder != nil {
+		e.recorder.RecordAssistantDelivered(sessionKey, decision.Text, assistantSpeaker)
+	}
+
+	state.lastRoundText = decision.NormalizedText
+	state.lastRoundStartSeq = decision.RoundStartSeq
+	state.lastRoundBotJoined = true
 
 	log.Info().
 		Str("session", sessionKey).
-		Bool("is_private", isPrivate).
-		Int("queue_len", queueLen).
-		Int("queue_chars", queueChars).
-		Int64("cooldown_ms", decision.Delay.Milliseconds()).
-		Str("scheduler_reason", decision.Reason).
-		Str("scheduler_priority", decision.Priority).
-		Msg("repeat enqueue scheduled")
+		Str("repeat_text", decision.Text).
+		Str("normalized_text", decision.NormalizedText).
+		Int("repeat_count", decision.RunCount).
+		Int("repeat_participants", decision.DistinctUsers).
+		Int64("round_start_seq", decision.RoundStartSeq).
+		Int64("latest_seq", decision.LatestSeq).
+		Msg("repeat hit")
 	return true
 }
 
-func (e *Engine) flush(sessionKey string) {
-	state := e.session(sessionKey)
-	state.mu.Lock()
-	if state.inFlight {
-		if len(state.nextBatch) > 0 {
-			decision := e.computeFlushDecision(state, time.Now())
-			if state.timer != nil {
-				state.timer.Stop()
-				state.timer = nil
-			}
-			state.timer = time.AfterFunc(decision.Delay, func() {
-				e.flush(sessionKey)
-			})
-		}
-		state.mu.Unlock()
-		return
-	}
-	if len(state.nextBatch) == 0 {
-		state.batchStartTime = time.Time{}
-		if state.timer != nil {
-			state.timer.Stop()
-			state.timer = nil
-		}
-		state.mu.Unlock()
-		return
-	}
-	if !e.IsEnabled(sessionKey) {
-		state.nextBatch = nil
-		state.nextBatchChars = 0
-		state.batchStartTime = time.Time{}
-		state.inFlight = false
-		state.assistantLabel = ""
-		if state.timer != nil {
-			state.timer.Stop()
-			state.timer = nil
-		}
-		state.mu.Unlock()
-		return
+func (e *Engine) evaluateLatestRound(sessionKey string) (repeatDecision, error) {
+	if e == nil || e.history == nil {
+		return repeatDecision{Reason: "history_unavailable"}, nil
 	}
 
-	processing := state.nextBatch
-	state.nextBatch = nil
-	state.nextBatchChars = 0
-	state.batchStartTime = time.Time{}
-	state.inFlight = true
-	sendFn := state.sendFn
-	assistantLabel := state.assistantLabel
-	state.mu.Unlock()
-
-	var cutoffSeq int64
-	if e.history != nil {
-		for _, msg := range processing {
-			seq, ok := e.history.AppendUserEventAt(sessionKey, msg.text, msg.speaker, msg.ts)
-			if ok && seq > cutoffSeq {
-				cutoffSeq = seq
-			}
-		}
+	result, err := e.history.ListChatEvents(sessionKey, chatlog.ListOptions{Limit: defaultHistoryScanLimit})
+	if err != nil {
+		return repeatDecision{}, err
 	}
-
-	repeatText, repeatCount, repeatParticipants := detectConsecutiveRepeat(processing)
-	if repeatText != "" {
-		now := time.Now()
-		delivered := sendFn != nil
-		if !delivered {
-			log.Warn().
-				Str("session", sessionKey).
-				Str("delivery", "repeat").
-				Int("reply_chars", len([]rune(repeatText))).
-				Msg("repeat send function missing, skipping outbound send")
-		} else {
-			sendFn(repeatText)
-		}
-		if e.history != nil {
-			_ = e.history.AppendAssistantEventWithSpeakerAt(sessionKey, repeatText, assistantLabel, cutoffSeq, now)
-		}
-		log.Info().
-			Str("session", sessionKey).
-			Str("repeat_text", repeatText).
-			Int("repeat_count", repeatCount).
-			Int("repeat_participants", repeatParticipants).
-			Bool("delivered", delivered).
-			Msg("repeat triggered")
-	}
-
-	state.mu.Lock()
-	state.inFlight = false
-	pending := len(state.nextBatch) > 0
-	if pending && state.batchStartTime.IsZero() {
-		state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
-	}
-	if state.timer != nil {
-		state.timer.Stop()
-		state.timer = nil
-	}
-	if pending {
-		decision := e.computeFlushDecision(state, time.Now())
-		state.timer = time.AfterFunc(decision.Delay, func() {
-			e.flush(sessionKey)
-		})
-	} else {
-		state.batchStartTime = time.Time{}
-	}
-	state.mu.Unlock()
+	return buildRepeatDecision(result.Entries), nil
 }
 
-func (e *Engine) computeFlushDecision(state *sessionState, now time.Time) flushDecision {
-	cfg := e.currentConfig()
-	policy := cfg.FlushPolicy
+func buildRepeatDecision(entries []chatlog.Entry) repeatDecision {
+	decision := repeatDecision{}
+	participants := make(map[string]struct{})
 
-	if state == nil {
-		return flushDecision{
-			Delay:    time.Duration(policy.MinBatchWaitMS) * time.Millisecond,
-			Reason:   "no_session",
-			Priority: "normal",
+	for _, entry := range entries {
+		if entry.Role != chatlog.RoleUser {
+			continue
+		}
+		rawText := strings.TrimSpace(entry.Metadata[llm.MetadataRawText])
+		if rawText == "" {
+			continue
+		}
+		normalized := normalizeRepeatText(rawText)
+		if normalized == "" {
+			continue
+		}
+		seq := parseCausalSeq(entry.Metadata)
+		if decision.NormalizedText == "" {
+			decision.Text = rawText
+			decision.NormalizedText = normalized
+			decision.RoundStartSeq = seq
+			decision.LatestSeq = seq
+		}
+		if normalized != decision.NormalizedText {
+			break
+		}
+		decision.RunCount++
+		if seq > 0 {
+			decision.RoundStartSeq = seq
+		}
+		if speaker := strings.TrimSpace(entry.Metadata[llm.MetadataSpeakerLabel]); speaker != "" {
+			participants[speaker] = struct{}{}
 		}
 	}
 
-	if policy.MaxBatchSize > 0 && len(state.nextBatch) >= policy.MaxBatchSize {
-		return flushDecision{Delay: 0, Reason: "batch_full", Priority: "immediate"}
+	if decision.NormalizedText == "" {
+		decision.Reason = "empty_tail"
+		return decision
 	}
 
-	var maxDeadlineRemaining time.Duration = -1
-	if !state.batchStartTime.IsZero() && policy.MaxBatchWaitMS > 0 {
-		maxDeadline := state.batchStartTime.Add(time.Duration(policy.MaxBatchWaitMS) * time.Millisecond)
-		maxDeadlineRemaining = maxDeadline.Sub(now)
-		if maxDeadlineRemaining <= 0 {
-			return flushDecision{Delay: 0, Reason: "max_batch_deadline", Priority: "immediate"}
+	decision.DistinctUsers = len(participants)
+	switch {
+	case decision.RunCount < 2:
+		decision.Reason = "insufficient_run_length"
+	case decision.DistinctUsers < 2:
+		decision.Reason = "insufficient_distinct_users"
+	}
+	return decision
+}
+
+func parseCausalSeq(metadata map[string]string) int64 {
+	if len(metadata) == 0 {
+		return 0
+	}
+	value := strings.TrimSpace(metadata[llm.MetadataCausalSeq])
+	if value == "" {
+		return 0
+	}
+	var seq int64
+	for _, ch := range value {
+		if ch < '0' || ch > '9' {
+			return 0
 		}
+		seq = seq*10 + int64(ch-'0')
 	}
-
-	delay := time.Duration(policy.MinBatchWaitMS) * time.Millisecond
-	if maxDeadlineRemaining >= 0 && (delay <= 0 || maxDeadlineRemaining < delay) {
-		delay = maxDeadlineRemaining
-	}
-	return flushDecision{Delay: delay, Reason: "normal_debounce", Priority: "normal"}
+	return seq
 }
 
 func (e *Engine) currentConfig() config.RepeatConfig {
@@ -400,64 +389,10 @@ func normalizeConfig(cfg config.RepeatConfig) config.RepeatConfig {
 	return cfg
 }
 
-func detectConsecutiveRepeat(queue []queuedMessage) (text string, repeatCount int, participants int) {
-	if len(queue) < 2 {
-		return "", 0, 0
-	}
-
-	bestText := ""
-	bestRepeatCount := 0
-	bestParticipants := 0
-
-	for i := 0; i < len(queue); {
-		base := normalizeRepeatText(queue[i].text)
-		j := i + 1
-		for j < len(queue) && base != "" && normalizeRepeatText(queue[j].text) == base {
-			j++
-		}
-		runCount := j - i
-		if base != "" && runCount >= 2 {
-			speakers := make(map[string]struct{}, runCount)
-			for _, msg := range queue[i:j] {
-				speaker := strings.TrimSpace(msg.speaker)
-				if speaker == "" {
-					continue
-				}
-				speakers[speaker] = struct{}{}
-			}
-			if len(speakers) >= 2 {
-				bestText = strings.TrimSpace(queue[j-1].text)
-				bestRepeatCount = runCount
-				bestParticipants = len(speakers)
-			}
-		}
-		if j == i+1 {
-			i++
-			continue
-		}
-		i = j
-	}
-
-	return bestText, bestRepeatCount, bestParticipants
-}
-
 func normalizeRepeatText(text string) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return ""
 	}
 	return strings.Join(strings.Fields(trimmed), " ")
-}
-
-func batchStartTimeFromQueue(queue []queuedMessage) time.Time {
-	var start time.Time
-	for _, msg := range queue {
-		if msg.ts.IsZero() {
-			continue
-		}
-		if start.IsZero() || msg.ts.Before(start) {
-			start = msg.ts
-		}
-	}
-	return start
 }

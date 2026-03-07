@@ -14,9 +14,6 @@ import (
 )
 
 const (
-	metaEventTime         = "event_time"
-	metaCausalSeq         = "causal_seq"
-	metaReplyToCutoffSeq  = "reply_to_cutoff_seq"
 	defaultAssistantLabel = "name=assistant"
 )
 
@@ -57,7 +54,7 @@ func (m *Manager) appendHistory(sessionKey, userContent, assistantReply string) 
 		return
 	}
 
-	cutoffSeq, ok := m.appendUserEventFormatted(session, userContent, time.Now())
+	cutoffSeq, ok := m.appendUserEventFormatted(session, userContent, time.Now(), nil)
 	if !ok {
 		return
 	}
@@ -78,9 +75,15 @@ func (m *Manager) AppendUserEvent(sessionKey, userInput, speaker string) (int64,
 
 // AppendUserEventAt appends one user atomic event with explicit event time.
 func (m *Manager) AppendUserEventAt(sessionKey, userInput, speaker string, eventTime time.Time) (int64, bool) {
+	return m.AppendUserEventWithMetadataAt(sessionKey, userInput, speaker, eventTime, nil)
+}
+
+// AppendUserEventWithMetadataAt appends one user atomic event with explicit event
+// time and extra metadata for downstream business logic.
+func (m *Manager) AppendUserEventWithMetadataAt(sessionKey, userInput, speaker string, eventTime time.Time, metadata map[string]string) (int64, bool) {
 	at := normalizeEventTime(eventTime)
 	content := formatUserContentAt(userInput, speaker, at)
-	return m.appendUserEventFormatted(sessionKey, content, at)
+	return m.appendUserEventFormatted(sessionKey, content, at, metadata)
 }
 
 // AppendAssistantEvent appends one assistant atomic event with a causal cutoff anchor.
@@ -98,7 +101,7 @@ func (m *Manager) AppendAssistantEventWithSpeakerAt(sessionKey, assistantReply, 
 	return m.appendAssistantEventFormatted(sessionKey, assistantReply, speaker, eventTime, replyToCutoffSeq)
 }
 
-func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime time.Time) (int64, bool) {
+func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime time.Time, extraMetadata map[string]string) (int64, bool) {
 	session := strings.TrimSpace(sessionKey)
 	content = strings.TrimSpace(content)
 	if session == "" || content == "" {
@@ -115,10 +118,9 @@ func (m *Manager) appendUserEventFormatted(sessionKey, content string, eventTime
 
 	at := normalizeEventTime(eventTime)
 	seq := m.sessions.nextCausalSeq(session)
-	metadata := map[string]string{
-		metaEventTime: at.Format(time.RFC3339Nano),
-		metaCausalSeq: strconv.FormatInt(seq, 10),
-	}
+	metadata := normalizeEventMetadata(extraMetadata)
+	metadata[MetadataEventTime] = at.Format(time.RFC3339Nano)
+	metadata[MetadataCausalSeq] = strconv.FormatInt(seq, 10)
 
 	if err := store.Append(context.Background(), session, chatlog.Entry{
 		Role:      chatlog.RoleUser,
@@ -162,11 +164,11 @@ func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply, spea
 
 	seq := m.sessions.nextCausalSeq(session)
 	metadata := map[string]string{
-		metaEventTime: at.Format(time.RFC3339Nano),
-		metaCausalSeq: strconv.FormatInt(seq, 10),
+		MetadataEventTime: at.Format(time.RFC3339Nano),
+		MetadataCausalSeq: strconv.FormatInt(seq, 10),
 	}
 	if replyToCutoffSeq > 0 {
-		metadata[metaReplyToCutoffSeq] = strconv.FormatInt(replyToCutoffSeq, 10)
+		metadata[MetadataReplyToCutoffSeq] = strconv.FormatInt(replyToCutoffSeq, 10)
 	}
 
 	if err := store.Append(context.Background(), session, chatlog.Entry{
@@ -179,6 +181,21 @@ func (m *Manager) appendAssistantEventFormatted(sessionKey, assistantReply, spea
 		return false
 	}
 	return true
+}
+
+func normalizeEventMetadata(metadata map[string]string) map[string]string {
+	if len(metadata) == 0 {
+		return make(map[string]string, 2)
+	}
+	normalized := make(map[string]string, len(metadata)+2)
+	for key, value := range metadata {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		normalized[trimmedKey] = strings.TrimSpace(value)
+	}
+	return normalized
 }
 
 func normalizeEventTime(at time.Time) time.Time {

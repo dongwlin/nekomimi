@@ -63,21 +63,35 @@ func (b *ImmersiveBuffer) ReloadConfig(cfg config.ImmersiveConfig, nicknames []s
 // flush. It detects message signals (mentions, addressed to bot, questions)
 // for downstream policies.
 func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool) {
+	meta := b.AnalyzeAmbientMessage(ctx, text, speaker, isPrivate, time.Now())
+	b.EnqueueAmbient(ctx, sessionKey, meta, 0)
+}
+
+// EnqueueAmbient adds one already-parsed ambient message to the session buffer.
+// When persistedSeq is positive the message is treated as already written into
+// chat history and will not be appended again during flush.
+func (b *ImmersiveBuffer) EnqueueAmbient(ctx *zero.Ctx, sessionKey string, meta AmbientMessageMeta, persistedSeq int64) {
 	if b == nil || b.llm == nil {
 		return
 	}
-	trimmed := strings.TrimSpace(text)
+	trimmed := strings.TrimSpace(meta.Text)
 	if strings.TrimSpace(sessionKey) == "" || trimmed == "" {
 		return
 	}
 	state := b.session(sessionKey)
-	now := time.Now()
-	mention, addressed, question, nickPos := b.detectMessageSignals(ctx, trimmed)
-	msg := newQueuedMessage(EventUserMessage, trimmed, speaker, now, nil)
-	msg.isMentionBot = mention
-	msg.isQuestion = question
-	msg.isAddressedToBot = addressed
-	msg.nicknamePosition = nickPos
+	now := meta.At
+	if now.IsZero() {
+		now = time.Now()
+	}
+	msg := newQueuedMessage(EventUserMessage, trimmed, meta.Speaker, now, meta.HistoryMetadata())
+	msg.isMentionBot = meta.MentionBot
+	msg.isQuestion = meta.Question
+	msg.isAddressedToBot = meta.AddressedToBot
+	msg.nicknamePosition = meta.NicknamePosition
+	if persistedSeq > 0 {
+		msg.persisted = true
+		msg.causalSeq = persistedSeq
+	}
 
 	state.mu.Lock()
 	fastRecoveryReason := ""
@@ -92,7 +106,7 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 	state.runtimeBuffer = appendTimelineMessage(state.runtimeBuffer, msg, b.runtimeBufferLimit())
 	state.ensureBehaviorDefaultsLocked(now)
 	b.detectColdOpenEligibilityLocked(state, now)
-	state.observeIncomingMessageLocked(msg, isPrivate, now)
+	state.observeIncomingMessageLocked(msg, meta.IsPrivate, now)
 	if state.lastFastRecoverAt.Equal(now) {
 		fastRecoveryReason = state.energyLastFastRecover
 	}
@@ -123,11 +137,12 @@ func (b *ImmersiveBuffer) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker strin
 
 	log.Info().
 		Str("session", sessionKey).
-		Bool("is_private", isPrivate).
-		Bool("mention", mention).
-		Bool("addressed", addressed).
-		Bool("question", question).
-		Int("nick_pos", int(nickPos)).
+		Bool("is_private", meta.IsPrivate).
+		Bool("mention", meta.MentionBot).
+		Bool("addressed", meta.AddressedToBot).
+		Bool("question", meta.Question).
+		Int("nick_pos", int(meta.NicknamePosition)).
+		Int64("persisted_seq", persistedSeq).
 		Int("queue_len", queueLen).
 		Int("queue_chars", queueChars).
 		Str("mode", string(behavior.Mode)).
@@ -300,7 +315,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			}
 			continue
 		}
-		seq, ok := b.llm.AppendUserEventAt(sessionKey, processing[i].text, processing[i].speaker, processing[i].ts)
+		seq, ok := b.llm.AppendUserEventWithMetadataAt(sessionKey, processing[i].text, processing[i].speaker, processing[i].ts, processing[i].metadata)
 		if !ok {
 			log.Warn().
 				Str("session", sessionKey).
@@ -694,6 +709,20 @@ func (b *ImmersiveBuffer) recordAssistantUtterance(sessionKey, text string) {
 		return
 	}
 	b.RecordEvent(sessionKey, NewAssistantTextEvent(text, b.botPrimaryName(), time.Now()))
+}
+
+// RecordAssistantDelivered synchronizes one externally delivered assistant
+// message into the immersive runtime state.
+func (b *ImmersiveBuffer) RecordAssistantDelivered(sessionKey, text, speaker string) {
+	if b == nil || strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+	label := strings.TrimSpace(speaker)
+	if label == "" {
+		label = b.botPrimaryName()
+	}
+	b.RecordEvent(sessionKey, NewAssistantTextEvent(text, label, time.Now()))
+	b.noteAssistantDelivered(sessionKey, text)
 }
 
 func (b *ImmersiveBuffer) noteAssistantDelivered(sessionKey, text string) int64 {

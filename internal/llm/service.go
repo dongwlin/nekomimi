@@ -27,8 +27,10 @@ type Service interface {
 	AppendTurn(sessionKey, userInput, speaker, assistantReply string)
 	AppendUserEvent(sessionKey, userInput, speaker string) (int64, bool)
 	AppendUserEventAt(sessionKey, userInput, speaker string, eventTime time.Time) (int64, bool)
+	AppendUserEventWithMetadataAt(sessionKey, userInput, speaker string, eventTime time.Time, metadata map[string]string) (int64, bool)
 	AppendAssistantEvent(sessionKey, assistantReply string, replyToCutoffSeq int64) bool
 	AppendAssistantEventAt(sessionKey, assistantReply string, replyToCutoffSeq int64, eventTime time.Time) bool
+	AppendAssistantEventWithSpeakerAt(sessionKey, assistantReply, speaker string, replyToCutoffSeq int64, eventTime time.Time) bool
 	ClearHistory(sessionKey string)
 	ListChatEvents(sessionKey string, opts chatlog.ListOptions) (chatlog.ListResult, error)
 	SessionContextUsage(sessionKey string) SessionContextUsage

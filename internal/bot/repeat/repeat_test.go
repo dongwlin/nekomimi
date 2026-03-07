@@ -1,70 +1,80 @@
 package repeat
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
+	immersivepkg "github.com/dongwlin/nekomimi/internal/bot/immersive"
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
+	"github.com/wdvxdr1123/ZeroBot/message"
 )
 
-func TestDetectConsecutiveRepeat_TwoSpeakers(t *testing.T) {
-	text, count, participants := detectConsecutiveRepeat([]queuedMessage{
-		{text: "开冲", speaker: "name=alice;id=1"},
-		{text: "开冲", speaker: "name=bob;id=2"},
+func TestBuildRepeatDecision_TwoDistinctUsersHit(t *testing.T) {
+	decision := buildRepeatDecision([]chatlog.Entry{
+		userEntry(2, "hello", "name=bob;id=2"),
+		userEntry(1, "hello", "name=alice;id=1"),
 	})
-	if text != "开冲" {
-		t.Fatalf("expected repeat text 开冲, got %q", text)
+
+	if decision.Reason != "" {
+		t.Fatalf("expected hit, got reason %q", decision.Reason)
 	}
-	if count != 2 {
-		t.Fatalf("expected repeat count 2, got %d", count)
+	if decision.Text != "hello" {
+		t.Fatalf("expected repeat text hello, got %q", decision.Text)
 	}
-	if participants != 2 {
-		t.Fatalf("expected participants 2, got %d", participants)
+	if decision.RunCount != 2 {
+		t.Fatalf("expected run count 2, got %d", decision.RunCount)
+	}
+	if decision.DistinctUsers != 2 {
+		t.Fatalf("expected distinct users 2, got %d", decision.DistinctUsers)
+	}
+	if decision.RoundStartSeq != 1 {
+		t.Fatalf("expected round start seq 1, got %d", decision.RoundStartSeq)
+	}
+	if decision.LatestSeq != 2 {
+		t.Fatalf("expected latest seq 2, got %d", decision.LatestSeq)
 	}
 }
 
-func TestDetectConsecutiveRepeat_SameSpeakerOnly(t *testing.T) {
-	text, count, participants := detectConsecutiveRepeat([]queuedMessage{
-		{text: "1", speaker: "name=alice;id=1"},
-		{text: "1", speaker: "name=alice;id=1"},
+func TestBuildRepeatDecision_RequiresDistinctUsers(t *testing.T) {
+	decision := buildRepeatDecision([]chatlog.Entry{
+		userEntry(2, "1", "name=alice;id=1"),
+		userEntry(1, "1", "name=alice;id=1"),
 	})
-	if text != "" || count != 0 || participants != 0 {
-		t.Fatalf("expected no repeat trigger, got text=%q count=%d participants=%d", text, count, participants)
+
+	if decision.Reason != "insufficient_distinct_users" {
+		t.Fatalf("expected insufficient_distinct_users, got %q", decision.Reason)
 	}
 }
 
-func TestDetectConsecutiveRepeat_RequiresConsecutive(t *testing.T) {
-	text, count, participants := detectConsecutiveRepeat([]queuedMessage{
-		{text: "喵", speaker: "name=alice;id=1"},
-		{text: "不是喵", speaker: "name=bob;id=2"},
-		{text: "喵", speaker: "name=carol;id=3"},
+func TestBuildRepeatDecision_UsesLatestTailAndIgnoresAssistant(t *testing.T) {
+	decision := buildRepeatDecision([]chatlog.Entry{
+		userEntry(6, "second", "name=erin;id=5"),
+		assistantEntry(5, "second"),
+		userEntry(4, "second", "name=dave;id=4"),
+		userEntry(3, "first", "name=carol;id=3"),
+		userEntry(2, "first", "name=bob;id=2"),
+		userEntry(1, "first", "name=alice;id=1"),
 	})
-	if text != "" || count != 0 || participants != 0 {
-		t.Fatalf("expected no repeat trigger, got text=%q count=%d participants=%d", text, count, participants)
-	}
-}
 
-func TestDetectConsecutiveRepeat_UsesLatestRun(t *testing.T) {
-	text, count, participants := detectConsecutiveRepeat([]queuedMessage{
-		{text: "第一段", speaker: "name=alice;id=1"},
-		{text: "第一段", speaker: "name=bob;id=2"},
-		{text: "第二段", speaker: "name=carol;id=3"},
-		{text: "第二段", speaker: "name=dave;id=4"},
-		{text: "第二段", speaker: "name=erin;id=5"},
-	})
-	if text != "第二段" {
-		t.Fatalf("expected latest repeated text 第二段, got %q", text)
+	if decision.Reason != "" {
+		t.Fatalf("expected hit, got reason %q", decision.Reason)
 	}
-	if count != 3 {
-		t.Fatalf("expected repeat count 3, got %d", count)
+	if decision.Text != "second" {
+		t.Fatalf("expected latest run text second, got %q", decision.Text)
 	}
-	if participants != 3 {
-		t.Fatalf("expected participants 3, got %d", participants)
+	if decision.RunCount != 2 {
+		t.Fatalf("expected latest run count 2, got %d", decision.RunCount)
+	}
+	if decision.RoundStartSeq != 4 {
+		t.Fatalf("expected round start seq 4, got %d", decision.RoundStartSeq)
 	}
 }
 
 func TestNormalizeRepeatText_CompressesWhitespace(t *testing.T) {
-	normalized := normalizeRepeatText("  我 喜欢\t猫咪 \n")
+	normalized := normalizeRepeatText("  我\t喜欢 \n猫咪  ")
 	if normalized != "我 喜欢 猫咪" {
 		t.Fatalf("unexpected normalized text %q", normalized)
 	}
@@ -84,7 +94,7 @@ func TestNormalizeConfig_Defaults(t *testing.T) {
 }
 
 func TestSetEnabled_UsesConfigDefaultAsBaseline(t *testing.T) {
-	engine := NewEngine(config.RepeatConfig{Enabled: true}, nil)
+	engine := NewEngine(config.RepeatConfig{Enabled: true}, nil, nil)
 	sessionKey := "group:1"
 
 	if !engine.IsEnabled(sessionKey) {
@@ -102,40 +112,9 @@ func TestSetEnabled_UsesConfigDefaultAsBaseline(t *testing.T) {
 	}
 }
 
-func TestComputeFlushDecision_RespectsBatchDeadline(t *testing.T) {
-	engine := NewEngine(config.RepeatConfig{
-		Enabled: true,
-		FlushPolicy: config.FlushPolicyConfig{
-			MinBatchWaitMS: 800,
-			MaxBatchWaitMS: 1000,
-			MaxBatchSize:   10,
-		},
-	}, nil)
-	state := &sessionState{
-		nextBatch: []queuedMessage{
-			{text: "喵", ts: time.Unix(0, 0)},
-		},
-		batchStartTime: time.Unix(0, 0),
-	}
-
-	decision := engine.computeFlushDecision(state, time.Unix(0, 700*int64(time.Millisecond)))
-	if decision.Delay != 300*time.Millisecond {
-		t.Fatalf("expected batch deadline to cap delay, got %s", decision.Delay)
-	}
-}
-
-type stubHistoryWriter struct {
-	userEvents      []historyUserEvent
+type stubHistoryStore struct {
+	listEntries     []chatlog.Entry
 	assistantEvents []historyAssistantEvent
-	nextSeq         int64
-}
-
-type historyUserEvent struct {
-	sessionKey string
-	text       string
-	speaker    string
-	at         time.Time
-	seq        int64
 }
 
 type historyAssistantEvent struct {
@@ -146,19 +125,15 @@ type historyAssistantEvent struct {
 	at         time.Time
 }
 
-func (s *stubHistoryWriter) AppendUserEventAt(sessionKey, userInput, speaker string, eventTime time.Time) (int64, bool) {
-	s.nextSeq++
-	s.userEvents = append(s.userEvents, historyUserEvent{
-		sessionKey: sessionKey,
-		text:       userInput,
-		speaker:    speaker,
-		at:         eventTime,
-		seq:        s.nextSeq,
-	})
-	return s.nextSeq, true
+func (s *stubHistoryStore) ListChatEvents(sessionKey string, opts chatlog.ListOptions) (chatlog.ListResult, error) {
+	limit := opts.Limit
+	if limit <= 0 || limit > len(s.listEntries) {
+		limit = len(s.listEntries)
+	}
+	return chatlog.ListResult{Entries: append([]chatlog.Entry(nil), s.listEntries[:limit]...)}, nil
 }
 
-func (s *stubHistoryWriter) AppendAssistantEventWithSpeakerAt(sessionKey, assistantReply, speaker string, replyToCutoffSeq int64, eventTime time.Time) bool {
+func (s *stubHistoryStore) AppendAssistantEventWithSpeakerAt(sessionKey, assistantReply, speaker string, replyToCutoffSeq int64, eventTime time.Time) bool {
 	s.assistantEvents = append(s.assistantEvents, historyAssistantEvent{
 		sessionKey: sessionKey,
 		text:       assistantReply,
@@ -169,38 +144,128 @@ func (s *stubHistoryWriter) AppendAssistantEventWithSpeakerAt(sessionKey, assist
 	return true
 }
 
-func TestFlush_AppendsRepeatMessagesToHistory(t *testing.T) {
-	history := &stubHistoryWriter{}
-	engine := NewEngine(config.RepeatConfig{Enabled: true}, history)
-	sessionKey := "group:history"
-	base := time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC)
+type stubRecorder struct {
+	calls []historyAssistantEvent
+}
 
-	state := engine.session(sessionKey)
-	state.nextBatch = []queuedMessage{
-		{text: "开冲", speaker: "name=alice;id=1", ts: base},
-		{text: "开冲", speaker: "name=bob;id=2", ts: base.Add(time.Second)},
+func (s *stubRecorder) RecordAssistantDelivered(sessionKey, text, speaker string) {
+	s.calls = append(s.calls, historyAssistantEvent{
+		sessionKey: sessionKey,
+		text:       text,
+		speaker:    speaker,
+	})
+}
+
+func TestTryRepeat_SingleRoundOnlyOnce(t *testing.T) {
+	history := &stubHistoryStore{
+		listEntries: []chatlog.Entry{
+			userEntry(2, "hello", "name=bob;id=2"),
+			userEntry(1, "hello", "name=alice;id=1"),
+		},
 	}
-	state.assistantLabel = "name=nekomimi;id=10000"
-	state.batchStartTime = base
+	recorder := &stubRecorder{}
+	engine := NewEngine(config.RepeatConfig{Enabled: true}, history, recorder)
 
-	engine.flush(sessionKey)
-
-	if len(history.userEvents) != 2 {
-		t.Fatalf("expected 2 user history events, got %d", len(history.userEvents))
+	sent := make([]string, 0, 1)
+	sendFn := func(payload interface{}) message.ID {
+		if text, ok := payload.(string); ok {
+			sent = append(sent, text)
+		}
+		return message.ID{}
 	}
-	if history.userEvents[0].text != "开冲" || history.userEvents[1].text != "开冲" {
-		t.Fatalf("unexpected user history content: %+v", history.userEvents)
+
+	meta := historyMeta("hello")
+	if !engine.tryRepeatWithSend("group:1", meta, "name=nekomimi;id=10000", sendFn) {
+		t.Fatal("expected first repeat attempt to hit")
+	}
+	if len(sent) != 1 {
+		t.Fatalf("expected one outbound message, got %d", len(sent))
 	}
 	if len(history.assistantEvents) != 1 {
-		t.Fatalf("expected 1 assistant history event, got %d", len(history.assistantEvents))
+		t.Fatalf("expected one assistant history event, got %d", len(history.assistantEvents))
 	}
-	if history.assistantEvents[0].text != "开冲" {
-		t.Fatalf("unexpected assistant history content: %+v", history.assistantEvents[0])
+	if len(recorder.calls) != 1 {
+		t.Fatalf("expected one immersive sync call, got %d", len(recorder.calls))
 	}
-	if history.assistantEvents[0].speaker != "name=nekomimi;id=10000" {
-		t.Fatalf("unexpected assistant history speaker: %q", history.assistantEvents[0].speaker)
+
+	history.listEntries = []chatlog.Entry{
+		userEntry(4, "hello", "name=carol;id=3"),
+		assistantEntry(3, "hello"),
+		userEntry(2, "hello", "name=bob;id=2"),
+		userEntry(1, "hello", "name=alice;id=1"),
 	}
-	if history.assistantEvents[0].cutoffSeq != 2 {
-		t.Fatalf("expected assistant cutoff seq 2, got %d", history.assistantEvents[0].cutoffSeq)
+	if engine.tryRepeatWithSend("group:1", meta, "name=nekomimi;id=10000", sendFn) {
+		t.Fatal("expected same round to be suppressed after bot already joined")
 	}
+	if len(sent) != 1 {
+		t.Fatalf("expected outbound count to remain 1, got %d", len(sent))
+	}
+}
+
+func TestTryRepeat_AllowsNewRoundAfterInterruption(t *testing.T) {
+	history := &stubHistoryStore{
+		listEntries: []chatlog.Entry{
+			userEntry(2, "hello", "name=bob;id=2"),
+			userEntry(1, "hello", "name=alice;id=1"),
+		},
+	}
+	engine := NewEngine(config.RepeatConfig{Enabled: true}, history, &stubRecorder{})
+
+	sendCount := 0
+	sendFn := func(payload interface{}) message.ID {
+		sendCount++
+		return message.ID{}
+	}
+
+	meta := historyMeta("hello")
+	if !engine.tryRepeatWithSend("group:1", meta, "name=nekomimi;id=10000", sendFn) {
+		t.Fatal("expected first round to hit")
+	}
+
+	history.listEntries = []chatlog.Entry{
+		userEntry(6, "hello", "name=erin;id=5"),
+		userEntry(5, "hello", "name=dave;id=4"),
+		userEntry(4, "other", "name=carol;id=3"),
+		assistantEntry(3, "hello"),
+		userEntry(2, "hello", "name=bob;id=2"),
+		userEntry(1, "hello", "name=alice;id=1"),
+	}
+	if !engine.tryRepeatWithSend("group:1", meta, "name=nekomimi;id=10000", sendFn) {
+		t.Fatal("expected interrupted tail to create a new repeat round")
+	}
+	if sendCount != 2 {
+		t.Fatalf("expected two successful repeats across different rounds, got %d", sendCount)
+	}
+}
+
+func historyMeta(text string) immersivepkg.AmbientMessageMeta {
+	return immersivepkg.AmbientMessageMeta{
+		Text: text,
+		At:   time.Date(2026, 3, 7, 21, 20, 39, 0, time.Local),
+	}
+}
+
+func userEntry(seq int64, text, speaker string) chatlog.Entry {
+	return chatlog.Entry{
+		Role: chatlog.RoleUser,
+		Metadata: map[string]string{
+			llm.MetadataRawText:      text,
+			llm.MetadataSpeakerLabel: speaker,
+			llm.MetadataCausalSeq:    formatSeq(seq),
+		},
+	}
+}
+
+func assistantEntry(seq int64, text string) chatlog.Entry {
+	return chatlog.Entry{
+		Role: chatlog.RoleAssistant,
+		Metadata: map[string]string{
+			llm.MetadataRawText:   text,
+			llm.MetadataCausalSeq: formatSeq(seq),
+		},
+	}
+}
+
+func formatSeq(seq int64) string {
+	return strconv.FormatInt(seq, 10)
 }

@@ -14,10 +14,17 @@ type stubImmersiveEngine struct {
 	snapshot immersivepkg.DebugSnapshot
 }
 
-func (s stubImmersiveEngine) Enqueue(ctx *zero.Ctx, sessionKey, text, speaker string, isPrivate bool) {
+func (s stubImmersiveEngine) AnalyzeAmbientMessage(ctx *zero.Ctx, text, speaker string, isPrivate bool, at time.Time) immersivepkg.AmbientMessageMeta {
+	return immersivepkg.NewAmbientMessageMeta(text, speaker, isPrivate, at)
+}
+func (s stubImmersiveEngine) EnqueueAmbient(ctx *zero.Ctx, sessionKey string, meta immersivepkg.AmbientMessageMeta, persistedSeq int64) {
 }
 func (s stubImmersiveEngine) RecordEvent(sessionKey string, event immersivepkg.TimelineEvent) {}
 func (s stubImmersiveEngine) RecordTimelineEvent(sessionKey, text, speaker string)            {}
+func (s stubImmersiveEngine) RecordAssistantDelivered(sessionKey, text, speaker string)       {}
+func (s stubImmersiveEngine) ShouldYieldToImmersive(sessionKey string, meta immersivepkg.AmbientMessageMeta) bool {
+	return false
+}
 func (s stubImmersiveEngine) DebugSnapshot(sessionKey string) immersivepkg.DebugSnapshot {
 	result := s.snapshot
 	if strings.TrimSpace(result.SessionKey) == "" {

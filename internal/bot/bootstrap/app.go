@@ -16,11 +16,7 @@ import (
 func Start(cfg *config.Config, llmManager llm.Service, collector *metrics.Collector) {
 	engine := immersive.NewEngine(cfg.LLM.Immersive, llmManager, cfg.NickName)
 	engine.SetMetricsCollector(collector)
-	var historyWriter repeat.HistoryWriter
-	if writer, ok := llmManager.(repeat.HistoryWriter); ok {
-		historyWriter = writer
-	}
-	repeatEngine := repeat.NewEngine(cfg.Repeat, historyWriter)
+	repeatEngine := repeat.NewEngine(cfg.Repeat, llmManager, engine)
 	repeatEngine.SetMetricsCollector(collector)
 	commands.Register(cfg, llmManager, engine, repeatEngine, collector)
 	if collector != nil {
