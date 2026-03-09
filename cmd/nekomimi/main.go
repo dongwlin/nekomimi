@@ -9,6 +9,8 @@ import (
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/httpapi"
 	"github.com/dongwlin/nekomimi/internal/llm"
+	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
+	"github.com/dongwlin/nekomimi/internal/llm/diary"
 	"github.com/dongwlin/nekomimi/internal/metrics"
 	"github.com/dongwlin/nekomimi/internal/version"
 	"github.com/rs/zerolog"
@@ -37,7 +39,39 @@ func main() {
 		Bool("api_enabled", cfg.API.Enabled).
 		Msg("config loaded")
 
-	llmManager := llm.NewManager(cfg.LLM, llm.ManagerDeps{})
+	chatStore, err := chatlog.NewSQLiteStore(chatlog.DefaultSQLitePath)
+	if err != nil {
+		log.Fatal().
+			Err(err).
+			Str("path", chatlog.DefaultSQLitePath).
+			Msg("initialize chatlog sqlite store failed")
+	}
+	defer func() {
+		if closeErr := chatStore.Close(); closeErr != nil {
+			log.Error().Err(closeErr).Str("path", chatlog.DefaultSQLitePath).Msg("close chatlog sqlite store failed")
+		}
+	}()
+
+	diaryStore, err := diary.NewSQLiteStore(diary.DefaultSQLitePath)
+	if err != nil {
+		if closeErr := chatStore.Close(); closeErr != nil {
+			log.Error().Err(closeErr).Str("path", chatlog.DefaultSQLitePath).Msg("close chatlog sqlite store after diary init failure failed")
+		}
+		log.Fatal().
+			Err(err).
+			Str("path", diary.DefaultSQLitePath).
+			Msg("initialize diary sqlite store failed")
+	}
+	defer func() {
+		if closeErr := diaryStore.Close(); closeErr != nil {
+			log.Error().Err(closeErr).Str("path", diary.DefaultSQLitePath).Msg("close diary sqlite store failed")
+		}
+	}()
+
+	llmManager := llm.NewManager(cfg.LLM, llm.ManagerDeps{
+		ChatStore:  chatStore,
+		DiaryStore: diaryStore,
+	})
 	log.Info().
 		Msg("llm manager initialized")
 

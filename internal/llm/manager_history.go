@@ -211,10 +211,18 @@ func (m *Manager) ClearHistory(sessionKey string) {
 		return
 	}
 	m.mu.RLock()
-	store := m.chatStore
+	chatStore := m.chatStore
+	diaryStore := m.diaryStore
 	m.mu.RUnlock()
-	if store != nil {
-		_ = store.Clear(context.Background(), session)
+	if chatStore != nil {
+		if err := chatStore.Clear(context.Background(), session); err != nil {
+			log.Warn().Err(err).Str("session", session).Msg("clear chat history failed")
+		}
+	}
+	if diaryStore != nil {
+		if err := diaryStore.Clear(context.Background(), session); err != nil {
+			log.Warn().Err(err).Str("session", session).Msg("clear diary history failed")
+		}
 	}
 	m.sessions.clearStats(session)
 }

@@ -108,6 +108,12 @@ func TestSessionContextUsage_ContextTrimCountAndClear(t *testing.T) {
 	}, ManagerDeps{})
 	sessionKey := "group:777"
 	m.appendHistory(sessionKey, "u", "a")
+	if _, err := m.diaryStore.Write(context.Background(), sessionKey, diary.Entry{
+		Author:  "assistant",
+		Content: "note",
+	}); err != nil {
+		t.Fatalf("write diary failed: %v", err)
+	}
 	time.Sleep(1 * time.Millisecond)
 	m.sessions.incrementContextTrimCount(sessionKey)
 	m.sessions.incrementContextTrimCount(sessionKey)
@@ -127,6 +133,9 @@ func TestSessionContextUsage_ContextTrimCountAndClear(t *testing.T) {
 	}
 	if usage.ContextTrimCount != 0 {
 		t.Fatalf("context trim count should be reset: got %d", usage.ContextTrimCount)
+	}
+	if usage.RecentDiaryCount != 0 {
+		t.Fatalf("recent diary count should be reset: got %d", usage.RecentDiaryCount)
 	}
 }
 
