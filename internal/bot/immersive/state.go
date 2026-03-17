@@ -52,24 +52,6 @@ func newImmersiveSession(now time.Time) *immersiveSession {
 	return session
 }
 
-func (s *immersiveSession) snapshotBehavior(now time.Time) behaviorSnapshot {
-	if s == nil {
-		return behaviorSnapshot{
-			Mode:           ModeIdle,
-			EnergyValue:    int(defaultEnergyBaseline),
-			EnergyBaseline: int(defaultEnergyBaseline),
-			EnergyTarget:   int(defaultEnergyBaseline),
-			EnergyBand:     energyBand(defaultEnergyBaseline),
-		}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ensureBehaviorDefaultsLocked(now)
-	s.settleEnergyLocked(now, "lazy_snapshot_recovery")
-	s.decayBehaviorLocked(now)
-	return s.snapshotBehaviorLocked(now)
-}
-
 func (s *immersiveSession) snapshotBehaviorLocked(now time.Time) behaviorSnapshot {
 	if s == nil {
 		return behaviorSnapshot{}

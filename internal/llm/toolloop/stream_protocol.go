@@ -137,28 +137,6 @@ func validateModelStreamFrame(frame StreamMessage) *ErrorPayload {
 	}
 }
 
-func streamFrameToMessage(frame StreamMessage) (Message, bool) {
-	switch frame.Type {
-	case MessageTypeToolCall:
-		return Message{
-			Type:     MessageTypeToolCall,
-			ToolCall: cloneToolCallPayload(frame.ToolCall),
-		}, true
-	case MessageTypeFinal:
-		return Message{
-			Type:  MessageTypeFinal,
-			Final: cloneFinalPayload(frame.Final),
-		}, true
-	case MessageTypeError:
-		return Message{
-			Type:  MessageTypeError,
-			Error: cloneErrorPayload(frame.Error),
-		}, true
-	default:
-		return Message{}, false
-	}
-}
-
 func messageToStreamFrame(msg Message) StreamMessage {
 	return StreamMessage{
 		Type:       msg.Type,

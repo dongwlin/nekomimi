@@ -9,18 +9,6 @@ import (
 	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 )
 
-// buildRecentPreview creates a formatted debug preview from the last 'keep' messages.
-func buildRecentPreview(queue []queuedMessage, keep int, identity botIdentity) string {
-	if len(queue) == 0 || keep <= 0 {
-		return ""
-	}
-	start := len(queue) - keep
-	if start < 0 {
-		start = 0
-	}
-	return buildCombinedInput(queue[start:], identity)
-}
-
 // buildCombinedInput builds a complete formatted debug preview from the queue.
 func buildCombinedInput(queue []queuedMessage, identity botIdentity) string {
 	meta := summarizeQueueMeta(queue, time.Now(), identity)
@@ -240,14 +228,6 @@ func formatMessageTime(at time.Time) string {
 	return at.Format("2006-01-02 15:04:05")
 }
 
-// minDuration returns the smaller of two durations.
-func minDuration(a, b time.Duration) time.Duration {
-	if a <= b {
-		return a
-	}
-	return b
-}
-
 // sumQueueChars calculates the total character count of all messages in the queue.
 func sumQueueChars(queue []queuedMessage) int {
 	total := 0
@@ -293,33 +273,6 @@ func trimTimelineTail(timeline []queuedMessage, maxMessages int) []queuedMessage
 	trimmed := make([]queuedMessage, maxMessages)
 	copy(trimmed, timeline[start:])
 	return trimmed
-}
-
-func buildTimelineFallbackSummary(previousSummary string, messages []queuedMessage, maxChars int) string {
-	parts := make([]string, 0, len(messages)+1)
-	if trimmed := strings.TrimSpace(previousSummary); trimmed != "" {
-		parts = append(parts, "已有摘要:"+trimmed)
-	}
-	for _, msg := range messages {
-		content := strings.TrimSpace(msg.text)
-		if content == "" {
-			continue
-		}
-		speaker := strings.TrimSpace(msg.speaker)
-		if speaker == "" {
-			speaker = "unknown"
-		}
-		entry := speaker + ":" + strings.Join(strings.Fields(content), " ")
-		parts = append(parts, entry)
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	joined := strings.Join(parts, "；")
-	if maxChars > 0 {
-		return limitRunes(joined, maxChars)
-	}
-	return joined
 }
 
 func limitRunes(text string, maxRunes int) string {

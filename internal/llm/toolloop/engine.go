@@ -534,15 +534,6 @@ func finalize(trace []Message, reason StopReason) RunResult {
 	}
 }
 
-func validStopReason(reason StopReason) bool {
-	switch reason {
-	case StopReasonFinal, StopReasonMaxSteps, StopReasonTimeout, StopReasonError:
-		return true
-	default:
-		return false
-	}
-}
-
 func validModelStopReason(reason StopReason) bool {
 	return reason == StopReasonFinal
 }
