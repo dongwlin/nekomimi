@@ -71,7 +71,7 @@ type ManagerDeps struct {
 func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 	basePrompt, systemPrompt := composeConfiguredSystemPrompt(cfg.SystemPrompt)
 	providerName := normalizeProvider(cfg.Provider)
-	apiURL := normalizeAPIURL(providerName, cfg.API)
+	apiURL := normalizeAPIURL(cfg.API)
 	contextMax := cfg.ContextMax
 	if contextMax < 0 {
 		contextMax = 0
@@ -157,7 +157,7 @@ func (m *Manager) SetProvider(provider string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.current.provider = normalized
-	m.client.SetAPIURL(normalizeAPIURL(normalized, m.client.APIURL()))
+	m.client.SetAPIURL(normalizeAPIURL(m.client.APIURL()))
 	return nil
 }
 

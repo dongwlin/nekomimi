@@ -21,7 +21,7 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	if providerName == llmProviderGemini {
 		return errors.New("gemini is not implemented")
 	}
-	apiURL := normalizeAPIURL(providerName, cfg.API)
+	apiURL := normalizeAPIURL(cfg.API)
 	requestTimeout := time.Duration(cfg.TimeoutMS) * time.Millisecond
 	if requestTimeout <= 0 {
 		requestTimeout = defaultRequestTimeout()

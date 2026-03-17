@@ -60,7 +60,7 @@ func normalizeProvider(provider string) string {
 	}
 }
 
-func normalizeAPIURL(provider, apiURL string) string {
+func normalizeAPIURL(apiURL string) string {
 	trimmed := strings.TrimSpace(apiURL)
 	if trimmed == "" {
 		return llmclient.DefaultAnthropicAPI
