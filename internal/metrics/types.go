@@ -1,20 +1,19 @@
 package metrics
 
 type LLMStatus struct {
-	Enabled  bool
-	Provider string
-	Model    string
+	Enabled bool
+	Model   string
 }
 
 type Overview struct {
-	GeneratedAt      string             `json:"generated_at"`
-	Timezone         string             `json:"timezone"`
-	Runtime          OverviewRuntime    `json:"runtime"`
-	KPI              OverviewKPI        `json:"kpi"`
-	TodayInbound     []OverviewTypeItem `json:"today_inbound_types"`
-	TodayOutbound    []OverviewTypeItem `json:"today_outbound_types"`
-	TodayFailed      []OverviewTypeItem `json:"today_failed_types"`
-	HourlyTrend      []OverviewHourly   `json:"hourly_trend"`
+	GeneratedAt   string             `json:"generated_at"`
+	Timezone      string             `json:"timezone"`
+	Runtime       OverviewRuntime    `json:"runtime"`
+	KPI           OverviewKPI        `json:"kpi"`
+	TodayInbound  []OverviewTypeItem `json:"today_inbound_types"`
+	TodayOutbound []OverviewTypeItem `json:"today_outbound_types"`
+	TodayFailed   []OverviewTypeItem `json:"today_failed_types"`
+	HourlyTrend   []OverviewHourly   `json:"hourly_trend"`
 }
 
 type OverviewRuntime struct {
@@ -37,7 +36,6 @@ type OverviewKPI struct {
 	LastSentAt         *string `json:"last_sent_at"`
 	LastFailedAt       *string `json:"last_failed_at"`
 	LLMEnabled         bool    `json:"llm_enabled"`
-	LLMProvider        string  `json:"llm_provider"`
 	LLMModel           string  `json:"llm_model"`
 }
 

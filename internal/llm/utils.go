@@ -49,17 +49,6 @@ func formatMessageTime(at time.Time) string {
 	return at.Format("2006-01-02 15:04:05")
 }
 
-func normalizeProvider(provider string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case llmProviderOpenAI:
-		return llmProviderOpenAI
-	case llmProviderGemini:
-		return llmProviderGemini
-	default:
-		return llmProviderResponses
-	}
-}
-
 func normalizeAPIURL(apiURL string) string {
 	trimmed := strings.TrimSpace(apiURL)
 	if trimmed == "" {

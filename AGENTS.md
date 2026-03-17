@@ -6,7 +6,7 @@
 - Default config path: `config/config.yml`
 - Main modules:
   - `internal/bot`: command registration, runtime wiring, immersive chat behavior
-  - `internal/llm`: provider adapter, request client, history/context management
+  - `internal/llm`: Anthropic client adapter, request client, history/context management
   - `internal/config`: YAML loading and prompt reference resolution
 
 ## Prerequisites
@@ -20,10 +20,9 @@
    - `driver.websocket.url`
    - `driver.websocket.token`
 3. If enabling LLM (`llm.enabled: true`), also set:
-   - `llm.provider`
    - `llm.key`
    - `llm.model`
-   - `llm.api` (optional; can be auto-normalized)
+  - `llm.api` (optional; defaults to `https://api.anthropic.com`)
 
 ## Runtime and Config Notes
 - `config/config.yml` must exist before startup (not auto-generated).
@@ -31,14 +30,8 @@
 - API auth state persists to SQLite at `data/auth.db` (relative to process working directory).
 - Chat history persists to SQLite at `data/chatlog.db`; diary entries persist to `data/diary.db`.
 - For Docker persistence, mount host directory to container `data`: `./data:/app/data`.
-- `llm.provider` behavior:
-  - `responses`: supported
-  - `openai`: supported
-  - `gemini`: currently not implemented (will return error)
-  - Any unknown provider value falls back to `responses`
-- `llm.api` is normalized by provider:
-  - `openai` -> `/chat/completions`
-  - non-openai -> `/responses`
+- LLM requests use the Anthropic SDK and expect an Anthropic-compatible API endpoint.
+- `llm.api` is used as the request base URL; when empty it defaults to `https://api.anthropic.com`.
 - `llm.system_prompt` is appended after built-in system prompts.
 - `llm.system_prompt` supports file refs: `{{file:relative/path.txt}}`
   - Absolute paths are rejected.

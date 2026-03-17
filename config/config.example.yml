@@ -6,8 +6,7 @@ super_users:
 
 llm:
   enabled: false
-  provider: "responses" # responses | openai | gemini (not implemented)
-  api: "https://api.openai.com/v1/responses"
+  api: "https://api.anthropic.com" # Anthropic-compatible API base URL
   key: "your_api_key"
   model: "gpt-4.1-mini"
   timeout_ms: 30000

@@ -30,7 +30,6 @@ type pipelineRequest struct {
 }
 
 type pipelineState struct {
-	provider         string
 	model            string
 	systemPrompt     string
 	assistantSpeaker string
@@ -99,7 +98,7 @@ func (m *Manager) replyWithPipeline(ctx context.Context, req pipelineRequest) (s
 
 	engine := toolloop.NewEngine(
 		state.router,
-		newManagerToolLoopDriver(m, state.provider, withRequestSource(req.RequestOptions, req.Source)),
+		newManagerToolLoopDriver(m, withRequestSource(req.RequestOptions, req.Source)),
 		toolloop.EngineOptions{DefaultMaxSteps: state.toolLoopMaxStep},
 	)
 	result, err := engine.Run(runCtx, toolloop.RunRequest{
@@ -154,7 +153,7 @@ func (m *Manager) decideIntentWithPipeline(ctx context.Context, req pipelineRequ
 		m.sessions.incrementContextTrimCount(req.SessionKey)
 	}
 
-	reply, err := m.generateWithProvider(ctx, state.provider, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source))
+	reply, err := m.generateWithProvider(ctx, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source))
 	if err != nil {
 		return llmintent.ControlIntent{}, err
 	}
@@ -217,7 +216,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 	}
 
 	if req.DisableTools || !state.toolsEnabled || state.router == nil {
-		reply, err := m.generateStreamWithProvider(ctx, state.provider, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source), func(delta string) error {
+		reply, err := m.generateStreamWithProvider(ctx, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source), func(delta string) error {
 			if delta == "" {
 				return nil
 			}
@@ -260,7 +259,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 
 	engine := toolloop.NewEngine(
 		state.router,
-		newManagerToolLoopDriver(m, state.provider, withRequestSource(req.RequestOptions, req.Source)),
+		newManagerToolLoopDriver(m, withRequestSource(req.RequestOptions, req.Source)),
 		toolloop.EngineOptions{DefaultMaxSteps: state.toolLoopMaxStep},
 	)
 	result, err := engine.RunStream(runCtx, toolloop.RunRequest{
@@ -292,7 +291,6 @@ func (m *Manager) snapshotPipelineState() pipelineState {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return pipelineState{
-		provider:         m.current.provider,
 		model:            m.current.model,
 		systemPrompt:     m.current.systemPrompt,
 		assistantSpeaker: m.current.assistantSpeaker,

@@ -27,11 +27,10 @@ func TestReplyStream_ToolsDisabled_UsesProviderStreaming(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 
 	events := make([]StreamEvent, 0, 4)
@@ -68,11 +67,10 @@ func TestReplyStream_ToolsDisabled_PreservesWhitespaceOnlyDelta(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 
 	deltas := make([]string, 0, 4)
@@ -105,11 +103,10 @@ func TestReplyStreamWithExtraPrompt_DoesNotAppendHistory(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 
 	_, err := manager.ReplyStreamWithExtraPrompt(context.Background(), "hello", "session-extra", "alice", "extra", func(event StreamEvent) error {
@@ -137,11 +134,10 @@ func TestReplyStreamWithExtraPromptAllowTools_ImmersiveContextUsesSingleBlockLay
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 
 	if _, ok := manager.AppendUserEvent("session-immersive-reply-layout", "neko current batch", "alice"); !ok {
@@ -201,7 +197,6 @@ func TestReplyStreamWithExtraPromptAllowTools_DisablesReasoningAndThinking(t *te
 
 	manager := NewManager(config.LLMConfig{
 		Enabled:         true,
-		Provider:        "responses",
 		Model:           "gpt-4.1-mini",
 		API:             server.URL + "/responses",
 		Key:             "test-key",
@@ -243,11 +238,10 @@ func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -294,11 +288,10 @@ func TestReplyStreamWithExtraPromptAllowTools_UsesToolLoop(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -355,11 +348,10 @@ func TestReplyStreamWithExtraPrompt_PreservesWhitespaceOnlyDelta(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 
 	deltas := make([]string, 0, 4)
@@ -407,11 +399,10 @@ func TestReplyStream_ToolsEnabled_EmitsToolEvents(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -478,11 +469,10 @@ func TestReplyStream_ToolsEnabled_ProtocolErrorRetriesThenRecovers(t *testing.T)
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -514,11 +504,10 @@ func TestReplyStream_ToolsEnabled_ProtocolErrorStopsAfterThreeAttempts(t *testin
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -548,11 +537,10 @@ func TestReplyStream_AppendsAtomicEventsWithAnchor(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 	sessionKey := "session-stream-atomic"
 	_, err := manager.ReplyStream(context.Background(), "hello-stream", sessionKey, "name=alice", func(event StreamEvent) error {

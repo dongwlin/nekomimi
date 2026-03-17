@@ -39,14 +39,13 @@ type Service interface {
 
 	IsEnabled() bool
 	SetEnabled(enabled bool)
-	SetProvider(provider string) error
 	SetModel(model string)
 	SetSystemPrompt(prompt string)
 	SetAssistantSpeaker(speaker string)
 	SetImmersive(sessionKey string, enabled bool)
 	IsImmersive(sessionKey string) bool
 	ResetDefaults()
-	Status() (enabled bool, provider string, model string, systemPrompt string, apiURL string)
+	Status() (enabled bool, model string, systemPrompt string, apiURL string)
 	ReloadConfig(cfg config.LLMConfig) error
 }
 

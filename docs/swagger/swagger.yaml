@@ -104,8 +104,6 @@ definitions:
         type: boolean
       llm_model:
         type: string
-      llm_provider:
-        type: string
       today_active_sessions:
         type: integer
       today_failed_total:

@@ -810,11 +810,10 @@ func newImmersiveBufferForFlushTest(t *testing.T, apiURL string, cfg config.Imme
 	t.Helper()
 	sessionKey := "group:flush-test"
 	manager := llm.NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      apiURL,
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     apiURL,
+		Key:     "test-key",
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -922,10 +921,9 @@ func TestEnqueue_FlushPolicyDebouncesGroupMessages(t *testing.T) {
 
 func TestEnqueue_ConcurrentDoesNotPanic(t *testing.T) {
 	manager := llm.NewManager(config.LLMConfig{
-		Enabled:  false,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		Key:      "test-key",
+		Enabled: false,
+		Model:   "gpt-4.1-mini",
+		Key:     "test-key",
 	}, llm.ManagerDeps{})
 	buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, manager, []string{"neko"})
 	sessionKey := "group:concurrent"

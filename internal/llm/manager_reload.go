@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"errors"
 	"strings"
 	"time"
 
@@ -16,10 +15,6 @@ import (
 func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	if m == nil {
 		return nil
-	}
-	providerName := normalizeProvider(cfg.Provider)
-	if providerName == llmProviderGemini {
-		return errors.New("gemini is not implemented")
 	}
 	apiURL := normalizeAPIURL(cfg.API)
 	requestTimeout := time.Duration(cfg.TimeoutMS) * time.Millisecond
@@ -36,7 +31,6 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	m.mu.Lock()
 	m.current = currentConfig{
 		enabled:          cfg.Enabled,
-		provider:         providerName,
 		model:            strings.TrimSpace(cfg.Model),
 		requestTimeout:   requestTimeout,
 		systemPrompt:     systemPrompt,
@@ -50,10 +44,9 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 		toolLoopTimeout:  runtimeCfg.toolLoopTimeout,
 	}
 	m.defaults = defaultConfig{
-		provider: providerName,
-		model:    strings.TrimSpace(cfg.Model),
-		prompt:   systemPrompt,
-		apiURL:   apiURL,
+		model:  strings.TrimSpace(cfg.Model),
+		prompt: systemPrompt,
+		apiURL: apiURL,
 	}
 
 	if m.chatStore == nil {

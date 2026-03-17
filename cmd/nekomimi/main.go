@@ -34,7 +34,6 @@ func main() {
 	}
 	log.Info().
 		Bool("llm_enabled", cfg.LLM.Enabled).
-		Str("provider", cfg.LLM.Provider).
 		Str("model", cfg.LLM.Model).
 		Bool("api_enabled", cfg.API.Enabled).
 		Msg("config loaded")
@@ -98,11 +97,10 @@ func main() {
 			if err := httpapi.Run(cfg.API, httpapi.RunOptions{
 				Metrics: collector,
 				LLMStatusProvider: func() metrics.LLMStatus {
-					enabled, provider, model, _, _ := llmManager.Status()
+					enabled, model, _, _ := llmManager.Status()
 					return metrics.LLMStatus{
-						Enabled:  enabled,
-						Provider: provider,
-						Model:    model,
+						Enabled: enabled,
+						Model:   model,
 					}
 				},
 			}); err != nil {

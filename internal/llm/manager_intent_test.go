@@ -23,11 +23,10 @@ func TestDecideImmersiveIntent_ParsesValidIntent(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -55,11 +54,10 @@ func TestDecideImmersiveIntent_ProtocolError(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 
 	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-bad", "alice", nil)
@@ -80,11 +78,10 @@ func TestDecideImmersiveIntent_DoesNotUseToolLoop(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -113,7 +110,6 @@ func TestDecideImmersiveIntent_DisablesReasoningAndThinking(t *testing.T) {
 
 	manager := NewManager(config.LLMConfig{
 		Enabled:         true,
-		Provider:        "responses",
 		Model:           "gpt-4.1-mini",
 		API:             server.URL + "/responses",
 		Key:             "test-key",
@@ -176,11 +172,10 @@ func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 
 	if _, ok := manager.AppendUserEvent("session-intent-ic", "neko what time is it?", "alice"); !ok {
@@ -248,11 +243,10 @@ func TestDecideImmersiveIntent_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
-		API:      server.URL + "/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
 	}, ManagerDeps{})
 
 	_, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-no-ic", "alice", nil)

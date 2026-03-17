@@ -2,7 +2,6 @@ package llm
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +33,6 @@ type Manager struct {
 
 type currentConfig struct {
 	enabled          bool
-	provider         string
 	model            string
 	requestTimeout   time.Duration
 	systemPrompt     string
@@ -49,10 +47,9 @@ type currentConfig struct {
 }
 
 type defaultConfig struct {
-	provider string
-	model    string
-	prompt   string
-	apiURL   string
+	model  string
+	prompt string
+	apiURL string
 }
 
 type sessionUsageStats struct {
@@ -70,7 +67,6 @@ type ManagerDeps struct {
 
 func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 	basePrompt, systemPrompt := composeConfiguredSystemPrompt(cfg.SystemPrompt)
-	providerName := normalizeProvider(cfg.Provider)
 	apiURL := normalizeAPIURL(cfg.API)
 	contextMax := cfg.ContextMax
 	if contextMax < 0 {
@@ -99,7 +95,6 @@ func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 	return &Manager{
 		current: currentConfig{
 			enabled:          cfg.Enabled,
-			provider:         providerName,
 			model:            strings.TrimSpace(cfg.Model),
 			requestTimeout:   requestTimeout,
 			systemPrompt:     systemPrompt,
@@ -113,10 +108,9 @@ func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 			toolLoopTimeout:  runtimeCfg.toolLoopTimeout,
 		},
 		defaults: defaultConfig{
-			provider: providerName,
-			model:    strings.TrimSpace(cfg.Model),
-			prompt:   systemPrompt,
-			apiURL:   apiURL,
+			model:  strings.TrimSpace(cfg.Model),
+			prompt: systemPrompt,
+			apiURL: apiURL,
 		},
 		client:           client,
 		providers:        provider.NewFactory(client),
@@ -147,18 +141,6 @@ func (m *Manager) SetEnabled(enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.current.enabled = enabled
-}
-
-func (m *Manager) SetProvider(provider string) error {
-	normalized := normalizeProvider(provider)
-	if normalized == llmProviderGemini {
-		return errors.New("gemini is not implemented")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.current.provider = normalized
-	m.client.SetAPIURL(normalizeAPIURL(m.client.APIURL()))
-	return nil
 }
 
 func (m *Manager) SetModel(model string) {
@@ -194,16 +176,15 @@ func (m *Manager) IsImmersive(sessionKey string) bool {
 func (m *Manager) ResetDefaults() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.current.provider = m.defaults.provider
 	m.current.model = m.defaults.model
 	m.current.systemPrompt = m.defaults.prompt
 	m.client.SetAPIURL(m.defaults.apiURL)
 }
 
-func (m *Manager) Status() (enabled bool, provider string, model string, systemPrompt string, apiURL string) {
+func (m *Manager) Status() (enabled bool, model string, systemPrompt string, apiURL string) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.current.enabled, m.current.provider, m.current.model, m.current.systemPrompt, m.client.APIURL()
+	return m.current.enabled, m.current.model, m.current.systemPrompt, m.client.APIURL()
 }
 
 func (m *Manager) Reply(ctx context.Context, userInput, sessionKey, speaker string) (string, error) {
@@ -323,7 +304,7 @@ func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, ses
 	return reply, nil
 }
 
-func (m *Manager) generateWithProvider(ctx context.Context, providerName, model, systemPrompt string, messages []Message, options llmclient.RequestOptions) (string, error) {
+func (m *Manager) generateWithProvider(ctx context.Context, model, systemPrompt string, messages []Message, options llmclient.RequestOptions) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -334,11 +315,11 @@ func (m *Manager) generateWithProvider(ctx context.Context, providerName, model,
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	providerClient := m.providers.From(providerName)
+	providerClient := m.providers.From()
 	return providerClient.Generate(reqCtx, model, systemPrompt, messages)
 }
 
-func (m *Manager) generateStreamWithProvider(ctx context.Context, providerName, model, systemPrompt string, messages []Message, options llmclient.RequestOptions, onDelta func(delta string) error) (string, error) {
+func (m *Manager) generateStreamWithProvider(ctx context.Context, model, systemPrompt string, messages []Message, options llmclient.RequestOptions, onDelta func(delta string) error) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -349,7 +330,7 @@ func (m *Manager) generateStreamWithProvider(ctx context.Context, providerName, 
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	providerClient := m.providers.From(providerName)
+	providerClient := m.providers.From()
 	return providerClient.GenerateStream(reqCtx, model, systemPrompt, messages, onDelta)
 }
 

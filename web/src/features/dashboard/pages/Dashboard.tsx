@@ -312,9 +312,7 @@ export function DashboardPage() {
               children: (
                 <Flex align="center" gap={8}>
                   <Tag color={kpi?.llm_enabled ? 'green' : 'default'}>{kpi?.llm_enabled ? 'Enabled' : 'Disabled'}</Tag>
-                  <Typography.Text type="secondary">
-                    {(kpi?.llm_provider ?? '-') + ' / ' + (kpi?.llm_model ?? '-')}
-                  </Typography.Text>
+                  <Typography.Text type="secondary">{kpi?.llm_model ?? '-'}</Typography.Text>
                 </Flex>
               ),
             },

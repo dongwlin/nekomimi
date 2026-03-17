@@ -15,7 +15,7 @@ func NewFactory(client *llmclient.Client) *Factory {
 	return &Factory{client: client}
 }
 
-func (f *Factory) From(name string) Provider {
+func (f *Factory) From() Provider {
 	// Since we're only using Anthropic SDK, always return the Anthropic provider
 	return anthropicProvider{client: f.client}
 }

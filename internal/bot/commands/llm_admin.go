@@ -11,7 +11,7 @@ func registerLLMHandlers(llmManager llm.Service) {
 	zero.OnCommand("llm", zero.SuperUserPermission).Handle(func(ctx *zero.Ctx) {
 		args := strings.TrimSpace(ctx.State["args"].(string))
 		if args == "" {
-			sendTracked(ctx, "用法: /llm on|off|status|provider <responses|openai|gemini>|model <name>|prompt <text>|reset|clear")
+			sendTracked(ctx, "用法: /llm on|off|status|model <name>|prompt <text>|reset|clear")
 			return
 		}
 		action, rest := parseActionArgs(args)
@@ -23,13 +23,10 @@ func registerLLMHandlers(llmManager llm.Service) {
 			llmManager.SetEnabled(false)
 			sendTracked(ctx, "LLM已关闭")
 		case "status":
-			enabled, provider, model, systemPrompt, apiURL := llmManager.Status()
+			enabled, model, systemPrompt, apiURL := llmManager.Status()
 			status := "关闭"
 			if enabled {
 				status = "开启"
-			}
-			if strings.TrimSpace(provider) == "" {
-				provider = "(未设置)"
 			}
 			if strings.TrimSpace(model) == "" {
 				model = "(未设置)"
@@ -37,17 +34,7 @@ func registerLLMHandlers(llmManager llm.Service) {
 			if strings.TrimSpace(systemPrompt) == "" {
 				systemPrompt = "(未设置)"
 			}
-			sendTracked(ctx, "LLM状态: "+status+"\n提供方: "+provider+"\n模型: "+model+"\nAPI: "+apiURL+"\n系统提示词: "+systemPrompt)
-		case "provider":
-			if strings.TrimSpace(rest) == "" {
-				sendTracked(ctx, "用法: /llm provider <responses|openai|gemini>")
-				return
-			}
-			if err := llmManager.SetProvider(rest); err != nil {
-				sendTracked(ctx, "更新提供方失败: "+llm.UserVisibleError(err))
-				return
-			}
-			sendTracked(ctx, "已更新提供方: "+rest)
+			sendTracked(ctx, "LLM状态: "+status+"\n模型: "+model+"\nAPI: "+apiURL+"\n系统提示词: "+systemPrompt)
 		case "model":
 			if strings.TrimSpace(rest) == "" {
 				sendTracked(ctx, "用法: /llm model <name>")
@@ -69,7 +56,7 @@ func registerLLMHandlers(llmManager llm.Service) {
 			llmManager.ClearHistory(sessionKey(ctx))
 			sendTracked(ctx, "已清空当前会话的对话历史")
 		default:
-			sendTracked(ctx, "用法: /llm on|off|status|provider <responses|openai|gemini>|model <name>|prompt <text>|reset|clear")
+			sendTracked(ctx, "用法: /llm on|off|status|model <name>|prompt <text>|reset|clear")
 		}
 	})
 }

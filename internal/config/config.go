@@ -14,7 +14,6 @@ type Config struct {
 
 type LLMConfig struct {
 	Enabled         bool                  `yaml:"enabled"`
-	Provider        string                `yaml:"provider"`
 	API             string                `yaml:"api"`
 	Key             string                `yaml:"key"`
 	Model           string                `yaml:"model"`

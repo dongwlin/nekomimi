@@ -66,9 +66,8 @@ func TestCollector_RecordAndBuildOverview(t *testing.T) {
 	}
 
 	overview, err := collector.BuildOverview(now, LLMStatus{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "gpt-4.1-mini",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
 	})
 	if err != nil {
 		t.Fatalf("build overview failed: %v", err)
@@ -89,7 +88,7 @@ func TestCollector_RecordAndBuildOverview(t *testing.T) {
 	if overview.KPI.TodayActiveSession != 2 {
 		t.Fatalf("unexpected active session count: %d", overview.KPI.TodayActiveSession)
 	}
-	if !overview.KPI.LLMEnabled || overview.KPI.LLMProvider != "responses" || overview.KPI.LLMModel != "gpt-4.1-mini" {
+	if !overview.KPI.LLMEnabled || overview.KPI.LLMModel != "gpt-4.1-mini" {
 		t.Fatalf("unexpected llm status in kpi: %+v", overview.KPI)
 	}
 	if overview.Runtime.BotConnectedAt == nil {

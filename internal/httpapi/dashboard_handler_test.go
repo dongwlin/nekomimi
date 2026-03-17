@@ -39,9 +39,8 @@ func buildDashboardEngine(t *testing.T) (*gin.Engine, *AuthService, string, *met
 
 	handler := newDashboardHandler(collector, func() metrics.LLMStatus {
 		return metrics.LLMStatus{
-			Enabled:  true,
-			Provider: "responses",
-			Model:    "gpt-4.1-mini",
+			Enabled: true,
+			Model:   "gpt-4.1-mini",
 		}
 	})
 
@@ -90,7 +89,7 @@ func TestDashboardHandlerOverview(t *testing.T) {
 		if len(body.HourlyTrend) != 24 {
 			t.Fatalf("unexpected hourly trend length: %d", len(body.HourlyTrend))
 		}
-		if body.KPI.LLMProvider != "responses" || body.KPI.LLMModel != "gpt-4.1-mini" || !body.KPI.LLMEnabled {
+		if body.KPI.LLMModel != "gpt-4.1-mini" || !body.KPI.LLMEnabled {
 			t.Fatalf("unexpected llm status in response: %+v", body.KPI)
 		}
 	})

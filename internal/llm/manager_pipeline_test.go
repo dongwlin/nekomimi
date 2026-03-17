@@ -213,10 +213,9 @@ func newMinimalManagerForPipelineTest(t *testing.T) *Manager {
 
 func defaultTestLLMConfig() config.LLMConfig {
 	return config.LLMConfig{
-		Enabled:  true,
-		Provider: "responses",
-		Model:    "test-model",
-		API:      "http://localhost/responses",
-		Key:      "test-key",
+		Enabled: true,
+		Model:   "test-model",
+		API:     "http://localhost/responses",
+		Key:     "test-key",
 	}
 }

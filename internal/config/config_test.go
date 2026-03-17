@@ -25,7 +25,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -69,7 +68,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -104,7 +102,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -152,7 +149,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -192,7 +188,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -240,7 +235,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -280,7 +274,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -329,7 +322,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -376,7 +368,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -415,7 +406,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -454,7 +444,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -494,7 +483,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -535,7 +523,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"
@@ -588,7 +575,6 @@ command_prefix: "/"
 super_users: []
 llm:
   enabled: true
-  provider: "openai"
   api: ""
   key: ""
   model: "x"

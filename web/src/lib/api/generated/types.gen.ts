@@ -62,7 +62,6 @@ export type MetricsOverviewKpi = {
     last_sent_at?: string;
     llm_enabled?: boolean;
     llm_model?: string;
-    llm_provider?: string;
     today_active_sessions?: number;
     today_failed_total?: number;
     today_received_total?: number;
