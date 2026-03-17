@@ -29,6 +29,7 @@
 - `config/config.yml` must exist before startup (not auto-generated).
 - App currently always loads `config/config.yml` (no custom path CLI flag).
 - API auth state persists to SQLite at `data/auth.db` (relative to process working directory).
+- Chat history persists to SQLite at `data/chatlog.db`; diary entries persist to `data/diary.db`.
 - For Docker persistence, mount host directory to container `data`: `./data:/app/data`.
 - `llm.provider` behavior:
   - `responses`: supported
@@ -43,8 +44,9 @@
   - Absolute paths are rejected.
   - Path traversal outside config root is rejected.
   - Ambiguous file matches cause load failure.
-- In-memory conversation history is not persisted across process restart.
-- `/reload` hot-reloads config but keeps existing in-memory session history.
+- Conversation history and diary entries persist across process restart.
+- `/reload` hot-reloads config and keeps existing persisted session history.
+- `/llm clear` clears both chat history and diary entries for the current session.
 
 ## Common Commands
 - Install deps: `go mod download`
