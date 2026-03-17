@@ -63,27 +63,7 @@ func normalizeProvider(provider string) string {
 func normalizeAPIURL(provider, apiURL string) string {
 	trimmed := strings.TrimSpace(apiURL)
 	if trimmed == "" {
-		if provider == llmProviderOpenAI {
-			return llmclient.DefaultOpenAIAPI
-		}
-		return llmclient.DefaultLLMAPI
+		return llmclient.DefaultAnthropicAPI
 	}
-	lower := strings.ToLower(trimmed)
-	if strings.Contains(lower, "/chat/completions") {
-		if provider == llmProviderOpenAI {
-			return trimmed
-		}
-		return strings.Replace(trimmed, "/chat/completions", "/responses", 1)
-	}
-	if strings.Contains(lower, "/responses") {
-		if provider != llmProviderOpenAI {
-			return trimmed
-		}
-		return strings.Replace(trimmed, "/responses", "/chat/completions", 1)
-	}
-	trimmed = strings.TrimRight(trimmed, "/")
-	if provider == llmProviderOpenAI {
-		return trimmed + "/chat/completions"
-	}
-	return trimmed + "/responses"
+	return trimmed
 }
