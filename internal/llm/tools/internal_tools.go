@@ -12,8 +12,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
-	"github.com/dongwlin/nekomimi/internal/llm/diary"
+	"github.com/dongwlin/nekomimi/internal/chatlog"
+	"github.com/dongwlin/nekomimi/internal/diary"
 	"github.com/dongwlin/nekomimi/internal/llm/jsonutil"
 )
 

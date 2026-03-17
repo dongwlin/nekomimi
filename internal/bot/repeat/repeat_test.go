@@ -6,9 +6,9 @@ import (
 	"time"
 
 	immersivepkg "github.com/dongwlin/nekomimi/internal/bot/immersive"
+	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
-	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
 	"github.com/wdvxdr1123/ZeroBot/message"
 )
 

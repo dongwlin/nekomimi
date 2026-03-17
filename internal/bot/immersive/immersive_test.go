@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/llm"
-	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 	logpkg "github.com/rs/zerolog/log"
 )

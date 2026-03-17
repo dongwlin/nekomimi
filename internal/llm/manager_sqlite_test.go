@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
-	"github.com/dongwlin/nekomimi/internal/llm/diary"
+	"github.com/dongwlin/nekomimi/internal/diary"
 )
 
 func TestManager_WithSQLiteStores_PersistsAcrossRestart(t *testing.T) {

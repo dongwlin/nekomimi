@@ -18,4 +18,3 @@ func UserVisibleError(err error) string {
 	}
 	return urlInErrorPattern.ReplaceAllString(msg, "[redacted-url]")
 }
-

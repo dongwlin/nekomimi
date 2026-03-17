@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/contextassemble"
 	"github.com/dongwlin/nekomimi/internal/llm"
-	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	"github.com/dongwlin/nekomimi/internal/metrics"
 	"github.com/rs/zerolog/log"
 	zero "github.com/wdvxdr1123/ZeroBot"

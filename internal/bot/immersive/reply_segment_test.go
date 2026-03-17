@@ -3,7 +3,7 @@ package immersive
 import (
 	"testing"
 
-	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/contextassemble"
 )
 
 func TestSplitReplySegments_StrictDelimiter(t *testing.T) {

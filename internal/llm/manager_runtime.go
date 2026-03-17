@@ -4,10 +4,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
-	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
-	"github.com/dongwlin/nekomimi/internal/llm/diary"
+	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/diary"
 	"github.com/dongwlin/nekomimi/internal/llm/mcp"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
 	"github.com/rs/zerolog/log"

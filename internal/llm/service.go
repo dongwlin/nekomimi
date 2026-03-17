@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
-	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/contextassemble"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 )
 

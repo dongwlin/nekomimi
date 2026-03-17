@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/bot/bootstrap"
+	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/diary"
 	"github.com/dongwlin/nekomimi/internal/httpapi"
 	"github.com/dongwlin/nekomimi/internal/llm"
-	"github.com/dongwlin/nekomimi/internal/llm/chatlog"
-	"github.com/dongwlin/nekomimi/internal/llm/diary"
 	"github.com/dongwlin/nekomimi/internal/metrics"
 	"github.com/dongwlin/nekomimi/internal/version"
 	"github.com/rs/zerolog"

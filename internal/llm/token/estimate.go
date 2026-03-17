@@ -66,4 +66,3 @@ func TruncateToTokens(text string, maxTokens int) string {
 	}
 	return result + "..."
 }
-

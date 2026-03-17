@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/contextassemble"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 )
 

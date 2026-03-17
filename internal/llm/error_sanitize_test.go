@@ -21,4 +21,3 @@ func TestUserVisibleError_Empty(t *testing.T) {
 		t.Fatalf("unexpected fallback message: %q", got)
 	}
 }
-

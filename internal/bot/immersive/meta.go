@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/contextassemble"
 )
 
 // buildCombinedInput builds a complete formatted debug preview from the queue.

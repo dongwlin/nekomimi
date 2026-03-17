@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dongwlin/nekomimi/internal/contextassemble"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
-	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 	"github.com/dongwlin/nekomimi/internal/llm/model"
 	"github.com/dongwlin/nekomimi/internal/llm/toolloop"

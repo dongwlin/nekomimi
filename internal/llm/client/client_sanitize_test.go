@@ -10,4 +10,3 @@ func TestRedactURLs(t *testing.T) {
 		t.Fatalf("unexpected redaction result: got %q, want %q", got, want)
 	}
 }
-

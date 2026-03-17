@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dongwlin/nekomimi/internal/llm/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/contextassemble"
 )
 
 const ReplySegmentDelimiter = "\n---\n"

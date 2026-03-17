@@ -4,6 +4,7 @@ go 1.25.7
 
 require (
 	aidanwoods.dev/go-paseto v1.6.0
+	github.com/anthropics/anthropic-sdk-go v1.27.0
 	github.com/gin-gonic/gin v1.10.1
 	github.com/rs/zerolog v1.34.0
 	github.com/uptrace/bun v1.2.15
@@ -19,7 +20,6 @@ require (
 	github.com/FloatTech/ttl v0.0.0-20250224045156-012b1463287d // indirect
 	github.com/RomiChan/syncx v0.0.0-20240418144900-b7402ffdebc7 // indirect
 	github.com/RomiChan/websocket v1.4.3-0.20251002072000-d3eb41798438 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.27.0 // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect
