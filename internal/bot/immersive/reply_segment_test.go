@@ -3,7 +3,7 @@ package immersive
 import (
 	"testing"
 
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 )
 
 func TestSplitReplySegments_StrictDelimiter(t *testing.T) {
@@ -90,7 +90,7 @@ func TestReplySegmentLimit_UsesImmersiveContext(t *testing.T) {
 	if got := replySegmentLimit(nil); got != 1 {
 		t.Fatalf("expected default segment limit 1, got %d", got)
 	}
-	if got := replySegmentLimit(&contextassemble.ImmersiveContext{MaxReplySegments: 3}); got != 3 {
+	if got := replySegmentLimit(&ctxasm.ImmersiveContext{MaxReplySegments: 3}); got != 3 {
 		t.Fatalf("expected immersive segment limit 3, got %d", got)
 	}
 }

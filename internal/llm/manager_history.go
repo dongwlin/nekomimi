@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/chatlog"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
 	"github.com/dongwlin/nekomimi/internal/llm/token"
 	"github.com/rs/zerolog/log"
@@ -34,7 +34,7 @@ type SessionContextUsage struct {
 type sessionContextUsageState struct {
 	chatStore        chatlog.Store
 	diaryStore       diary.Store
-	assembler        *contextassemble.Assembler
+	assembler        *ctxasm.Assembler
 	systemPrompt     string
 	contextMax       int
 	recentChatLimit  int
@@ -271,7 +271,7 @@ func (m *Manager) SessionContextUsage(sessionKey string) SessionContextUsage {
 	}
 
 	if state.assembler != nil {
-		assembled, err := state.assembler.Assemble(context.Background(), contextassemble.Request{
+		assembled, err := state.assembler.Assemble(context.Background(), ctxasm.Request{
 			SessionKey: session,
 		})
 		if err == nil {
@@ -310,16 +310,16 @@ func (m *Manager) snapshotSessionContextUsage(sessionKey string) sessionContextU
 		recentDiaryLimit: m.current.recentDiaryLimit,
 	}
 	if state.recentChatLimit <= 0 {
-		state.recentChatLimit = contextassemble.DefaultRecentChatLimit
+		state.recentChatLimit = ctxasm.DefaultRecentChatLimit
 	}
 	if state.recentDiaryLimit <= 0 {
-		state.recentDiaryLimit = contextassemble.DefaultRecentDiaryLimit
+		state.recentDiaryLimit = ctxasm.DefaultRecentDiaryLimit
 	}
 	state.startedAt, state.contextTrimCount = m.sessions.snapshot(sessionKey)
 	return state
 }
 
-func countTruncatedBlocks(blocks []contextassemble.Block) int {
+func countTruncatedBlocks(blocks []ctxasm.Block) int {
 	count := 0
 	for _, block := range blocks {
 		if block.Truncated {
@@ -329,6 +329,6 @@ func countTruncatedBlocks(blocks []contextassemble.Block) int {
 	return count
 }
 
-func renderUsageAssembledBlocks(blocks []contextassemble.Block) string {
+func renderUsageAssembledBlocks(blocks []ctxasm.Block) string {
 	return renderAssembledBlocks(blocks)
 }

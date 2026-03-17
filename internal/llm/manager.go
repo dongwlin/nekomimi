@@ -8,7 +8,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
@@ -26,7 +26,7 @@ type Manager struct {
 	providers        *provider.Factory
 	chatStore        chatlog.Store
 	diaryStore       diary.Store
-	contextAssembler *contextassemble.Assembler
+	contextAssembler *ctxasm.Assembler
 	toolRouter       tools.Router
 	sessions         *sessionState
 }
@@ -116,7 +116,7 @@ func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 		providers:        provider.NewFactory(client),
 		chatStore:        cs,
 		diaryStore:       ds,
-		contextAssembler: contextassemble.New(cs, ds, runtimeCfg.assemblyOptions),
+		contextAssembler: ctxasm.New(cs, ds, runtimeCfg.assemblyOptions),
 		toolRouter:       buildToolRouter(cs, ds, runtimeCfg),
 		sessions:         newSessionState(),
 	}
@@ -241,11 +241,11 @@ func (m *Manager) ReplyStreamWithExtraPrompt(ctx context.Context, userInput, ses
 	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, true, nil, llmclient.RequestOptions{})
 }
 
-func (m *Manager) ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, immersiveCtx *contextassemble.ImmersiveContext) (string, error) {
+func (m *Manager) ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, immersiveCtx *ctxasm.ImmersiveContext) (string, error) {
 	return m.replyStreamWithExtraPrompt(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, false, immersiveCtx, immersiveRequestOptions())
 }
 
-func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *contextassemble.ImmersiveContext) (llmintent.ControlIntent, error) {
+func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *ctxasm.ImmersiveContext) (llmintent.ControlIntent, error) {
 	startedAt := time.Now()
 	intent, err := m.decideIntentWithPipeline(ctx, pipelineRequest{
 		UserInput:        userInput,
@@ -276,7 +276,7 @@ func (m *Manager) DecideImmersiveIntent(ctx context.Context, userInput, sessionK
 	return intent, nil
 }
 
-func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, disableTools bool, immersiveCtx *contextassemble.ImmersiveContext, options llmclient.RequestOptions) (string, error) {
+func (m *Manager) replyStreamWithExtraPrompt(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent StreamEventHandler, disableTools bool, immersiveCtx *ctxasm.ImmersiveContext, options llmclient.RequestOptions) (string, error) {
 	startedAt := time.Now()
 	reply, err := m.replyStreamWithPipeline(ctx, pipelineRequest{
 		UserInput:        userInput,

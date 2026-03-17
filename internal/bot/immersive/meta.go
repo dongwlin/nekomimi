@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 )
 
 // buildCombinedInput builds a complete formatted debug preview from the queue.
@@ -294,10 +294,10 @@ func buildImmersiveContext(
 	identity botIdentity,
 	behavior behaviorSnapshot,
 	gate speakGateDecision,
-) *contextassemble.ImmersiveContext {
+) *ctxasm.ImmersiveContext {
 	now := time.Now()
 	meta := summarizeQueueMeta(queue, now, identity)
-	return &contextassemble.ImmersiveContext{
+	return &ctxasm.ImmersiveContext{
 		MessagesCount:          meta.MessagesCount,
 		Participants:           meta.Participants,
 		MentionsToBot:          meta.MentionsToBot,

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 )
 
 const ReplySegmentDelimiter = "\n---\n"
@@ -116,7 +116,7 @@ func SplitReplySegmentsForDelivery(text string, maxSegments int) []string {
 	return []string{trimmed}
 }
 
-func replySegmentLimit(immersiveCtx *contextassemble.ImmersiveContext) int {
+func replySegmentLimit(immersiveCtx *ctxasm.ImmersiveContext) int {
 	if immersiveCtx == nil || immersiveCtx.MaxReplySegments <= 0 {
 		return 1
 	}

@@ -6,7 +6,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
 	"github.com/dongwlin/nekomimi/internal/llm/mcp"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
@@ -16,7 +16,7 @@ import (
 const defaultToolLoopMaxSteps = 8
 
 type runtimeConfig struct {
-	assemblyOptions   contextassemble.Options
+	assemblyOptions   ctxasm.Options
 	recentChatLimit   int
 	recentDiaryLimit  int
 	toolsEnabled      bool
@@ -47,7 +47,7 @@ func normalizeRuntimeConfig(cfg config.LLMConfig, requestTimeout time.Duration, 
 	}
 
 	return runtimeConfig{
-		assemblyOptions: contextassemble.Options{
+		assemblyOptions: ctxasm.Options{
 			RecentChatLimit:  recentChatLimit,
 			RecentDiaryLimit: recentDiaryLimit,
 			MaxChars:         contextMax,
@@ -73,14 +73,14 @@ func normalizeRecentChatLimit(cfg config.LLMConfig) int {
 	if cfg.ContextAssembly.RecentChatLimit > 0 {
 		return cfg.ContextAssembly.RecentChatLimit
 	}
-	return contextassemble.DefaultRecentChatLimit
+	return ctxasm.DefaultRecentChatLimit
 }
 
 func normalizeRecentDiaryLimit(cfg config.LLMConfig) int {
 	if cfg.ContextAssembly.RecentDiaryLimit > 0 {
 		return cfg.ContextAssembly.RecentDiaryLimit
 	}
-	return contextassemble.DefaultRecentDiaryLimit
+	return ctxasm.DefaultRecentDiaryLimit
 }
 
 func normalizeMCPServers(servers []config.MCPServerConfig) []mcp.ServerConfig {

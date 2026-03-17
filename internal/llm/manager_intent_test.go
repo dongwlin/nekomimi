@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 )
 
@@ -182,7 +182,7 @@ func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
 		t.Fatal("append user event failed")
 	}
 
-	ic := &contextassemble.ImmersiveContext{
+	ic := &ctxasm.ImmersiveContext{
 		MessagesCount:      4,
 		Participants:       []string{"alice", "bob"},
 		MentionsToBot:      2,
@@ -259,9 +259,9 @@ func TestDecideImmersiveIntent_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 	mu.Unlock()
 
 	for _, blockName := range []string{
-		contextassemble.BlockImmersiveState,
-		contextassemble.BlockImmersiveBatch,
-		contextassemble.BlockImmersiveSignals,
+		ctxasm.BlockImmersiveState,
+		ctxasm.BlockImmersiveBatch,
+		ctxasm.BlockImmersiveSignals,
 	} {
 		if strings.Contains(allText, blockName) {
 			t.Fatalf("%s should not be present when ImmersiveContext is nil:\n%s", blockName, allText)

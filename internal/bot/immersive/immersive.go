@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/llm"
 	"github.com/dongwlin/nekomimi/internal/metrics"
 	"github.com/rs/zerolog/log"
@@ -570,7 +570,7 @@ func (b *ImmersiveBuffer) handleReply(
 	sessionKey string,
 	input string,
 	extraPrompt string,
-	immersiveCtx *contextassemble.ImmersiveContext,
+	immersiveCtx *ctxasm.ImmersiveContext,
 	recordReply func(reply, reason string, delivered bool),
 ) error {
 	onReplyEvent := func(event llm.StreamEvent) error {

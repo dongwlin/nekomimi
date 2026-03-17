@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 )
 
 func TestBuildPipelineMessages_NilImmersiveContext_NoSignalsBlock(t *testing.T) {
@@ -15,7 +15,7 @@ func TestBuildPipelineMessages_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 	messages, _, err := manager.buildPipelineMessages(
 		context.Background(),
 		nil, "",
-		contextassemble.Meta{},
+		ctxasm.Meta{},
 		"hello world",
 		nil,
 	)
@@ -27,9 +27,9 @@ func TestBuildPipelineMessages_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 	}
 	content := messages[0].Content
 	for _, blockName := range []string{
-		contextassemble.BlockImmersiveState,
-		contextassemble.BlockImmersiveBatch,
-		contextassemble.BlockImmersiveSignals,
+		ctxasm.BlockImmersiveState,
+		ctxasm.BlockImmersiveBatch,
+		ctxasm.BlockImmersiveSignals,
 	} {
 		if strings.Contains(content, blockName) {
 			t.Fatalf("%s block should not be present when ImmersiveContext is nil", blockName)
@@ -40,7 +40,7 @@ func TestBuildPipelineMessages_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 func TestBuildPipelineMessages_WithImmersiveContext_UsesImmersiveBlocksWithoutPersistentContext(t *testing.T) {
 	manager := newMinimalManagerForPipelineTest(t)
 
-	ic := &contextassemble.ImmersiveContext{
+	ic := &ctxasm.ImmersiveContext{
 		MessagesCount:    5,
 		Participants:     []string{"alice", "bob"},
 		MentionsToBot:    2,
@@ -55,7 +55,7 @@ func TestBuildPipelineMessages_WithImmersiveContext_UsesImmersiveBlocksWithoutPe
 	messages, _, err := manager.buildPipelineMessages(
 		context.Background(),
 		nil, "",
-		contextassemble.Meta{},
+		ctxasm.Meta{},
 		"hello world",
 		ic,
 	)
@@ -83,7 +83,7 @@ func TestBuildPipelineMessages_WithAssembler_ImmersiveContextAppended(t *testing
 	sessionKey := "test-session-ic"
 	manager.AppendTurn(sessionKey, "neko current batch", "alice", "ok")
 
-	ic := &contextassemble.ImmersiveContext{
+	ic := &ctxasm.ImmersiveContext{
 		MessagesCount:    3,
 		Participants:     []string{"alice"},
 		MentionsToBot:    1,
@@ -100,7 +100,7 @@ func TestBuildPipelineMessages_WithAssembler_ImmersiveContextAppended(t *testing
 		context.Background(),
 		state.assembler,
 		sessionKey,
-		contextassemble.Meta{},
+		ctxasm.Meta{},
 		"fallback content",
 		ic,
 	)
@@ -113,9 +113,9 @@ func TestBuildPipelineMessages_WithAssembler_ImmersiveContextAppended(t *testing
 	content := messages[0].Content
 
 	for _, blockName := range []string{
-		contextassemble.BlockImmersiveState,
-		contextassemble.BlockImmersiveBatch,
-		contextassemble.BlockImmersiveSignals,
+		ctxasm.BlockImmersiveState,
+		ctxasm.BlockImmersiveBatch,
+		ctxasm.BlockImmersiveSignals,
 	} {
 		if !strings.Contains(content, "["+blockName+"]") {
 			t.Fatalf("%s block missing from assembled content:\n%s", blockName, content)
@@ -146,7 +146,7 @@ func TestBuildPipelineMessages_WithAssembler_NilImmersiveContext_NoSignals(t *te
 		context.Background(),
 		state.assembler,
 		sessionKey,
-		contextassemble.Meta{},
+		ctxasm.Meta{},
 		"fallback content",
 		nil,
 	)
@@ -158,9 +158,9 @@ func TestBuildPipelineMessages_WithAssembler_NilImmersiveContext_NoSignals(t *te
 	}
 	content := messages[0].Content
 	for _, blockName := range []string{
-		contextassemble.BlockImmersiveState,
-		contextassemble.BlockImmersiveBatch,
-		contextassemble.BlockImmersiveSignals,
+		ctxasm.BlockImmersiveState,
+		ctxasm.BlockImmersiveBatch,
+		ctxasm.BlockImmersiveSignals,
 	} {
 		if strings.Contains(content, "["+blockName+"]") {
 			t.Fatalf("%s block should not be present when ImmersiveContext is nil:\n%s", blockName, content)
@@ -171,7 +171,7 @@ func TestBuildPipelineMessages_WithAssembler_NilImmersiveContext_NoSignals(t *te
 func TestBuildPipelineMessages_WithSystemEventSummary_AppendsEventsBlock(t *testing.T) {
 	manager := newMinimalManagerForPipelineTest(t)
 
-	ic := &contextassemble.ImmersiveContext{
+	ic := &ctxasm.ImmersiveContext{
 		MessagesCount:      1,
 		Participants:       []string{"alice"},
 		SystemEventSummary: "[kind=poke_notice]: actor_name=alice direction=inbound",
@@ -184,7 +184,7 @@ func TestBuildPipelineMessages_WithSystemEventSummary_AppendsEventsBlock(t *test
 	messages, _, err := manager.buildPipelineMessages(
 		context.Background(),
 		nil, "",
-		contextassemble.Meta{},
+		ctxasm.Meta{},
 		"hello world",
 		ic,
 	)

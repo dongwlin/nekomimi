@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 	"github.com/dongwlin/nekomimi/internal/llm/model"
@@ -25,15 +25,15 @@ type pipelineRequest struct {
 	AppendTurn       bool
 	DisableTools     bool
 	RequestOptions   llmclient.RequestOptions
-	Meta             contextassemble.Meta
-	ImmersiveContext *contextassemble.ImmersiveContext
+	Meta             ctxasm.Meta
+	ImmersiveContext *ctxasm.ImmersiveContext
 }
 
 type pipelineState struct {
 	model            string
 	systemPrompt     string
 	assistantSpeaker string
-	assembler        *contextassemble.Assembler
+	assembler        *ctxasm.Assembler
 	router           tools.Router
 	toolsEnabled     bool
 	toolLoopMaxStep  int
@@ -302,7 +302,7 @@ func (m *Manager) snapshotPipelineState() pipelineState {
 	}
 }
 
-func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contextassemble.Assembler, sessionKey string, meta contextassemble.Meta, fallbackContent string, immersiveCtx *contextassemble.ImmersiveContext) ([]model.Message, bool, error) {
+func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *ctxasm.Assembler, sessionKey string, meta ctxasm.Meta, fallbackContent string, immersiveCtx *ctxasm.ImmersiveContext) ([]model.Message, bool, error) {
 	session := strings.TrimSpace(sessionKey)
 	blocks, compressed, err := m.buildPipelineBlocks(ctx, assembler, session, meta, immersiveCtx)
 	if err != nil {
@@ -326,11 +326,11 @@ func (m *Manager) buildPipelineMessages(ctx context.Context, assembler *contexta
 	return []model.Message{{Role: "user", Content: content}}, compressed, nil
 }
 
-func (m *Manager) buildPipelineBlocks(ctx context.Context, assembler *contextassemble.Assembler, sessionKey string, meta contextassemble.Meta, immersiveCtx *contextassemble.ImmersiveContext) ([]contextassemble.Block, bool, error) {
-	blocks := make([]contextassemble.Block, 0, 6)
+func (m *Manager) buildPipelineBlocks(ctx context.Context, assembler *ctxasm.Assembler, sessionKey string, meta ctxasm.Meta, immersiveCtx *ctxasm.ImmersiveContext) ([]ctxasm.Block, bool, error) {
+	blocks := make([]ctxasm.Block, 0, 6)
 	compressed := false
 	if assembler != nil && sessionKey != "" {
-		assembled, err := assembler.Assemble(ctx, contextassemble.Request{
+		assembled, err := assembler.Assemble(ctx, ctxasm.Request{
 			SessionKey: sessionKey,
 			Meta:       meta,
 		})
@@ -344,11 +344,11 @@ func (m *Manager) buildPipelineBlocks(ctx context.Context, assembler *contextass
 		}
 		blocks = append(blocks, assembled.Blocks...)
 	}
-	blocks = append(blocks, contextassemble.RenderImmersiveBlocks(immersiveCtx)...)
+	blocks = append(blocks, ctxasm.RenderImmersiveBlocks(immersiveCtx)...)
 	return blocks, compressed, nil
 }
 
-func renderAssembledBlocks(blocks []contextassemble.Block) string {
+func renderAssembledBlocks(blocks []ctxasm.Block) string {
 	if len(blocks) == 0 {
 		return ""
 	}
@@ -446,8 +446,8 @@ func mapToolLoopStreamEvent(seq int64, step int, message toolloop.StreamMessage)
 	return event
 }
 
-func buildPipelineMeta(sessionKey, assistantSpeaker string, override contextassemble.Meta) contextassemble.Meta {
-	meta := contextassemble.Meta{
+func buildPipelineMeta(sessionKey, assistantSpeaker string, override ctxasm.Meta) ctxasm.Meta {
+	meta := ctxasm.Meta{
 		Now:               time.Now().Format("2006-01-02 15:04:05"),
 		AssistantIdentity: strings.TrimSpace(assistantSpeaker),
 		BotConfigNames:    extractBotConfigNames(assistantSpeaker),

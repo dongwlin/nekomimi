@@ -1,4 +1,4 @@
-package contextassemble
+package ctxasm
 
 import (
 	"strconv"

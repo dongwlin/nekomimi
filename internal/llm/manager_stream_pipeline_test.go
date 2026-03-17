@@ -13,7 +13,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 )
 
 func TestReplyStream_ToolsDisabled_UsesProviderStreaming(t *testing.T) {
@@ -144,7 +144,7 @@ func TestReplyStreamWithExtraPromptAllowTools_ImmersiveContextUsesSingleBlockLay
 		t.Fatal("append user event failed")
 	}
 
-	ic := &contextassemble.ImmersiveContext{
+	ic := &ctxasm.ImmersiveContext{
 		MessagesCount:    1,
 		Participants:     []string{"alice"},
 		MentionsToBot:    1,
@@ -167,9 +167,9 @@ func TestReplyStreamWithExtraPromptAllowTools_ImmersiveContextUsesSingleBlockLay
 
 	allText := strings.Join(capturedInputs, "\n")
 	for _, blockName := range []string{
-		contextassemble.BlockImmersiveState,
-		contextassemble.BlockImmersiveBatch,
-		contextassemble.BlockImmersiveSignals,
+		ctxasm.BlockImmersiveState,
+		ctxasm.BlockImmersiveBatch,
+		ctxasm.BlockImmersiveSignals,
 	} {
 		if !strings.Contains(allText, "["+blockName+"]") {
 			t.Fatalf("%s block missing from reply prompt:\n%s", blockName, allText)
@@ -209,7 +209,7 @@ func TestReplyStreamWithExtraPromptAllowTools_DisablesReasoningAndThinking(t *te
 
 	reply, err := manager.ReplyStreamWithExtraPromptAllowTools(context.Background(), "hello", "session-extra-no-reasoning", "alice", "extra", func(event StreamEvent) error {
 		return nil
-	}, &contextassemble.ImmersiveContext{MaxReplySegments: 2})
+	}, &ctxasm.ImmersiveContext{MaxReplySegments: 2})
 	if err != nil {
 		t.Fatalf("immersive reply stream failed: %v", err)
 	}

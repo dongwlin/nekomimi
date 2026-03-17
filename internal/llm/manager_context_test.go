@@ -9,7 +9,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
 	"github.com/dongwlin/nekomimi/internal/llm/token"
 )
@@ -34,7 +34,7 @@ func TestSessionContextUsage_WithLimit(t *testing.T) {
 	}
 
 	usage := m.SessionContextUsage(sessionKey)
-	assembled, err := m.contextAssembler.Assemble(context.Background(), contextassemble.Request{
+	assembled, err := m.contextAssembler.Assemble(context.Background(), ctxasm.Request{
 		SessionKey: sessionKey,
 	})
 	if err != nil {
@@ -164,15 +164,15 @@ func TestAppendHistory_AssistantEntryHasIdentityLabel(t *testing.T) {
 	sessionKey := "group:assistant-speaker"
 	m.appendHistory(sessionKey, "hello", "world")
 
-	assembled, err := m.contextAssembler.Assemble(context.Background(), contextassemble.Request{
+	assembled, err := m.contextAssembler.Assemble(context.Background(), ctxasm.Request{
 		SessionKey: sessionKey,
 	})
 	if err != nil {
 		t.Fatalf("assemble failed: %v", err)
 	}
-	recentChat, ok := assembled.Block(contextassemble.BlockRecentChat)
+	recentChat, ok := assembled.Block(ctxasm.BlockRecentChat)
 	if !ok {
-		t.Fatalf("missing %s block", contextassemble.BlockRecentChat)
+		t.Fatalf("missing %s block", ctxasm.BlockRecentChat)
 	}
 	if !strings.Contains(recentChat.Content, "[role=assistant] [name=nekomimi;id=10000;time=") {
 		t.Fatalf("assistant identity label missing in recent_chat: %q", recentChat.Content)
@@ -287,15 +287,15 @@ func TestAssemble_OrderStableWhenEventTimeSkews(t *testing.T) {
 		t.Fatal("append second assistant event failed")
 	}
 
-	assembled, err := m.contextAssembler.Assemble(context.Background(), contextassemble.Request{
+	assembled, err := m.contextAssembler.Assemble(context.Background(), ctxasm.Request{
 		SessionKey: sessionKey,
 	})
 	if err != nil {
 		t.Fatalf("assemble failed: %v", err)
 	}
-	recentChat, ok := assembled.Block(contextassemble.BlockRecentChat)
+	recentChat, ok := assembled.Block(ctxasm.BlockRecentChat)
 	if !ok {
-		t.Fatalf("missing %s block", contextassemble.BlockRecentChat)
+		t.Fatalf("missing %s block", ctxasm.BlockRecentChat)
 	}
 	firstPos := strings.Index(recentChat.Content, "first-message")
 	secondPos := strings.Index(recentChat.Content, "second-message")

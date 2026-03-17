@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 )
 
 const privateSessionPrefix = "private:"
@@ -22,7 +22,7 @@ func shouldBypassControlIntent(sessionKey string, meta queueMeta, gate speakGate
 	return meta.QuestionsCount > 0 || meta.MentionsToBot > 0 || meta.DirectedQuestions > 0
 }
 
-func buildImmersiveReplyPrompt(immersiveCtx *contextassemble.ImmersiveContext) string {
+func buildImmersiveReplyPrompt(immersiveCtx *ctxasm.ImmersiveContext) string {
 	maxSegments := 1
 	replyTier := "brief"
 	if immersiveCtx != nil {

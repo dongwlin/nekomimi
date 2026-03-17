@@ -6,7 +6,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
-	"github.com/dongwlin/nekomimi/internal/contextassemble"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 )
@@ -55,7 +55,7 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	if m.diaryStore == nil {
 		m.diaryStore = diary.NewMemoryStore()
 	}
-	m.contextAssembler = contextassemble.New(m.chatStore, m.diaryStore, runtimeCfg.assemblyOptions)
+	m.contextAssembler = ctxasm.New(m.chatStore, m.diaryStore, runtimeCfg.assemblyOptions)
 	m.toolRouter = buildToolRouter(m.chatStore, m.diaryStore, runtimeCfg)
 	m.mu.Unlock()
 
