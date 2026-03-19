@@ -174,21 +174,7 @@ func (b *ImmersiveBuffer) tryFollowup(sessionKey string) {
 			state.followupTimer.Stop()
 			state.followupTimer = nil
 		}
-		pending := len(state.nextBatch) > 0
-		if pending {
-			if state.batchStartTime.IsZero() {
-				state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
-			}
-			decision := b.computeFlushDecision(sessionKey, state, time.Now())
-			state.recordSchedulerDecisionLocked(decision, time.Now())
-			if state.timer != nil {
-				state.timer.Stop()
-				state.timer = nil
-			}
-			state.timer = time.AfterFunc(decision.Delay, func() {
-				b.flush(sessionKey)
-			})
-		}
+		b.reschedulePendingBatchLocked(sessionKey, state, time.Now())
 		state.mu.Unlock()
 	}()
 
@@ -226,23 +212,13 @@ func (b *ImmersiveBuffer) tryFollowup(sessionKey string) {
 		Msg("immersive followup triggered")
 
 	recordReply := func(reply, reason string, delivered bool) {
-		trimmed := strings.TrimSpace(reply)
+		trimmed := b.applyReplyBookkeeping(sessionKey, state, 0, reply, delivered)
 		if trimmed == "" {
 			return
 		}
-		b.recordAssistantUtterance(sessionKey, trimmed)
-		_ = b.llm.AppendAssistantEvent(sessionKey, trimmed, 0)
-		if delivered {
-			b.noteAssistantDelivered(sessionKey, trimmed)
-		}
-		if state := b.lookupSession(sessionKey); state != nil {
-			state.mu.Lock()
-			state.recordFinalActionLocked("reply", "followup_reply", "followup reply delivered", trimmed, time.Now())
-			if !delivered {
-				state.clearStrongCallPendingLocked(time.Now())
-			}
-			state.mu.Unlock()
-		}
+		state.mu.Lock()
+		state.recordFinalActionLocked("reply", reason, "followup reply delivered", trimmed, time.Now())
+		state.mu.Unlock()
 	}
 
 	replyCtx, cancelReply := context.WithCancel(context.Background())

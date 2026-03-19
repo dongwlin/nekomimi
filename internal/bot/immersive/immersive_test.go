@@ -2,7 +2,9 @@ package immersive
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/config"
+	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/llm"
 	llmintent "github.com/dongwlin/nekomimi/internal/llm/intent"
 	logpkg "github.com/rs/zerolog/log"
@@ -683,6 +686,479 @@ func TestClear_ResetsRuntimeBuffers(t *testing.T) {
 	if state.sendFn != nil {
 		t.Fatal("expected sendFn reset to nil")
 	}
+}
+
+func TestFlush_InFlightReschedulesPendingBatch(t *testing.T) {
+	buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, "http://localhost/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0, queuedMessage{
+		text:    "路过说一句",
+		speaker: "name=bob",
+		ts:      time.Now(),
+		chars:   len([]rune("路过说一句")),
+	})
+
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	state.inFlight = true
+	state.mu.Unlock()
+
+	buffer.flush(sessionKey)
+
+	snapshot := buffer.DebugSnapshot(sessionKey)
+	if snapshot.LastFinalAction != "early_drop" {
+		t.Fatalf("expected early_drop final action, got %q", snapshot.LastFinalAction)
+	}
+	if snapshot.LastFinalReasonCode != "inflight" {
+		t.Fatalf("expected inflight reason code, got %q", snapshot.LastFinalReasonCode)
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.inFlight {
+		t.Fatal("expected inFlight to remain true")
+	}
+	if len(state.nextBatch) != 1 {
+		t.Fatalf("expected batch to remain queued, got %d", len(state.nextBatch))
+	}
+	if state.timer == nil {
+		t.Fatal("expected retry timer to be scheduled")
+	}
+	state.timer.Stop()
+	state.timer = nil
+	state.inFlight = false
+}
+
+func TestFlush_EmptyQueueEarlyDrop(t *testing.T) {
+	buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, "http://localhost/responses", config.ImmersiveConfig{})
+
+	buffer.flush(sessionKey)
+
+	snapshot := buffer.DebugSnapshot(sessionKey)
+	if snapshot.LastFinalAction != "early_drop" {
+		t.Fatalf("expected early_drop final action, got %q", snapshot.LastFinalAction)
+	}
+	if snapshot.LastFinalReasonCode != "empty_queue" {
+		t.Fatalf("expected empty_queue reason code, got %q", snapshot.LastFinalReasonCode)
+	}
+}
+
+func TestFlush_DisabledEarlyDropClearsQueue(t *testing.T) {
+	t.Run("llm disabled", func(t *testing.T) {
+		buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, "http://localhost/responses", config.ImmersiveConfig{})
+		seedQueueForFlushTest(buffer, sessionKey, 0)
+
+		state := buffer.session(sessionKey)
+		state.mu.Lock()
+		state.noteStrongCallPendingLocked(time.Now())
+		state.mu.Unlock()
+
+		manager.SetEnabled(false)
+		buffer.flush(sessionKey)
+
+		snapshot := buffer.DebugSnapshot(sessionKey)
+		if snapshot.LastFinalAction != "early_drop" {
+			t.Fatalf("expected early_drop final action, got %q", snapshot.LastFinalAction)
+		}
+		if snapshot.LastFinalReasonCode != "llm_disabled" {
+			t.Fatalf("expected llm_disabled reason code, got %q", snapshot.LastFinalReasonCode)
+		}
+
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if len(state.nextBatch) != 0 {
+			t.Fatalf("expected queue cleared, got %d", len(state.nextBatch))
+		}
+		if state.strongCallPending {
+			t.Fatal("expected strong call pending to be cleared")
+		}
+	})
+
+	t.Run("immersive disabled", func(t *testing.T) {
+		buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, "http://localhost/responses", config.ImmersiveConfig{})
+		seedQueueForFlushTest(buffer, sessionKey, 0)
+
+		state := buffer.session(sessionKey)
+		state.mu.Lock()
+		state.noteStrongCallPendingLocked(time.Now())
+		state.mu.Unlock()
+
+		manager.SetImmersive(sessionKey, false)
+		buffer.flush(sessionKey)
+
+		snapshot := buffer.DebugSnapshot(sessionKey)
+		if snapshot.LastFinalAction != "early_drop" {
+			t.Fatalf("expected early_drop final action, got %q", snapshot.LastFinalAction)
+		}
+		if snapshot.LastFinalReasonCode != "immersive_disabled" {
+			t.Fatalf("expected immersive_disabled reason code, got %q", snapshot.LastFinalReasonCode)
+		}
+
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if len(state.nextBatch) != 0 {
+			t.Fatalf("expected queue cleared, got %d", len(state.nextBatch))
+		}
+		if state.strongCallPending {
+			t.Fatal("expected strong call pending to be cleared")
+		}
+	})
+}
+
+func TestFlush_IntentSkipDoesNotGenerateReply(t *testing.T) {
+	var callCount int64
+	intent := mustMarshalJSON(t, map[string]any{
+		"action": "skip",
+		"reason": "low_value",
+	})
+	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
+		atomic.StoreInt64(&callCount, call)
+		return scriptedResponse{JSONBody: responsesOutputTextJSON(intent)}
+	})
+	defer server.Close()
+
+	buffer, manager, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+	buffer.flush(sessionKey)
+
+	if atomic.LoadInt64(&callCount) != 1 {
+		t.Fatalf("expected only one control call, got %d", atomic.LoadInt64(&callCount))
+	}
+
+	entries := mustListChatEvents(t, manager, sessionKey, 20)
+	for _, entry := range entries {
+		if entry.Role == chatlog.RoleAssistant {
+			t.Fatalf("did not expect assistant reply on skip, entries=%+v", entries)
+		}
+	}
+
+	snapshot := buffer.DebugSnapshot(sessionKey)
+	if snapshot.LastFinalAction != "skip" {
+		t.Fatalf("expected final action skip, got %q", snapshot.LastFinalAction)
+	}
+}
+
+func TestFlush_ReplyErrorDoesNotPersistAssistant(t *testing.T) {
+	sessionKey := "group:reply-error"
+	service := newOverrideLLMServiceForFlushTest(t, sessionKey)
+	service.decideImmersiveIntentFn = func(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *ctxasm.ImmersiveContext) (llmintent.ControlIntent, error) {
+		return llmintent.ControlIntent{Action: llmintent.ActionReply}, nil
+	}
+	service.replyStreamWithExtraPromptAllowToolsFn = func(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent llm.StreamEventHandler, immersiveCtx *ctxasm.ImmersiveContext) (string, error) {
+		return "", errors.New("boom")
+	}
+
+	buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, service, []string{"neko"})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+	buffer.flush(sessionKey)
+
+	entries := mustListChatEvents(t, service.Manager, sessionKey, 20)
+	userCount := 0
+	for _, entry := range entries {
+		switch entry.Role {
+		case chatlog.RoleUser:
+			userCount++
+		case chatlog.RoleAssistant:
+			t.Fatalf("unexpected assistant entry after reply error: %+v", entry)
+		}
+	}
+	if userCount != 1 {
+		t.Fatalf("expected one persisted user entry, got %d", userCount)
+	}
+
+	snapshot := buffer.DebugSnapshot(sessionKey)
+	if snapshot.LastFinalAction != "early_drop" {
+		t.Fatalf("expected early_drop final action, got %q", snapshot.LastFinalAction)
+	}
+	if snapshot.LastFinalReasonCode != "reply_error" {
+		t.Fatalf("expected reply_error reason code, got %q", snapshot.LastFinalReasonCode)
+	}
+}
+
+func TestFlush_InvalidControlFallbacks(t *testing.T) {
+	t.Run("wait round limit forces skip", func(t *testing.T) {
+		sessionKey := "group:wait-round-limit"
+		service := newOverrideLLMServiceForFlushTest(t, sessionKey)
+		service.decideImmersiveIntentFn = func(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *ctxasm.ImmersiveContext) (llmintent.ControlIntent, error) {
+			return llmintent.ControlIntent{
+				Action: llmintent.ActionWait,
+				WaitMS: 120,
+				Reason: "still typing",
+			}, nil
+		}
+
+		buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, service, []string{"neko"})
+		seedQueueForFlushTest(buffer, sessionKey, maxImmersiveWaitRounds)
+		buffer.flush(sessionKey)
+
+		snapshot := buffer.DebugSnapshot(sessionKey)
+		if snapshot.LastControlAction != string(controlActionSkip) {
+			t.Fatalf("expected control action skip, got %q", snapshot.LastControlAction)
+		}
+		if snapshot.LastControlReasonCode != "wait_round_limit_skip" {
+			t.Fatalf("expected wait_round_limit_skip reason code, got %q", snapshot.LastControlReasonCode)
+		}
+		if snapshot.LastFinalAction != "skip" {
+			t.Fatalf("expected final action skip, got %q", snapshot.LastFinalAction)
+		}
+	})
+
+	t.Run("empty action falls back to skip", func(t *testing.T) {
+		sessionKey := "group:empty-action"
+		service := newOverrideLLMServiceForFlushTest(t, sessionKey)
+		service.decideImmersiveIntentFn = func(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *ctxasm.ImmersiveContext) (llmintent.ControlIntent, error) {
+			return llmintent.ControlIntent{}, nil
+		}
+
+		buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, service, []string{"neko"})
+		seedQueueForFlushTest(buffer, sessionKey, 0)
+		buffer.flush(sessionKey)
+
+		snapshot := buffer.DebugSnapshot(sessionKey)
+		if snapshot.LastControlAction != string(controlActionSkip) {
+			t.Fatalf("expected control action skip, got %q", snapshot.LastControlAction)
+		}
+		if snapshot.LastControlReasonCode != "empty_action_skip" {
+			t.Fatalf("expected empty_action_skip reason code, got %q", snapshot.LastControlReasonCode)
+		}
+		if snapshot.LastFinalAction != "skip" {
+			t.Fatalf("expected final action skip, got %q", snapshot.LastFinalAction)
+		}
+	})
+
+	t.Run("missing reason falls back to skip", func(t *testing.T) {
+		sessionKey := "group:missing-reason"
+		service := newOverrideLLMServiceForFlushTest(t, sessionKey)
+		service.decideImmersiveIntentFn = func(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *ctxasm.ImmersiveContext) (llmintent.ControlIntent, error) {
+			return llmintent.ControlIntent{
+				Action: llmintent.ActionWait,
+				WaitMS: 120,
+			}, nil
+		}
+
+		buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, service, []string{"neko"})
+		seedQueueForFlushTest(buffer, sessionKey, 0)
+		buffer.flush(sessionKey)
+
+		snapshot := buffer.DebugSnapshot(sessionKey)
+		if snapshot.LastControlAction != string(controlActionSkip) {
+			t.Fatalf("expected control action skip, got %q", snapshot.LastControlAction)
+		}
+		if snapshot.LastControlReasonCode != "missing_reason_fallback" {
+			t.Fatalf("expected missing_reason_fallback reason code, got %q", snapshot.LastControlReasonCode)
+		}
+		if snapshot.LastFinalAction != "skip" {
+			t.Fatalf("expected final action skip, got %q", snapshot.LastFinalAction)
+		}
+	})
+}
+
+func TestFlush_QuestionReplySchedulesFollowup(t *testing.T) {
+	control := mustMarshalJSON(t, map[string]any{
+		"action": "reply",
+	})
+	server := newScriptedResponsesServer(t, func(call int64, stream bool, body map[string]any) scriptedResponse {
+		if !stream {
+			return scriptedResponse{JSONBody: responsesOutputTextJSON(control)}
+		}
+		return scriptedResponse{
+			SSEEvents: []string{
+				mustResponsesDeltaEventRaw(t, "你觉得呢？"),
+				`{"type":"response.completed"}`,
+			},
+		}
+	})
+	defer server.Close()
+
+	buffer, _, sessionKey := newImmersiveBufferForFlushTest(t, server.URL+"/responses", config.ImmersiveConfig{})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	state.sendFn = func(payload interface{}) {}
+	state.mu.Unlock()
+
+	buffer.flush(sessionKey)
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	snapshot := state.snapshotBehaviorLocked(time.Now())
+	if snapshot.Mode != ModeWaitingUser {
+		t.Fatalf("expected waiting_user mode, got %q", snapshot.Mode)
+	}
+	if !snapshot.PendingQuestion {
+		t.Fatal("expected pending question after question reply")
+	}
+	if snapshot.FollowupBudget <= 0 {
+		t.Fatalf("expected positive followup budget, got %d", snapshot.FollowupBudget)
+	}
+	if state.followupTimer == nil {
+		t.Fatal("expected followup timer to be scheduled")
+	}
+	state.followupTimer.Stop()
+	state.followupTimer = nil
+}
+
+func TestTryFollowup_SuccessPersistsAssistantAndReschedulesPendingBatch(t *testing.T) {
+	sessionKey := "group:followup-success"
+	service := newOverrideLLMServiceForFlushTest(t, sessionKey)
+	service.replyStreamWithExtraPromptAllowToolsFn = func(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent llm.StreamEventHandler, immersiveCtx *ctxasm.ImmersiveContext) (string, error) {
+		return "我先不打扰啦", nil
+	}
+	buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, service, []string{"neko"})
+
+	pending := queuedMessage{
+		text:    "那我晚点再说",
+		speaker: "name=bob",
+		ts:      time.Now(),
+		chars:   len([]rune("那我晚点再说")),
+	}
+	var delivered []string
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	state.mode = ModeWaitingUser
+	state.focusSpeaker = "name=alice"
+	state.pendingQuestion = true
+	state.followupBudget = 1
+	state.energy = 60
+	state.energyTarget = 60
+	state.lastBotReplyAt = time.Now().Add(-10 * time.Second)
+	state.sendFn = func(payload interface{}) {
+		delivered = append(delivered, fmt.Sprint(payload))
+	}
+	state.nextBatch = []queuedMessage{pending}
+	state.nextBatchChars = pending.chars
+	state.batchStartTime = time.Time{}
+	state.mu.Unlock()
+
+	buffer.tryFollowup(sessionKey)
+
+	if len(delivered) != 1 {
+		t.Fatalf("expected one outbound followup send, got %d (%v)", len(delivered), delivered)
+	}
+	if delivered[0] != "我先不打扰啦" {
+		t.Fatalf("expected followup payload %q, got %q", "我先不打扰啦", delivered[0])
+	}
+
+	entries := mustListChatEvents(t, service.Manager, sessionKey, 20)
+	foundAssistant := false
+	for _, entry := range entries {
+		if entry.Role != chatlog.RoleAssistant {
+			continue
+		}
+		if strings.Contains(entry.Content, "我先不打扰啦") {
+			foundAssistant = true
+			break
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected followup assistant reply in history, entries=%+v", entries)
+	}
+
+	snapshot := buffer.DebugSnapshot(sessionKey)
+	if snapshot.LastFinalAction != "reply" {
+		t.Fatalf("expected final action reply, got %q", snapshot.LastFinalAction)
+	}
+	if snapshot.LastFinalReasonCode != "followup_reply" {
+		t.Fatalf("expected followup_reply reason code, got %q", snapshot.LastFinalReasonCode)
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.inFlight {
+		t.Fatal("expected inFlight to be cleared after followup")
+	}
+	if len(state.nextBatch) != 1 {
+		t.Fatalf("expected pending batch to remain queued, got %d", len(state.nextBatch))
+	}
+	if state.batchStartTime.IsZero() {
+		t.Fatal("expected pending batch start time to be restored")
+	}
+	if state.timer == nil {
+		t.Fatal("expected pending batch flush timer to be scheduled")
+	}
+	state.timer.Stop()
+	state.timer = nil
+}
+
+func TestFlush_ReplyCompletionReschedulesPendingBatch(t *testing.T) {
+	sessionKey := "group:flush-reply-reschedule"
+	service := newOverrideLLMServiceForFlushTest(t, sessionKey)
+	service.decideImmersiveIntentFn = func(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *ctxasm.ImmersiveContext) (llmintent.ControlIntent, error) {
+		return llmintent.ControlIntent{Action: llmintent.ActionReply}, nil
+	}
+	service.replyStreamWithExtraPromptAllowToolsFn = func(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent llm.StreamEventHandler, immersiveCtx *ctxasm.ImmersiveContext) (string, error) {
+		return "ok", nil
+	}
+	buffer := NewImmersiveBuffer(config.ImmersiveConfig{}, service, []string{"neko"})
+	seedQueueForFlushTest(buffer, sessionKey, 0)
+
+	pending := queuedMessage{
+		text:    "插一句",
+		speaker: "name=bob",
+		ts:      time.Now(),
+		chars:   len([]rune("插一句")),
+	}
+	state := buffer.session(sessionKey)
+	state.mu.Lock()
+	state.sendFn = func(payload interface{}) {
+		state.mu.Lock()
+		state.nextBatch = append(state.nextBatch, pending)
+		state.nextBatchChars += pending.chars
+		state.mu.Unlock()
+	}
+	state.mu.Unlock()
+
+	buffer.flush(sessionKey)
+
+	snapshot := buffer.DebugSnapshot(sessionKey)
+	if snapshot.LastFinalAction != "reply" {
+		t.Fatalf("expected final action reply, got %q", snapshot.LastFinalAction)
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.nextBatch) != 1 {
+		t.Fatalf("expected one pending message after reply, got %d", len(state.nextBatch))
+	}
+	if state.batchStartTime.IsZero() {
+		t.Fatal("expected pending batch start time to be restored")
+	}
+	if state.timer == nil {
+		t.Fatal("expected follow-up flush timer to be scheduled")
+	}
+	state.timer.Stop()
+	state.timer = nil
+}
+
+type overrideLLMService struct {
+	*llm.Manager
+	decideImmersiveIntentFn                func(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *ctxasm.ImmersiveContext) (llmintent.ControlIntent, error)
+	replyStreamWithExtraPromptAllowToolsFn func(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent llm.StreamEventHandler, immersiveCtx *ctxasm.ImmersiveContext) (string, error)
+}
+
+func newOverrideLLMServiceForFlushTest(t *testing.T, sessionKey string) *overrideLLMService {
+	t.Helper()
+	manager := llm.NewManager(config.LLMConfig{
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		Key:     "test-key",
+	}, llm.ManagerDeps{})
+	manager.SetImmersive(sessionKey, true)
+	return &overrideLLMService{Manager: manager}
+}
+
+func (s *overrideLLMService) DecideImmersiveIntent(ctx context.Context, userInput, sessionKey, speaker string, immersiveCtx *ctxasm.ImmersiveContext) (llmintent.ControlIntent, error) {
+	if s.decideImmersiveIntentFn != nil {
+		return s.decideImmersiveIntentFn(ctx, userInput, sessionKey, speaker, immersiveCtx)
+	}
+	return s.Manager.DecideImmersiveIntent(ctx, userInput, sessionKey, speaker, immersiveCtx)
+}
+
+func (s *overrideLLMService) ReplyStreamWithExtraPromptAllowTools(ctx context.Context, userInput, sessionKey, speaker, extraPrompt string, onEvent llm.StreamEventHandler, immersiveCtx *ctxasm.ImmersiveContext) (string, error) {
+	if s.replyStreamWithExtraPromptAllowToolsFn != nil {
+		return s.replyStreamWithExtraPromptAllowToolsFn(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, immersiveCtx)
+	}
+	return s.Manager.ReplyStreamWithExtraPromptAllowTools(ctx, userInput, sessionKey, speaker, extraPrompt, onEvent, immersiveCtx)
 }
 
 type scriptedResponse struct {

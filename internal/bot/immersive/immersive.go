@@ -183,11 +183,99 @@ func (b *ImmersiveBuffer) Clear(sessionKey string) {
 	log.Info().Str("session", sessionKey).Msg("immersive session buffer cleared")
 }
 
+type flushBatch struct {
+	processing           []queuedMessage
+	processingBatchStart time.Time
+	waitRounds           int
+	sendFn               SendFunc
+}
+
+type preparedFlushContext struct {
+	evaluatedAt  time.Time
+	behavior     behaviorSnapshot
+	gate         speakGateDecision
+	gateMeta     queueMeta
+	immersiveCtx *ctxasm.ImmersiveContext
+	replyPrompt  string
+}
+
+type resolvedControlAction struct {
+	action     controlAction
+	waitMS     int
+	reason     string
+	reasonCode string
+	err        error
+}
+
 // flush processes queued messages through a two-phase flow:
 // 1) control intent decision (skip/wait/reply), then
 // 2) reply generation when action=reply.
 func (b *ImmersiveBuffer) flush(sessionKey string) {
 	state := b.session(sessionKey)
+	batch, ok := b.acquireProcessingBatch(sessionKey, state)
+	if !ok {
+		return
+	}
+
+	skipFinalize := false
+	defer func() {
+		b.finalizeFlush(sessionKey, state, skipFinalize)
+	}()
+
+	log.Info().
+		Str("session", sessionKey).
+		Int("batch_messages", len(batch.processing)).
+		Int("batch_chars", sumQueueChars(batch.processing)).
+		Int("wait_rounds", batch.waitRounds).
+		Msg("immersive flush started")
+
+	cutoffSeq := b.persistProcessingBatch(sessionKey, batch.processing)
+	flushCtx := b.prepareFlushContext(sessionKey, state, batch.processing)
+	if !flushCtx.gate.Allow {
+		b.applySkipDecision(sessionKey, state, flushCtx.gate, flushCtx.gate.Reason, "speak gate rejected this batch")
+		return
+	}
+
+	recordReply := func(reply, reason string, delivered bool) {
+		b.recordReplyOutcome(sessionKey, state, flushCtx.gate, cutoffSeq, reply, reason, delivered)
+	}
+
+	decision := b.resolveControlAction(sessionKey, batch.waitRounds, flushCtx.gateMeta, flushCtx.gate, flushCtx.immersiveCtx)
+	state.mu.Lock()
+	state.recordControlDecisionLocked(decision.action, decision.waitMS, decision.reason, decision.reasonCode, flushCtx.evaluatedAt)
+	state.mu.Unlock()
+
+	decisionLog := log.Info().
+		Str("session", sessionKey).
+		Str("action", string(decision.action)).
+		Int("wait_ms", decision.waitMS).
+		Int("wait_rounds", batch.waitRounds).
+		Str("conversation_mode", string(flushCtx.behavior.Mode)).
+		Int("energy_value", flushCtx.behavior.EnergyValue).
+		Int("energy_target", flushCtx.behavior.EnergyTarget).
+		Str("signal_band", string(flushCtx.gate.SignalBand)).
+		Str("reason", decision.reason).
+		Str("reason_code", decision.reasonCode)
+	if decision.err != nil {
+		decisionLog = decisionLog.Err(decision.err)
+	}
+	decisionLog.Msg("immersive control decision evaluated")
+
+	if decision.action == controlActionWait {
+		skipFinalize = true
+		b.applyWaitDecision(sessionKey, state, batch.processing, batch.processingBatchStart, batch.waitRounds, decision, flushCtx.gate)
+		return
+	}
+
+	if decision.action == controlActionReply {
+		_ = b.handleReply(batch.sendFn, sessionKey, "", flushCtx.replyPrompt, flushCtx.immersiveCtx, recordReply)
+		return
+	}
+
+	b.applySkipDecision(sessionKey, state, flushCtx.gate, decision.reasonCode, decision.reason)
+}
+
+func (b *ImmersiveBuffer) acquireProcessingBatch(sessionKey string, state *immersiveSession) (flushBatch, bool) {
 	state.mu.Lock()
 	if state.inFlight {
 		now := time.Now()
@@ -211,7 +299,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Action:     "early_drop",
 			ReasonCode: "inflight",
 		})
-		return
+		return flushBatch{}, false
 	}
 	if len(state.nextBatch) == 0 {
 		now := time.Now()
@@ -222,7 +310,7 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Action:     "early_drop",
 			ReasonCode: "empty_queue",
 		})
-		return
+		return flushBatch{}, false
 	}
 	if !b.llm.IsEnabled() || !b.llm.IsImmersive(sessionKey) {
 		now := time.Now()
@@ -247,66 +335,73 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			Action:     "early_drop",
 			ReasonCode: reasonCode,
 		})
-		return
+		return flushBatch{}, false
 	}
-	processing := state.nextBatch
-	processingBatchStart := state.batchStartTime
+
+	batch := flushBatch{
+		processing:           state.nextBatch,
+		processingBatchStart: state.batchStartTime,
+		waitRounds:           state.waitRounds,
+		sendFn:               state.sendFn,
+	}
 	state.nextBatch = nil
 	state.nextBatchChars = 0
 	state.batchStartTime = time.Time{}
-	state.processingBatch = processing
+	state.processingBatch = batch.processing
 	state.inFlight = true
-	waitRounds := state.waitRounds
-	sendFn := state.sendFn
 	state.mu.Unlock()
+	return batch, true
+}
 
-	skipFinalize := false
-	defer func() {
-		if skipFinalize {
-			return
-		}
-		state.mu.Lock()
-		state.inFlight = false
-		state.processingBatch = nil
-		state.waitRounds = 0
-		pending := len(state.nextBatch) > 0
-		if pending && state.batchStartTime.IsZero() {
-			state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
-		}
-		var deferDec FlushDecision
-		if pending {
-			deferDec = b.computeFlushDecision(sessionKey, state, time.Now())
-			state.recordSchedulerDecisionLocked(deferDec, time.Now())
-		} else {
-			state.batchStartTime = time.Time{}
-		}
-		if state.timer != nil {
-			state.timer.Stop()
-			state.timer = nil
-		}
-		if pending {
-			state.timer = time.AfterFunc(deferDec.Delay, func() {
-				b.flush(sessionKey)
-			})
-		}
-		state.mu.Unlock()
-		if pending {
-			log.Info().
-				Str("session", sessionKey).
-				Int64("next_delay_ms", deferDec.Delay.Milliseconds()).
-				Str("next_reason", deferDec.Reason).
-				Str("next_priority", deferDec.Priority).
-				Msg("pending messages detected, flushing again")
-		}
-	}()
+func (b *ImmersiveBuffer) finalizeFlush(sessionKey string, state *immersiveSession, skipFinalize bool) {
+	if skipFinalize {
+		return
+	}
+	state.mu.Lock()
+	state.inFlight = false
+	state.processingBatch = nil
+	state.waitRounds = 0
+	deferDec, pending := b.reschedulePendingBatchLocked(sessionKey, state, time.Now())
+	state.mu.Unlock()
+	if pending {
+		log.Info().
+			Str("session", sessionKey).
+			Int64("next_delay_ms", deferDec.Delay.Milliseconds()).
+			Str("next_reason", deferDec.Reason).
+			Str("next_priority", deferDec.Priority).
+			Msg("pending messages detected, flushing again")
+	}
+}
 
-	log.Info().
-		Str("session", sessionKey).
-		Int("batch_messages", len(processing)).
-		Int("batch_chars", sumQueueChars(processing)).
-		Int("wait_rounds", waitRounds).
-		Msg("immersive flush started")
+func (b *ImmersiveBuffer) reschedulePendingBatchLocked(sessionKey string, state *immersiveSession, now time.Time) (FlushDecision, bool) {
+	if state == nil {
+		return FlushDecision{}, false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	pending := len(state.nextBatch) > 0
+	if pending && state.batchStartTime.IsZero() {
+		state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
+	} else if !pending {
+		state.batchStartTime = time.Time{}
+	}
+	if state.timer != nil {
+		state.timer.Stop()
+		state.timer = nil
+	}
+	if !pending {
+		return FlushDecision{}, false
+	}
+	decision := b.computeFlushDecision(sessionKey, state, now)
+	state.recordSchedulerDecisionLocked(decision, now)
+	state.timer = time.AfterFunc(decision.Delay, func() {
+		b.flush(sessionKey)
+	})
+	return decision, true
+}
 
+func (b *ImmersiveBuffer) persistProcessingBatch(sessionKey string, processing []queuedMessage) int64 {
 	var cutoffSeq int64
 	for i := range processing {
 		if processing[i].persisted {
@@ -329,9 +424,11 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 			cutoffSeq = seq
 		}
 	}
+	return cutoffSeq
+}
 
+func (b *ImmersiveBuffer) prepareFlushContext(sessionKey string, state *immersiveSession, processing []queuedMessage) preparedFlushContext {
 	runtimeSnapshot := state.snapshotRuntimeBuffer()
-
 	identity := b.currentIdentity()
 	b.llm.SetAssistantSpeaker(assistantSpeakerLabel(identity))
 
@@ -357,20 +454,15 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 		Str("signal_features", formatSignalFeatures(gate.SignalFeatures)).
 		Str("reason", gate.Reason).
 		Msg("immersive speak gate evaluated")
+
+	flushCtx := preparedFlushContext{
+		evaluatedAt: now,
+		behavior:    behavior,
+		gate:        gate,
+		gateMeta:    gateMeta,
+	}
 	if !gate.Allow {
-		state.mu.Lock()
-		state.recordFinalActionLocked("skip", gate.Reason, "speak gate rejected this batch", "", now)
-		if state.coldOpenEligible {
-			state.recordProactiveLocked("cold_open", "skipped", gate.Reason, true, now)
-		}
-		state.clearStrongCallPendingLocked(now)
-		state.mu.Unlock()
-		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
-			Action:     "skip",
-			ReasonCode: gate.Reason,
-			SignalBand: string(gate.SignalBand),
-		})
-		return
+		return flushCtx
 	}
 
 	timelineSlice := trimTimelineTail(runtimeSnapshot, b.runtimeBufferLimit())
@@ -378,189 +470,183 @@ func (b *ImmersiveBuffer) flush(sessionKey string) {
 	if strings.TrimSpace(debugPreview) == "" {
 		debugPreview = buildCombinedInput(processing, identity)
 	}
-	immersiveCtx := buildImmersiveContext(processing, runtimeSnapshot, identity, behavior, gate)
-	replyPrompt := buildImmersiveReplyPrompt(immersiveCtx)
+	flushCtx.immersiveCtx = buildImmersiveContext(processing, runtimeSnapshot, identity, behavior, gate)
+	flushCtx.replyPrompt = buildImmersiveReplyPrompt(flushCtx.immersiveCtx)
 	log.Info().
 		Str("session", sessionKey).
 		Int("debug_preview_chars", len([]rune(debugPreview))).
 		Str("debug_preview", previewForLog(debugPreview, immersiveLogPreviewChars)).
 		Str("prompt_source", "pipeline_blocks").
 		Msg("immersive debug preview prepared")
+	return flushCtx
+}
 
-	recordReply := func(reply, reason string, delivered bool) {
-		trimmed := strings.TrimSpace(reply)
-		if trimmed == "" {
-			return
-		}
-		b.recordAssistantUtterance(sessionKey, trimmed)
-		_ = b.llm.AppendAssistantEvent(sessionKey, trimmed, cutoffSeq)
-		if delivered {
-			b.noteAssistantDelivered(sessionKey, trimmed)
-		}
-		state.mu.Lock()
-		state.recordFinalActionLocked("reply", reason, reason, trimmed, time.Now())
-		if state.coldOpenEligible {
-			state.recordProactiveLocked("cold_open", "triggered", reason, false, time.Now())
-		}
-		if !delivered {
-			state.clearStrongCallPendingLocked(time.Now())
-		}
-		state.mu.Unlock()
-		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
-			Action:     "reply",
-			ReasonCode: reason,
-			SignalBand: string(gate.SignalBand),
-		})
-		log.Info().
-			Str("session", sessionKey).
-			Str("reason", reason).
-			Int("reply_chars", len([]rune(trimmed))).
-			Int64("reply_to_cutoff_seq", cutoffSeq).
-			Bool("delivered", delivered).
-			Msg("immersive reply recorded into runtime buffer and llm history")
+func (b *ImmersiveBuffer) resolveControlAction(sessionKey string, waitRounds int, gateMeta queueMeta, gate speakGateDecision, immersiveCtx *ctxasm.ImmersiveContext) resolvedControlAction {
+	result := resolvedControlAction{
+		action:     controlActionReply,
+		reason:     "private strong call bypassed control intent",
+		reasonCode: "private_strong_call_fast_path",
 	}
-
-	var intentErr error
-	action := controlActionReply
-	waitMS := 0
-	decisionReason := "private strong call bypassed control intent"
-	decisionReasonCode := "private_strong_call_fast_path"
 	if !shouldBypassControlIntent(sessionKey, gateMeta, gate) {
 		intent, err := b.llm.DecideImmersiveIntent(context.Background(), "", sessionKey, "", immersiveCtx)
-		intentErr = err
+		result.err = err
 		decision := decisionFromIntent(intent)
-		action = decision.action
-		waitMS = decision.waitMS
-		decisionReason = decision.reason
-		decisionReasonCode = "model"
+		result.action = decision.action
+		result.waitMS = decision.waitMS
+		result.reason = decision.reason
+		result.reasonCode = "model"
 	}
 
-	if intentErr != nil {
-		if isControlIntentProtocolError(intentErr) {
+	if result.err != nil {
+		if isControlIntentProtocolError(result.err) {
 			if waitRounds == 0 {
-				action = controlActionWait
-				waitMS = defaultProtocolErrorWaitMS
-				decisionReasonCode = "protocol_error_wait"
-				decisionReason = "control protocol invalid, wait once for retry"
+				result.action = controlActionWait
+				result.waitMS = defaultProtocolErrorWaitMS
+				result.reasonCode = "protocol_error_wait"
+				result.reason = "control protocol invalid, wait once for retry"
 			} else {
-				action = controlActionSkip
-				waitMS = 0
-				decisionReasonCode = "protocol_error_skip"
-				decisionReason = "control protocol invalid repeatedly, skip this round"
+				result.action = controlActionSkip
+				result.waitMS = 0
+				result.reasonCode = "protocol_error_skip"
+				result.reason = "control protocol invalid repeatedly, skip this round"
 			}
 		} else {
-			action = controlActionSkip
-			waitMS = 0
-			decisionReasonCode = "intent_error_skip"
-			decisionReason = "intent decision failed, skip this round"
+			result.action = controlActionSkip
+			result.waitMS = 0
+			result.reasonCode = "intent_error_skip"
+			result.reason = "intent decision failed, skip this round"
 		}
 	}
-	if action == controlActionWait && waitRounds >= maxImmersiveWaitRounds {
-		action = controlActionSkip
-		waitMS = 0
-		decisionReasonCode = "wait_round_limit_skip"
-		decisionReason = "wait round limit reached, skip this round"
+	if result.action == controlActionWait && waitRounds >= maxImmersiveWaitRounds {
+		result.action = controlActionSkip
+		result.waitMS = 0
+		result.reasonCode = "wait_round_limit_skip"
+		result.reason = "wait round limit reached, skip this round"
 	}
-	if action == "" {
-		action = controlActionSkip
-		waitMS = 0
-		decisionReasonCode = "empty_action_skip"
-		decisionReason = "empty control action, skip this round"
+	if result.action == "" {
+		result.action = controlActionSkip
+		result.waitMS = 0
+		result.reasonCode = "empty_action_skip"
+		result.reason = "empty control action, skip this round"
 	}
-	if (action == controlActionWait || action == controlActionSkip) && strings.TrimSpace(decisionReason) == "" {
-		decisionReasonCode = "missing_reason_fallback"
-		decisionReason = "missing control reason, skip this round"
-		action = controlActionSkip
-		waitMS = 0
+	if (result.action == controlActionWait || result.action == controlActionSkip) && strings.TrimSpace(result.reason) == "" {
+		result.reasonCode = "missing_reason_fallback"
+		result.reason = "missing control reason, skip this round"
+		result.action = controlActionSkip
+		result.waitMS = 0
 	}
+	return result
+}
+
+func (b *ImmersiveBuffer) applyWaitDecision(sessionKey string, state *immersiveSession, processing []queuedMessage, processingBatchStart time.Time, waitRounds int, decision resolvedControlAction, gate speakGateDecision) {
 	state.mu.Lock()
-	state.recordControlDecisionLocked(action, waitMS, decisionReason, decisionReasonCode, now)
-	state.mu.Unlock()
-
-	decisionLog := log.Info().
-		Str("session", sessionKey).
-		Str("action", string(action)).
-		Int("wait_ms", waitMS).
-		Int("wait_rounds", waitRounds).
-		Str("conversation_mode", string(behavior.Mode)).
-		Int("energy_value", behavior.EnergyValue).
-		Int("energy_target", behavior.EnergyTarget).
-		Str("signal_band", string(gate.SignalBand)).
-		Str("reason", decisionReason).
-		Str("reason_code", decisionReasonCode)
-	if intentErr != nil {
-		decisionLog = decisionLog.Err(intentErr)
+	state.nextBatch = prependMessages(processing, state.nextBatch)
+	state.nextBatchChars += sumQueueChars(processing)
+	if processingBatchStart.IsZero() {
+		processingBatchStart = batchStartTimeFromQueue(processing)
 	}
-	decisionLog.Msg("immersive control decision evaluated")
-
-	if action == controlActionWait {
-		skipFinalize = true
-		state.mu.Lock()
-		state.nextBatch = prependMessages(processing, state.nextBatch)
-		state.nextBatchChars += sumQueueChars(processing)
-		if processingBatchStart.IsZero() {
-			processingBatchStart = batchStartTimeFromQueue(processing)
-		}
-		state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
-		if state.batchStartTime.IsZero() {
-			state.batchStartTime = processingBatchStart
-		}
-		state.processingBatch = nil
-		state.inFlight = false
-		state.waitRounds++
-
-		localDec := b.computeFlushDecision(sessionKey, state, time.Now())
-		merged := mergeWaitDecision(localDec, waitMS)
-		state.recordSchedulerDecisionLocked(merged, time.Now())
-		state.recordFinalActionLocked("wait", decisionReasonCode, decisionReason, "", time.Now())
-		if state.coldOpenEligible {
-			state.recordProactiveLocked("cold_open", "skipped", decisionReasonCode, true, time.Now())
-		}
-
-		if state.timer != nil {
-			state.timer.Stop()
-			state.timer = nil
-		}
-		state.timer = time.AfterFunc(merged.Delay, func() {
-			b.flush(sessionKey)
-		})
-		state.mu.Unlock()
-		b.recordImmersiveMetrics(metrics.ImmersiveRecord{
-			Action:     "wait",
-			ReasonCode: decisionReasonCode,
-			SignalBand: string(gate.SignalBand),
-		})
-		log.Info().
-			Str("session", sessionKey).
-			Int("llm_wait_ms", waitMS).
-			Int64("local_delay_ms", localDec.Delay.Milliseconds()).
-			Int64("merged_delay_ms", merged.Delay.Milliseconds()).
-			Str("merged_reason", merged.Reason).
-			Str("merged_priority", merged.Priority).
-			Int("wait_rounds", waitRounds+1).
-			Str("reason", decisionReason).
-			Str("reason_code", decisionReasonCode).
-			Msg("immersive flush deferred by wait action (merged)")
-		return
+	state.batchStartTime = batchStartTimeFromQueue(state.nextBatch)
+	if state.batchStartTime.IsZero() {
+		state.batchStartTime = processingBatchStart
 	}
+	state.processingBatch = nil
+	state.inFlight = false
+	state.waitRounds++
 
-	if action == controlActionReply {
-		_ = b.handleReply(sendFn, sessionKey, "", replyPrompt, immersiveCtx, recordReply)
-		return
-	}
-
-	state.mu.Lock()
-	state.recordFinalActionLocked("skip", decisionReasonCode, decisionReason, "", time.Now())
+	localDec := b.computeFlushDecision(sessionKey, state, time.Now())
+	merged := mergeWaitDecision(localDec, decision.waitMS)
+	state.recordSchedulerDecisionLocked(merged, time.Now())
+	state.recordFinalActionLocked("wait", decision.reasonCode, decision.reason, "", time.Now())
 	if state.coldOpenEligible {
-		state.recordProactiveLocked("cold_open", "skipped", decisionReasonCode, true, time.Now())
+		state.recordProactiveLocked("cold_open", "skipped", decision.reasonCode, true, time.Now())
+	}
+
+	if state.timer != nil {
+		state.timer.Stop()
+		state.timer = nil
+	}
+	state.timer = time.AfterFunc(merged.Delay, func() {
+		b.flush(sessionKey)
+	})
+	state.mu.Unlock()
+	b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+		Action:     "wait",
+		ReasonCode: decision.reasonCode,
+		SignalBand: string(gate.SignalBand),
+	})
+	log.Info().
+		Str("session", sessionKey).
+		Int("llm_wait_ms", decision.waitMS).
+		Int64("local_delay_ms", localDec.Delay.Milliseconds()).
+		Int64("merged_delay_ms", merged.Delay.Milliseconds()).
+		Str("merged_reason", merged.Reason).
+		Str("merged_priority", merged.Priority).
+		Int("wait_rounds", waitRounds+1).
+		Str("reason", decision.reason).
+		Str("reason_code", decision.reasonCode).
+		Msg("immersive flush deferred by wait action (merged)")
+}
+
+func (b *ImmersiveBuffer) applySkipDecision(sessionKey string, state *immersiveSession, gate speakGateDecision, reasonCode, reason string) {
+	state.mu.Lock()
+	state.recordFinalActionLocked("skip", reasonCode, reason, "", time.Now())
+	if state.coldOpenEligible {
+		state.recordProactiveLocked("cold_open", "skipped", reasonCode, true, time.Now())
 	}
 	state.clearStrongCallPendingLocked(time.Now())
 	state.mu.Unlock()
 	b.recordImmersiveMetrics(metrics.ImmersiveRecord{
 		Action:     "skip",
-		ReasonCode: decisionReasonCode,
+		ReasonCode: reasonCode,
 		SignalBand: string(gate.SignalBand),
 	})
+}
+
+func (b *ImmersiveBuffer) recordReplyOutcome(sessionKey string, state *immersiveSession, gate speakGateDecision, cutoffSeq int64, reply, reason string, delivered bool) {
+	trimmed := b.applyReplyBookkeeping(sessionKey, state, cutoffSeq, reply, delivered)
+	if trimmed == "" {
+		return
+	}
+	state.mu.Lock()
+	state.recordFinalActionLocked("reply", reason, reason, trimmed, time.Now())
+	if state.coldOpenEligible {
+		state.recordProactiveLocked("cold_open", "triggered", reason, false, time.Now())
+	}
+	state.mu.Unlock()
+	b.recordImmersiveMetrics(metrics.ImmersiveRecord{
+		Action:     "reply",
+		ReasonCode: reason,
+		SignalBand: string(gate.SignalBand),
+	})
+	log.Info().
+		Str("session", sessionKey).
+		Str("reason", reason).
+		Int("reply_chars", len([]rune(trimmed))).
+		Int64("reply_to_cutoff_seq", cutoffSeq).
+		Bool("delivered", delivered).
+		Msg("immersive reply recorded into runtime buffer and llm history")
+}
+
+func (b *ImmersiveBuffer) applyReplyBookkeeping(sessionKey string, state *immersiveSession, cutoffSeq int64, reply string, delivered bool) string {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return ""
+	}
+	b.recordAssistantUtterance(sessionKey, trimmed)
+	_ = b.llm.AppendAssistantEvent(sessionKey, trimmed, cutoffSeq)
+	if delivered {
+		b.noteAssistantDelivered(sessionKey, trimmed)
+		return trimmed
+	}
+	if state == nil {
+		state = b.lookupSession(sessionKey)
+	}
+	if state != nil {
+		state.mu.Lock()
+		state.clearStrongCallPendingLocked(time.Now())
+		state.mu.Unlock()
+	}
+	return trimmed
 }
 
 // handleReply generates and sends an LLM reply for the given session,
