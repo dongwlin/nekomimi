@@ -39,7 +39,7 @@ func (d *managerToolLoopDriver) Next(ctx context.Context, req toolloop.RunReques
 		source += "_tool_loop_step"
 	}
 
-	reply, err := d.manager.generateWithProvider(ctx, req.ModelName, req.SystemPrompt, messages, withRequestSource(d.options, source))
+	reply, err := d.manager.generate(ctx, req.ModelName, req.SystemPrompt, messages, withRequestSource(d.options, source))
 	if err != nil {
 		return toolloop.Message{}, err
 	}
@@ -99,7 +99,7 @@ func (d *managerToolLoopDriver) NextStream(ctx context.Context, req toolloop.Run
 		return nil
 	}
 
-	_, err := d.manager.generateStreamWithProvider(ctx, req.ModelName, req.SystemPrompt, messages, withRequestSource(d.options, source), func(delta string) error {
+	_, err := d.manager.generateStream(ctx, req.ModelName, req.SystemPrompt, messages, withRequestSource(d.options, source), func(delta string) error {
 		items, feedErr := parser.Feed(delta)
 		if feedErr != nil {
 			return feedErr

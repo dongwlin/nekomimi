@@ -16,12 +16,11 @@ import (
 	"github.com/dongwlin/nekomimi/internal/ctxasm"
 )
 
-func TestReplyStream_ToolsDisabled_UsesProviderStreaming(t *testing.T) {
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+func TestReplyStream_ToolsDisabled_UsesDirectStreaming(t *testing.T) {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		return []string{
-			mustResponsesDeltaEvent(t, "你"),
-			mustResponsesDeltaEvent(t, "好"),
-			`{"type":"response.completed"}`,
+			mustAnthropicTextDeltaEvent(t, "你"),
+			mustAnthropicTextDeltaEvent(t, "好"),
 		}
 	})
 	defer server.Close()
@@ -56,12 +55,11 @@ func TestReplyStream_ToolsDisabled_UsesProviderStreaming(t *testing.T) {
 }
 
 func TestReplyStream_ToolsDisabled_PreservesWhitespaceOnlyDelta(t *testing.T) {
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		return []string{
-			mustResponsesDeltaEvent(t, "REPLY"),
-			mustResponsesDeltaEvent(t, "\n"),
-			mustResponsesDeltaEvent(t, "ok"),
-			`{"type":"response.completed"}`,
+			mustAnthropicTextDeltaEvent(t, "REPLY"),
+			mustAnthropicTextDeltaEvent(t, "\n"),
+			mustAnthropicTextDeltaEvent(t, "ok"),
 		}
 	})
 	defer server.Close()
@@ -94,10 +92,9 @@ func TestReplyStream_ToolsDisabled_PreservesWhitespaceOnlyDelta(t *testing.T) {
 }
 
 func TestReplyStreamWithExtraPrompt_DoesNotAppendHistory(t *testing.T) {
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		return []string{
-			mustResponsesDeltaEvent(t, "ok"),
-			`{"type":"response.completed"}`,
+			mustAnthropicTextDeltaEvent(t, "ok"),
 		}
 	})
 	defer server.Close()
@@ -124,11 +121,10 @@ func TestReplyStreamWithExtraPrompt_DoesNotAppendHistory(t *testing.T) {
 
 func TestReplyStreamWithExtraPromptAllowTools_ImmersiveContextUsesSingleBlockLayout(t *testing.T) {
 	var capturedInputs []string
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
-		capturedInputs = extractResponsesInputTexts(body)
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
+		capturedInputs = extractAnthropicInputTexts(body)
 		return []string{
-			mustResponsesDeltaEvent(t, "ok"),
-			`{"type":"response.completed"}`,
+			mustAnthropicTextDeltaEvent(t, "ok"),
 		}
 	})
 	defer server.Close()
@@ -181,7 +177,7 @@ func TestReplyStreamWithExtraPromptAllowTools_ImmersiveContextUsesSingleBlockLay
 }
 
 func TestReplyStreamWithExtraPromptAllowTools_DisablesReasoningAndThinking(t *testing.T) {
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		if _, ok := body["reasoning"]; ok {
 			t.Fatalf("immersive reply should disable reasoning, body=%+v", body)
 		}
@@ -189,8 +185,7 @@ func TestReplyStreamWithExtraPromptAllowTools_DisablesReasoningAndThinking(t *te
 			t.Fatalf("immersive reply should disable thinking, body=%+v", body)
 		}
 		return []string{
-			mustResponsesDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"ok","stop_reason":"final"}}`+"\n"),
-			`{"type":"response.completed"}`,
+			mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"ok","stop_reason":"final"}}`+"\n"),
 		}
 	})
 	defer server.Close()
@@ -222,18 +217,16 @@ func TestReplyStreamWithExtraPromptAllowTools_DisablesReasoningAndThinking(t *te
 
 func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
 	var observedCall int64
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		atomic.StoreInt64(&observedCall, call)
 		switch call {
 		case 1:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"session-extra-tools-off","limit":1}}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"session-extra-tools-off","limit":1}}}`+"\n"),
 			}
 		default:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"done","stop_reason":"final"}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"done","stop_reason":"final"}}`+"\n"),
 			}
 		}
 	})
@@ -256,7 +249,7 @@ func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
 		t.Fatalf("reply stream with extra prompt failed: %v", err)
 	}
 	if atomic.LoadInt64(&observedCall) != 1 {
-		t.Fatalf("expected exactly one provider call, got %d", atomic.LoadInt64(&observedCall))
+		t.Fatalf("expected exactly one model call, got %d", atomic.LoadInt64(&observedCall))
 	}
 	if !strings.Contains(reply, `"type":"tool_call"`) {
 		t.Fatalf("expected raw streamed content without tool-loop handling, got %q", reply)
@@ -265,25 +258,22 @@ func TestReplyStreamWithExtraPrompt_DisablesToolLoop(t *testing.T) {
 
 func TestReplyStreamWithExtraPromptAllowTools_UsesToolLoop(t *testing.T) {
 	var observedCall int64
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		atomic.StoreInt64(&observedCall, call)
 		switch call {
 		case 1:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"thinking"}}`+"\n"),
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"session-extra-tools-on","limit":1}}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"thinking"}}`+"\n"),
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"session-extra-tools-on","limit":1}}}`+"\n"),
 			}
 		case 2:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"done"}}`+"\n"),
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"answer","stop_reason":"final"}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"done"}}`+"\n"),
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"answer","stop_reason":"final"}}`+"\n"),
 			}
 		default:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
 			}
 		}
 	})
@@ -311,7 +301,7 @@ func TestReplyStreamWithExtraPromptAllowTools_UsesToolLoop(t *testing.T) {
 		t.Fatalf("reply mismatch: got %q, want %q", reply, "answer")
 	}
 	if atomic.LoadInt64(&observedCall) != 2 {
-		t.Fatalf("expected two provider calls, got %d", atomic.LoadInt64(&observedCall))
+		t.Fatalf("expected two model calls, got %d", atomic.LoadInt64(&observedCall))
 	}
 
 	seenToolCall := false
@@ -339,12 +329,11 @@ func TestReplyStreamWithExtraPromptAllowTools_UsesToolLoop(t *testing.T) {
 }
 
 func TestReplyStreamWithExtraPrompt_PreservesWhitespaceOnlyDelta(t *testing.T) {
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		return []string{
-			mustResponsesDeltaEvent(t, "REPLY"),
-			mustResponsesDeltaEvent(t, "\n"),
-			mustResponsesDeltaEvent(t, "ok"),
-			`{"type":"response.completed"}`,
+			mustAnthropicTextDeltaEvent(t, "REPLY"),
+			mustAnthropicTextDeltaEvent(t, "\n"),
+			mustAnthropicTextDeltaEvent(t, "ok"),
 		}
 	})
 	defer server.Close()
@@ -377,24 +366,21 @@ func TestReplyStreamWithExtraPrompt_PreservesWhitespaceOnlyDelta(t *testing.T) {
 }
 
 func TestReplyStream_ToolsEnabled_EmitsToolEvents(t *testing.T) {
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		switch call {
 		case 1:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"thinking"}}`+"\n"),
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"session-tools-on","limit":1}}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"thinking"}}`+"\n"),
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"tool_call","tool_call":{"call_id":"c1","name":"internal/read_diary","arguments":{"session_key":"session-tools-on","limit":1}}}`+"\n"),
 			}
 		case 2:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"done"}}`+"\n"),
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"answer","stop_reason":"final"}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"delta","delta":{"text":"done"}}`+"\n"),
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"final","final":{"content":"answer","stop_reason":"final"}}`+"\n"),
 			}
 		default:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"version":"v2","type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"version":"v2","type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
 			}
 		}
 	})
@@ -448,23 +434,20 @@ func TestReplyStream_ToolsEnabled_EmitsToolEvents(t *testing.T) {
 
 func TestReplyStream_ToolsEnabled_ProtocolErrorRetriesThenRecovers(t *testing.T) {
 	var observedCall int64
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		atomic.StoreInt64(&observedCall, call)
 		switch call {
 		case 1:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"final":{"content":"bad","stop_reason":"final"}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"final":{"content":"bad","stop_reason":"final"}}`+"\n"),
 			}
 		case 2:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"type":"final","final":{"content":"answer","stop_reason":"final"}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"type":"final","final":{"content":"answer","stop_reason":"final"}}`+"\n"),
 			}
 		default:
 			return []string{
-				mustResponsesDeltaEvent(t, `{"type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
-				`{"type":"response.completed"}`,
+				mustAnthropicTextDeltaEvent(t, `{"type":"error","error":{"code":"internal_error","message":"unexpected call","retryable":false}}`+"\n"),
 			}
 		}
 	})
@@ -487,7 +470,7 @@ func TestReplyStream_ToolsEnabled_ProtocolErrorRetriesThenRecovers(t *testing.T)
 		t.Fatalf("reply stream failed: %v", err)
 	}
 	if atomic.LoadInt64(&observedCall) != 2 {
-		t.Fatalf("expected two provider calls, got %d", atomic.LoadInt64(&observedCall))
+		t.Fatalf("expected two model calls, got %d", atomic.LoadInt64(&observedCall))
 	}
 	if reply != "answer" {
 		t.Fatalf("reply mismatch: got %q, want %q", reply, "answer")
@@ -496,11 +479,10 @@ func TestReplyStream_ToolsEnabled_ProtocolErrorRetriesThenRecovers(t *testing.T)
 
 func TestReplyStream_ToolsEnabled_ProtocolErrorStopsAfterThreeAttempts(t *testing.T) {
 	var observedCall int64
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		atomic.StoreInt64(&observedCall, call)
 		return []string{
-			mustResponsesDeltaEvent(t, `{"final":{"content":"bad","stop_reason":"final"}}`+"\n"),
-			`{"type":"response.completed"}`,
+			mustAnthropicTextDeltaEvent(t, `{"final":{"content":"bad","stop_reason":"final"}}`+"\n"),
 		}
 	})
 	defer server.Close()
@@ -522,7 +504,7 @@ func TestReplyStream_ToolsEnabled_ProtocolErrorStopsAfterThreeAttempts(t *testin
 		t.Fatal("expected reply stream to fail after protocol retry limit")
 	}
 	if atomic.LoadInt64(&observedCall) != 3 {
-		t.Fatalf("expected three provider calls, got %d", atomic.LoadInt64(&observedCall))
+		t.Fatalf("expected three model calls, got %d", atomic.LoadInt64(&observedCall))
 	}
 	if !strings.Contains(err.Error(), "protocol retry limit exceeded") {
 		t.Fatalf("unexpected error: %v", err)
@@ -530,10 +512,9 @@ func TestReplyStream_ToolsEnabled_ProtocolErrorStopsAfterThreeAttempts(t *testin
 }
 
 func TestReplyStream_AppendsAtomicEventsWithAnchor(t *testing.T) {
-	server := newResponsesStreamServer(t, func(call int64, body map[string]any) []string {
+	server := newAnthropicStreamServer(t, func(call int64, body map[string]any) []string {
 		return []string{
-			mustResponsesDeltaEvent(t, "ok"),
-			`{"type":"response.completed"}`,
+			mustAnthropicTextDeltaEvent(t, "ok"),
 		}
 	})
 	defer server.Close()
@@ -585,11 +566,11 @@ func TestReplyStream_AppendsAtomicEventsWithAnchor(t *testing.T) {
 	}
 }
 
-func newResponsesStreamServer(t *testing.T, script func(call int64, body map[string]any) []string) *httptest.Server {
+func newAnthropicStreamServer(t *testing.T, script func(call int64, body map[string]any) []string) *httptest.Server {
 	t.Helper()
 	var callCount int64
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isAnthropicMessagesTestPath(r.URL.Path) {
+		if !isAnthropicMessagesRequestPath(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
@@ -607,14 +588,14 @@ func newResponsesStreamServer(t *testing.T, script func(call int64, body map[str
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		for _, event := range normalizeAnthropicStreamEvents(t, script(call, body)) {
+		for _, event := range completeAnthropicStreamEvents(script(call, body)) {
 			eventType := anthropicStreamEventType(t, event)
 			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, event)
 		}
 	}))
 }
 
-func mustResponsesDeltaEvent(t *testing.T, text string) string {
+func mustAnthropicTextDeltaEvent(t *testing.T, text string) string {
 	t.Helper()
 	payload := map[string]any{
 		"type":  "content_block_delta",
@@ -631,30 +612,12 @@ func mustResponsesDeltaEvent(t *testing.T, text string) string {
 	return string(data)
 }
 
-func normalizeAnthropicStreamEvents(t *testing.T, rawEvents []string) []string {
-	t.Helper()
-
+func completeAnthropicStreamEvents(rawEvents []string) []string {
 	events := []string{
 		`{"type":"message_start","message":{"id":"msg_test_stream","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
 		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
 	}
-
-	for _, raw := range rawEvents {
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			t.Fatalf("unmarshal stream event failed: %v", err)
-		}
-
-		switch payload["type"] {
-		case "response.output_text.delta":
-			events = append(events, mustResponsesDeltaEvent(t, toString(payload["delta"])))
-		case "response.completed":
-			// Legacy sentinel; translated into Anthropics message_stop below.
-			continue
-		default:
-			events = append(events, raw)
-		}
-	}
+	events = append(events, rawEvents...)
 
 	events = append(events,
 		`{"type":"content_block_stop","index":0}`,
@@ -662,11 +625,6 @@ func normalizeAnthropicStreamEvents(t *testing.T, rawEvents []string) []string {
 		`{"type":"message_stop"}`,
 	)
 	return events
-}
-
-func toString(value any) string {
-	text, _ := value.(string)
-	return text
 }
 
 func anthropicStreamEventType(t *testing.T, raw string) string {

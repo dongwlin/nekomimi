@@ -7,7 +7,7 @@ import (
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 )
 
-func (m *Manager) generateWithProvider(ctx context.Context, model, systemPrompt string, messages []Message, options llmclient.RequestOptions) (string, error) {
+func (m *Manager) generate(ctx context.Context, model, systemPrompt string, messages []Message, options llmclient.RequestOptions) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -18,11 +18,10 @@ func (m *Manager) generateWithProvider(ctx context.Context, model, systemPrompt 
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	providerClient := m.providers.From()
-	return providerClient.Generate(reqCtx, model, systemPrompt, messages)
+	return m.client.Generate(reqCtx, model, systemPrompt, messages)
 }
 
-func (m *Manager) generateStreamWithProvider(ctx context.Context, model, systemPrompt string, messages []Message, options llmclient.RequestOptions, onDelta func(delta string) error) (string, error) {
+func (m *Manager) generateStream(ctx context.Context, model, systemPrompt string, messages []Message, options llmclient.RequestOptions, onDelta func(delta string) error) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -33,8 +32,7 @@ func (m *Manager) generateStreamWithProvider(ctx context.Context, model, systemP
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	providerClient := m.providers.From()
-	return providerClient.GenerateStream(reqCtx, model, systemPrompt, messages, onDelta)
+	return m.client.GenerateStream(reqCtx, model, systemPrompt, messages, onDelta)
 }
 
 func withRequestSource(options llmclient.RequestOptions, source string) llmclient.RequestOptions {

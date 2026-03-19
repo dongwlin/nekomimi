@@ -82,10 +82,13 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	if m == nil {
 		return nil
 	}
-	apiURL := normalizeAPIURL(cfg.API)
+	apiURL := strings.TrimSpace(cfg.API)
+	if apiURL == "" {
+		apiURL = llmclient.DefaultAnthropicAPI
+	}
 	requestTimeout := time.Duration(cfg.TimeoutMS) * time.Millisecond
 	if requestTimeout <= 0 {
-		requestTimeout = defaultRequestTimeout()
+		requestTimeout = llmclient.DefaultRequestTimeout
 	}
 	basePrompt, systemPrompt := composeConfiguredSystemPrompt(cfg.SystemPrompt)
 	contextMax := cfg.ContextMax
@@ -131,10 +134,6 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 	m.client.SetOutputConfig(outputConfigFromConfig(cfg))
 	m.client.SetShowReasoning(cfg.ShowReasoning)
 	return nil
-}
-
-func defaultRequestTimeout() time.Duration {
-	return llmclient.DefaultRequestTimeout
 }
 
 func thinkingConfigFromConfig(cfg config.LLMConfig) llmclient.ThinkingConfig {

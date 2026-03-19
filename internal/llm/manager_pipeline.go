@@ -152,7 +152,7 @@ func (m *Manager) decideIntentWithPipeline(ctx context.Context, req pipelineRequ
 		m.sessions.incrementContextTrimCount(req.SessionKey)
 	}
 
-	reply, err := m.generateWithProvider(ctx, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source))
+	reply, err := m.generate(ctx, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source))
 	if err != nil {
 		return llmintent.ControlIntent{}, err
 	}
@@ -215,7 +215,7 @@ func (m *Manager) replyStreamWithPipeline(ctx context.Context, req pipelineReque
 	}
 
 	if req.DisableTools || !state.toolsEnabled || state.router == nil {
-		reply, err := m.generateStreamWithProvider(ctx, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source), func(delta string) error {
+		reply, err := m.generateStream(ctx, state.model, requestPrompt, messages, withRequestSource(req.RequestOptions, req.Source), func(delta string) error {
 			if delta == "" {
 				return nil
 			}

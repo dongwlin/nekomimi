@@ -3,8 +3,6 @@ package llm
 import (
 	"strings"
 	"time"
-
-	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
 )
 
 func composeSystemPrompt(basePrompt, extraPrompt string) string {
@@ -47,12 +45,4 @@ func formatMessageTime(at time.Time) string {
 		return ""
 	}
 	return at.Format("2006-01-02 15:04:05")
-}
-
-func normalizeAPIURL(apiURL string) string {
-	trimmed := strings.TrimSpace(apiURL)
-	if trimmed == "" {
-		return llmclient.DefaultAnthropicAPI
-	}
-	return trimmed
 }

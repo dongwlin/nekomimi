@@ -17,8 +17,8 @@ import (
 )
 
 func TestDecideImmersiveIntent_ParsesValidIntent(t *testing.T) {
-	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
-		return responsesOutputTextJSONForIntent(t, `{"action":"wait","wait_ms":120,"reason":"still typing"}`)
+	server := newAnthropicJSONServerForIntent(t, func(call int64, body map[string]any) string {
+		return anthropicTextResponseJSONForIntent(t, `{"action":"wait","wait_ms":120,"reason":"still typing"}`)
 	})
 	defer server.Close()
 
@@ -48,8 +48,8 @@ func TestDecideImmersiveIntent_ParsesValidIntent(t *testing.T) {
 }
 
 func TestDecideImmersiveIntent_ProtocolError(t *testing.T) {
-	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
-		return responsesOutputTextJSONForIntent(t, "hello")
+	server := newAnthropicJSONServerForIntent(t, func(call int64, body map[string]any) string {
+		return anthropicTextResponseJSONForIntent(t, "hello")
 	})
 	defer server.Close()
 
@@ -71,9 +71,9 @@ func TestDecideImmersiveIntent_ProtocolError(t *testing.T) {
 
 func TestDecideImmersiveIntent_DoesNotUseToolLoop(t *testing.T) {
 	var callCount int64
-	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
+	server := newAnthropicJSONServerForIntent(t, func(call int64, body map[string]any) string {
 		atomic.StoreInt64(&callCount, call)
-		return responsesOutputTextJSONForIntent(t, `{"action":"reply"}`)
+		return anthropicTextResponseJSONForIntent(t, `{"action":"reply"}`)
 	})
 	defer server.Close()
 
@@ -92,19 +92,19 @@ func TestDecideImmersiveIntent_DoesNotUseToolLoop(t *testing.T) {
 		t.Fatalf("decide immersive intent failed: %v", err)
 	}
 	if atomic.LoadInt64(&callCount) != 1 {
-		t.Fatalf("expected one provider call for intent decision, got %d", atomic.LoadInt64(&callCount))
+		t.Fatalf("expected one model call for intent decision, got %d", atomic.LoadInt64(&callCount))
 	}
 }
 
 func TestDecideImmersiveIntent_DisablesReasoningAndThinking(t *testing.T) {
-	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
+	server := newAnthropicJSONServerForIntent(t, func(call int64, body map[string]any) string {
 		if _, ok := body["reasoning"]; ok {
 			t.Fatalf("immersive intent should disable reasoning, body=%+v", body)
 		}
 		if _, ok := body["thinking"]; ok {
 			t.Fatalf("immersive intent should disable thinking, body=%+v", body)
 		}
-		return responsesOutputTextJSONForIntent(t, `{"action":"reply"}`)
+		return anthropicTextResponseJSONForIntent(t, `{"action":"reply"}`)
 	})
 	defer server.Close()
 
@@ -126,11 +126,11 @@ func TestDecideImmersiveIntent_DisablesReasoningAndThinking(t *testing.T) {
 	}
 }
 
-func newResponsesJSONServerForIntent(t *testing.T, script func(call int64, body map[string]any) string) *httptest.Server {
+func newAnthropicJSONServerForIntent(t *testing.T, script func(call int64, body map[string]any) string) *httptest.Server {
 	t.Helper()
 	var callCount int64
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isAnthropicMessagesTestPath(r.URL.Path) {
+		if !isAnthropicMessagesRequestPath(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
@@ -146,7 +146,7 @@ func newResponsesJSONServerForIntent(t *testing.T, script func(call int64, body 
 		call := atomic.AddInt64(&callCount, 1)
 		responseBody := script(call, body)
 		if responseBody == "" {
-			responseBody = responsesOutputTextJSONForIntent(t, `{"action":"skip","reason":"default"}`)
+			responseBody = anthropicTextResponseJSONForIntent(t, `{"action":"skip","reason":"default"}`)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -154,7 +154,7 @@ func newResponsesJSONServerForIntent(t *testing.T, script func(call int64, body 
 	}))
 }
 
-func responsesOutputTextJSONForIntent(t *testing.T, text string) string {
+func anthropicTextResponseJSONForIntent(t *testing.T, text string) string {
 	t.Helper()
 	payload := map[string]any{
 		"id":    "msg_test_intent",
@@ -185,11 +185,11 @@ func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
 	var capturedInputs []string
 	var mu sync.Mutex
 
-	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
+	server := newAnthropicJSONServerForIntent(t, func(call int64, body map[string]any) string {
 		mu.Lock()
-		capturedInputs = extractResponsesInputTexts(body)
+		capturedInputs = extractAnthropicInputTexts(body)
 		mu.Unlock()
-		return responsesOutputTextJSONForIntent(t, `{"action":"reply","reason":"mentioned"}`)
+		return anthropicTextResponseJSONForIntent(t, `{"action":"reply","reason":"mentioned"}`)
 	})
 	defer server.Close()
 
@@ -256,11 +256,11 @@ func TestDecideImmersiveIntent_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 	var capturedInputs []string
 	var mu sync.Mutex
 
-	server := newResponsesJSONServerForIntent(t, func(call int64, body map[string]any) string {
+	server := newAnthropicJSONServerForIntent(t, func(call int64, body map[string]any) string {
 		mu.Lock()
-		capturedInputs = extractResponsesInputTexts(body)
+		capturedInputs = extractAnthropicInputTexts(body)
 		mu.Unlock()
-		return responsesOutputTextJSONForIntent(t, `{"action":"skip","reason":"quiet"}`)
+		return anthropicTextResponseJSONForIntent(t, `{"action":"skip","reason":"quiet"}`)
 	})
 	defer server.Close()
 
@@ -291,8 +291,7 @@ func TestDecideImmersiveIntent_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 	}
 }
 
-// extractResponsesInputTexts extracts text content from both legacy and Anthropic-style request bodies.
-func extractResponsesInputTexts(body map[string]any) []string {
+func extractAnthropicInputTexts(body map[string]any) []string {
 	var texts []string
 	appendContentTexts := func(list []any) {
 		for _, item := range list {
@@ -316,9 +315,6 @@ func extractResponsesInputTexts(body map[string]any) []string {
 		}
 	}
 
-	if inputList, ok := body["input"].([]any); ok {
-		appendContentTexts(inputList)
-	}
 	if messageList, ok := body["messages"].([]any); ok {
 		appendContentTexts(messageList)
 	}
@@ -336,11 +332,6 @@ func extractResponsesInputTexts(body map[string]any) []string {
 	return texts
 }
 
-func isAnthropicMessagesTestPath(path string) bool {
-	switch path {
-	case "/responses", "/responses/v1/messages", "/v1/messages":
-		return true
-	default:
-		return false
-	}
+func isAnthropicMessagesRequestPath(path string) bool {
+	return strings.HasSuffix(strings.TrimSpace(path), "/v1/messages")
 }

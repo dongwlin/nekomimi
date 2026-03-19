@@ -10,7 +10,6 @@ import (
 	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
-	"github.com/dongwlin/nekomimi/internal/llm/provider"
 	"github.com/dongwlin/nekomimi/internal/llm/tools"
 )
 
@@ -19,7 +18,6 @@ type Manager struct {
 	current          currentConfig
 	defaults         defaultConfig
 	client           *llmclient.Client
-	providers        *provider.Factory
 	chatStore        chatlog.Store
 	diaryStore       diary.Store
 	contextAssembler *ctxasm.Assembler
@@ -63,7 +61,10 @@ type ManagerDeps struct {
 
 func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 	basePrompt, systemPrompt := composeConfiguredSystemPrompt(cfg.SystemPrompt)
-	apiURL := normalizeAPIURL(cfg.API)
+	apiURL := strings.TrimSpace(cfg.API)
+	if apiURL == "" {
+		apiURL = llmclient.DefaultAnthropicAPI
+	}
 	contextMax := cfg.ContextMax
 	if contextMax < 0 {
 		contextMax = 0
@@ -109,7 +110,6 @@ func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 			apiURL: apiURL,
 		},
 		client:           client,
-		providers:        provider.NewFactory(client),
 		chatStore:        cs,
 		diaryStore:       ds,
 		contextAssembler: ctxasm.New(cs, ds, runtimeCfg.assemblyOptions),
