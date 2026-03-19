@@ -18,8 +18,8 @@ type LLMConfig struct {
 	Key             string                `yaml:"key"`
 	Model           string                `yaml:"model"`
 	TimeoutMS       int                   `yaml:"timeout_ms"`
-	ReasoningEffort string                `yaml:"reasoning_effort"`
-	ThinkingType    string                `yaml:"thinking_type"`
+	Thinking        ThinkingConfig        `yaml:"thinking"`
+	OutputConfig    LLMOutputConfig       `yaml:"output_config"`
 	ShowReasoning   bool                  `yaml:"show_reasoning"`
 	SystemPrompt    string                `yaml:"system_prompt"`
 	ContextMax      int                   `yaml:"context_max"`
@@ -28,6 +28,15 @@ type LLMConfig struct {
 	MCP             MCPConfig             `yaml:"mcp"`
 	ToolLoop        ToolLoopConfig        `yaml:"tool_loop"`
 	Immersive       ImmersiveConfig       `yaml:"immersive"`
+}
+
+type ThinkingConfig struct {
+	Type         string `yaml:"type"`
+	BudgetTokens int    `yaml:"budget_tokens"`
+}
+
+type LLMOutputConfig struct {
+	Effort string `yaml:"effort"`
 }
 
 type ContextAssemblyConfig struct {

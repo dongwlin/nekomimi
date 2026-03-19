@@ -109,12 +109,16 @@ func TestDecideImmersiveIntent_DisablesReasoningAndThinking(t *testing.T) {
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:         true,
-		Model:           "gpt-4.1-mini",
-		API:             server.URL + "/responses",
-		Key:             "test-key",
-		ReasoningEffort: "medium",
-		ThinkingType:    "enabled",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
+		Thinking: config.ThinkingConfig{
+			Type: "adaptive",
+		},
+		OutputConfig: config.LLMOutputConfig{
+			Effort: "high",
+		},
 	}, ManagerDeps{})
 
 	if _, err := manager.DecideImmersiveIntent(context.Background(), "hello", "session-intent-fast", "alice", nil); err != nil {
@@ -126,7 +130,7 @@ func newResponsesJSONServerForIntent(t *testing.T, script func(call int64, body 
 	t.Helper()
 	var callCount int64
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/responses" {
+		if !isAnthropicMessagesTestPath(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
@@ -152,11 +156,29 @@ func newResponsesJSONServerForIntent(t *testing.T, script func(call int64, body 
 
 func responsesOutputTextJSONForIntent(t *testing.T, text string) string {
 	t.Helper()
-	textJSON, err := json.Marshal(text)
-	if err != nil {
-		t.Fatalf("marshal intent text failed: %v", err)
+	payload := map[string]any{
+		"id":    "msg_test_intent",
+		"type":  "message",
+		"role":  "assistant",
+		"model": "claude-test",
+		"content": []map[string]any{
+			{
+				"type": "text",
+				"text": text,
+			},
+		},
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+		"usage": map[string]any{
+			"input_tokens":  1,
+			"output_tokens": 1,
+		},
 	}
-	return `{"output":[{"content":[{"type":"output_text","text":` + string(textJSON) + `}]}]}`
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal intent response failed: %v", err)
+	}
+	return string(data)
 }
 
 func TestDecideImmersiveIntent_ImmersiveContextReachesModel(t *testing.T) {
@@ -269,31 +291,56 @@ func TestDecideImmersiveIntent_NilImmersiveContext_NoSignalsBlock(t *testing.T) 
 	}
 }
 
-// extractResponsesInputTexts extracts all text content from a responses API request body.
+// extractResponsesInputTexts extracts text content from both legacy and Anthropic-style request bodies.
 func extractResponsesInputTexts(body map[string]any) []string {
 	var texts []string
-	inputList, ok := body["input"].([]any)
-	if !ok {
-		return texts
-	}
-	for _, item := range inputList {
-		msg, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		contentList, ok := msg["content"].([]any)
-		if !ok {
-			continue
-		}
-		for _, c := range contentList {
-			cMap, ok := c.(map[string]any)
+	appendContentTexts := func(list []any) {
+		for _, item := range list {
+			msg, ok := item.(map[string]any)
 			if !ok {
 				continue
 			}
-			if text, ok := cMap["text"].(string); ok {
+			contentList, ok := msg["content"].([]any)
+			if !ok {
+				continue
+			}
+			for _, c := range contentList {
+				cMap, ok := c.(map[string]any)
+				if !ok {
+					continue
+				}
+				if text, ok := cMap["text"].(string); ok {
+					texts = append(texts, text)
+				}
+			}
+		}
+	}
+
+	if inputList, ok := body["input"].([]any); ok {
+		appendContentTexts(inputList)
+	}
+	if messageList, ok := body["messages"].([]any); ok {
+		appendContentTexts(messageList)
+	}
+	if systemList, ok := body["system"].([]any); ok {
+		for _, item := range systemList {
+			block, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, ok := block["text"].(string); ok {
 				texts = append(texts, text)
 			}
 		}
 	}
 	return texts
+}
+
+func isAnthropicMessagesTestPath(path string) bool {
+	switch path {
+	case "/responses", "/responses/v1/messages", "/v1/messages":
+		return true
+	default:
+		return false
+	}
 }

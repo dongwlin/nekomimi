@@ -695,7 +695,7 @@ func newScriptedResponsesServer(t *testing.T, script func(call int64, stream boo
 	t.Helper()
 	var callCount int64
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/responses" {
+		if !isAnthropicMessagesTestPath(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
@@ -725,14 +725,15 @@ func newScriptedResponsesServer(t *testing.T, script func(call int64, stream boo
 			if len(events) == 0 {
 				events = []string{`{"type":"response.completed"}`}
 			}
-			for _, event := range events {
-				_, _ = fmt.Fprintf(w, "data: %s\n\n", event)
+			for _, event := range normalizeAnthropicStreamEvents(t, events) {
+				eventType := anthropicStreamEventType(t, event)
+				_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, event)
 			}
 			return
 		}
 
 		if strings.TrimSpace(resp.JSONBody) == "" {
-			resp.JSONBody = responsesOutputTextJSON(`{""action":"skip","reason":"default"}`)
+			resp.JSONBody = responsesOutputTextJSON(`{"action":"skip","reason":"default"}`)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -741,7 +742,7 @@ func newScriptedResponsesServer(t *testing.T, script func(call int64, stream boo
 }
 
 func responsesOutputTextJSON(text string) string {
-	return fmt.Sprintf(`{"output":[{"content":[{"type":"output_text","text":%s}]}]}`, mustJSONString(text))
+	return fmt.Sprintf(`{"id":"msg_test","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":%s}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}`, mustJSONString(text))
 }
 
 func mustJSONString(text string) string {
@@ -759,10 +760,69 @@ func mustResponsesDeltaEventRaw(t *testing.T, delta string) string {
 		},
 	}
 	event := map[string]any{
-		"type":  "response.output_text.delta",
-		"delta": mustMarshalJSON(t, frame) + "\n",
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]any{
+			"type": "text_delta",
+			"text": mustMarshalJSON(t, frame) + "\n",
+		},
 	}
 	return mustMarshalJSON(t, event)
+}
+
+func normalizeAnthropicStreamEvents(t *testing.T, rawEvents []string) []string {
+	t.Helper()
+
+	events := []string{
+		`{"type":"message_start","message":{"id":"msg_test_stream","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+	}
+
+	for _, raw := range rawEvents {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("unmarshal stream event failed: %v", err)
+		}
+
+		switch payload["type"] {
+		case "response.output_text.delta":
+			events = append(events, mustResponsesDeltaEventRaw(t, toString(payload["delta"])))
+		case "response.completed":
+			continue
+		default:
+			events = append(events, raw)
+		}
+	}
+
+	events = append(events,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`,
+		`{"type":"message_stop"}`,
+	)
+	return events
+}
+
+func anthropicStreamEventType(t *testing.T, raw string) string {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("unmarshal stream event type failed: %v", err)
+	}
+	eventType, _ := payload["type"].(string)
+	if strings.TrimSpace(eventType) == "" {
+		t.Fatalf("stream event missing type: %s", raw)
+	}
+	return eventType
+}
+
+func isAnthropicMessagesTestPath(path string) bool {
+	switch path {
+	case "/responses", "/responses/v1/messages", "/v1/messages":
+		return true
+	default:
+		return false
+	}
 }
 
 func mustMarshalJSON(t *testing.T, value any) string {

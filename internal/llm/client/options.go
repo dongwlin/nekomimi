@@ -2,10 +2,19 @@ package client
 
 import "context"
 
+type ThinkingConfig struct {
+	Type         string
+	BudgetTokens int64
+}
+
+type OutputConfig struct {
+	Effort string
+}
+
 type RequestOptions struct {
-	ReasoningEffort string
-	ThinkingType    string
-	Source          string
+	Thinking     *ThinkingConfig
+	OutputConfig *OutputConfig
+	Source       string
 }
 
 type requestOptionsContextKey struct{}

@@ -78,8 +78,8 @@ func NewManager(cfg config.LLMConfig, deps ManagerDeps) *Manager {
 	}
 
 	client := llmclient.New(apiURL, cfg.Key)
-	client.SetReasoningEffort(cfg.ReasoningEffort)
-	client.SetThinkingType(cfg.ThinkingType)
+	client.SetThinkingConfig(thinkingConfigFromConfig(cfg))
+	client.SetOutputConfig(outputConfigFromConfig(cfg))
 	client.SetShowReasoning(cfg.ShowReasoning)
 
 	cs := deps.ChatStore
@@ -336,7 +336,21 @@ func (m *Manager) generateStreamWithProvider(ctx context.Context, model, systemP
 
 func immersiveRequestOptions() llmclient.RequestOptions {
 	return llmclient.RequestOptions{
-		ReasoningEffort: "none",
-		ThinkingType:    "none",
+		Thinking: &llmclient.ThinkingConfig{
+			Type: "disabled",
+		},
+	}
+}
+
+func thinkingConfigFromConfig(cfg config.LLMConfig) llmclient.ThinkingConfig {
+	return llmclient.ThinkingConfig{
+		Type:         cfg.Thinking.Type,
+		BudgetTokens: int64(cfg.Thinking.BudgetTokens),
+	}
+}
+
+func outputConfigFromConfig(cfg config.LLMConfig) llmclient.OutputConfig {
+	return llmclient.OutputConfig{
+		Effort: cfg.OutputConfig.Effort,
 	}
 }

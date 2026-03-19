@@ -10,8 +10,11 @@ llm:
   key: "your_api_key"
   model: "gpt-4.1-mini"
   timeout_ms: 30000
-  reasoning_effort: "medium" # minimal | low | medium | high
-  thinking_type: "" # enabled | disabled | auto
+  thinking:
+    type: "adaptive" # disabled | enabled | adaptive
+    budget_tokens: 2048 # only used when type=enabled; must be >= 1024 and < max_tokens
+  output_config:
+    effort: "medium" # only used when type=adaptive; low | medium | high | max
   show_reasoning: false
   system_prompt: "your custom prompt appended after built-in system prompt"
   context_max: 8000

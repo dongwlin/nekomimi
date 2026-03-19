@@ -196,12 +196,14 @@ func TestReplyStreamWithExtraPromptAllowTools_DisablesReasoningAndThinking(t *te
 	defer server.Close()
 
 	manager := NewManager(config.LLMConfig{
-		Enabled:         true,
-		Model:           "gpt-4.1-mini",
-		API:             server.URL + "/responses",
-		Key:             "test-key",
-		ReasoningEffort: "medium",
-		ThinkingType:    "enabled",
+		Enabled: true,
+		Model:   "gpt-4.1-mini",
+		API:     server.URL + "/responses",
+		Key:     "test-key",
+		Thinking: config.ThinkingConfig{
+			Type:         "enabled",
+			BudgetTokens: 2048,
+		},
 		Tools: config.ToolsConfig{
 			Enabled: true,
 		},
@@ -587,7 +589,7 @@ func newResponsesStreamServer(t *testing.T, script func(call int64, body map[str
 	t.Helper()
 	var callCount int64
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/responses" {
+		if !isAnthropicMessagesTestPath(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
@@ -605,8 +607,9 @@ func newResponsesStreamServer(t *testing.T, script func(call int64, body map[str
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		for _, event := range script(call, body) {
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", event)
+		for _, event := range normalizeAnthropicStreamEvents(t, script(call, body)) {
+			eventType := anthropicStreamEventType(t, event)
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, event)
 		}
 	}))
 }
@@ -614,12 +617,68 @@ func newResponsesStreamServer(t *testing.T, script func(call int64, body map[str
 func mustResponsesDeltaEvent(t *testing.T, text string) string {
 	t.Helper()
 	payload := map[string]any{
-		"type":  "response.output_text.delta",
-		"delta": text,
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]any{
+			"type": "text_delta",
+			"text": text,
+		},
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal delta event failed: %v", err)
 	}
 	return string(data)
+}
+
+func normalizeAnthropicStreamEvents(t *testing.T, rawEvents []string) []string {
+	t.Helper()
+
+	events := []string{
+		`{"type":"message_start","message":{"id":"msg_test_stream","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+	}
+
+	for _, raw := range rawEvents {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("unmarshal stream event failed: %v", err)
+		}
+
+		switch payload["type"] {
+		case "response.output_text.delta":
+			events = append(events, mustResponsesDeltaEvent(t, toString(payload["delta"])))
+		case "response.completed":
+			// Legacy sentinel; translated into Anthropics message_stop below.
+			continue
+		default:
+			events = append(events, raw)
+		}
+	}
+
+	events = append(events,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`,
+		`{"type":"message_stop"}`,
+	)
+	return events
+}
+
+func toString(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func anthropicStreamEventType(t *testing.T, raw string) string {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("unmarshal stream event type failed: %v", err)
+	}
+	eventType, _ := payload["type"].(string)
+	if strings.TrimSpace(eventType) == "" {
+		t.Fatalf("stream event missing type: %s", raw)
+	}
+	return eventType
 }

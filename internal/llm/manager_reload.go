@@ -61,8 +61,8 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 
 	m.client.SetAPIURL(apiURL)
 	m.client.SetAPIKey(cfg.Key)
-	m.client.SetReasoningEffort(cfg.ReasoningEffort)
-	m.client.SetThinkingType(cfg.ThinkingType)
+	m.client.SetThinkingConfig(thinkingConfigFromConfig(cfg))
+	m.client.SetOutputConfig(outputConfigFromConfig(cfg))
 	m.client.SetShowReasoning(cfg.ShowReasoning)
 	return nil
 }

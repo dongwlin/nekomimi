@@ -15,17 +15,18 @@ import (
 )
 
 const (
-	DefaultMaxTokens = 8192
+	DefaultMaxTokens            = 8192
+	DefaultThinkingBudgetTokens = 1024
 )
 
 type Client struct {
-	mu              sync.RWMutex
-	apiKey          string
-	baseURL         string
-	reasoningEffort string
-	thinkingType    string
-	showReasoning   bool
-	httpClient      anthropic.Client
+	mu             sync.RWMutex
+	apiKey         string
+	baseURL        string
+	thinkingConfig ThinkingConfig
+	outputConfig   OutputConfig
+	showReasoning  bool
+	httpClient     anthropic.Client
 }
 
 var urlInTextPattern = regexp.MustCompile(`https?://[^\s"]+`)
@@ -60,7 +61,10 @@ func New(apiURL, apiKey string) *Client {
 func (c *Client) rebuildHTTPClient() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.rebuildHTTPClientLocked()
+}
 
+func (c *Client) rebuildHTTPClientLocked() {
 	opts := []option.RequestOption{
 		option.WithAPIKey(c.apiKey),
 		option.WithBaseURL(c.baseURL),
@@ -76,7 +80,7 @@ func (c *Client) SetAPIURL(apiURL string) {
 	} else {
 		c.baseURL = apiURL
 	}
-	c.rebuildHTTPClient()
+	c.rebuildHTTPClientLocked()
 }
 
 func (c *Client) APIURL() string {
@@ -89,67 +93,133 @@ func (c *Client) SetAPIKey(apiKey string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.apiKey = strings.TrimSpace(apiKey)
-	c.rebuildHTTPClient()
+	c.rebuildHTTPClientLocked()
 }
 
-func normalizeReasoningEffort(effort string) string {
-	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "minimal", "low", "medium", "high", "none":
-		return strings.ToLower(strings.TrimSpace(effort))
-	default:
-		return ""
-	}
-}
-
-func normalizeThinkingType(thinkingType string) string {
+func normalizeThinkingType(thinkingType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(thinkingType)) {
-	case "enabled", "disabled", "auto":
-		return strings.ToLower(strings.TrimSpace(thinkingType))
+	case "", "disabled":
+		return "disabled", true
+	case "enabled", "adaptive":
+		return strings.ToLower(strings.TrimSpace(thinkingType)), true
 	default:
-		return ""
+		return "disabled", false
 	}
 }
 
-func (c *Client) SetReasoningEffort(effort string) {
-	raw := strings.TrimSpace(effort)
-	normalized := normalizeReasoningEffort(raw)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if normalized == "none" {
-		c.reasoningEffort = ""
+func normalizeOutputEffort(effort string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "":
+		return "", true
+	case "low", "medium", "high", "max":
+		return strings.ToLower(strings.TrimSpace(effort)), true
+	default:
+		return "", false
+	}
+}
+
+func normalizeThinkingConfig(raw ThinkingConfig) ThinkingConfig {
+	normalizedType, _ := normalizeThinkingType(raw.Type)
+	normalized := ThinkingConfig{Type: normalizedType}
+	if normalizedType != "enabled" {
+		return normalized
+	}
+
+	budget := raw.BudgetTokens
+	switch {
+	case budget == 0:
+		budget = DefaultThinkingBudgetTokens
+	case budget < 0:
+		budget = DefaultThinkingBudgetTokens
+	case budget < DefaultThinkingBudgetTokens:
+		budget = DefaultThinkingBudgetTokens
+	case budget >= DefaultMaxTokens:
+		budget = DefaultMaxTokens - 1
+	}
+	normalized.BudgetTokens = budget
+	return normalized
+}
+
+func normalizeOutputConfig(raw OutputConfig) OutputConfig {
+	effort, _ := normalizeOutputEffort(raw.Effort)
+	return OutputConfig{Effort: effort}
+}
+
+func logThinkingConfigIssues(scope string, raw ThinkingConfig, normalized ThinkingConfig) {
+	trimmedType := strings.TrimSpace(raw.Type)
+	if _, ok := normalizeThinkingType(raw.Type); !ok {
+		log.Warn().
+			Str("scope", scope).
+			Str("thinking_type", trimmedType).
+			Msg("invalid thinking.type, thinking disabled")
 		return
 	}
-	c.reasoningEffort = normalized
-	if raw != "" && normalized == "" {
+	if normalized.Type != "enabled" {
+		return
+	}
+	switch {
+	case raw.BudgetTokens < 0:
 		log.Warn().
-			Str("reasoning_effort", raw).
-			Msg("invalid reasoning_effort, reasoning disabled")
+			Str("scope", scope).
+			Int64("budget_tokens", raw.BudgetTokens).
+			Int64("effective_budget_tokens", normalized.BudgetTokens).
+			Msg("invalid thinking.budget_tokens, using default budget")
+	case raw.BudgetTokens > 0 && raw.BudgetTokens < DefaultThinkingBudgetTokens:
+		log.Warn().
+			Str("scope", scope).
+			Int64("budget_tokens", raw.BudgetTokens).
+			Int64("effective_budget_tokens", normalized.BudgetTokens).
+			Msg("thinking.budget_tokens below minimum, clamped")
+	case raw.BudgetTokens >= DefaultMaxTokens:
+		log.Warn().
+			Str("scope", scope).
+			Int64("budget_tokens", raw.BudgetTokens).
+			Int64("effective_budget_tokens", normalized.BudgetTokens).
+			Msg("thinking.budget_tokens exceeds max_tokens, clamped")
 	}
 }
 
-func (c *Client) SetThinkingType(thinkingType string) {
-	raw := strings.TrimSpace(thinkingType)
-	normalized := normalizeThinkingType(raw)
+func logOutputConfigIssues(scope string, raw OutputConfig, normalized OutputConfig) {
+	trimmedEffort := strings.TrimSpace(raw.Effort)
+	if trimmedEffort == "" {
+		return
+	}
+	if _, ok := normalizeOutputEffort(raw.Effort); ok {
+		return
+	}
+	log.Warn().
+		Str("scope", scope).
+		Str("effort", trimmedEffort).
+		Str("effective_effort", normalized.Effort).
+		Msg("invalid output_config.effort, effort disabled")
+}
+
+func (c *Client) SetThinkingConfig(cfg ThinkingConfig) {
+	normalized := normalizeThinkingConfig(cfg)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.thinkingType = normalized
-	if raw != "" && normalized == "" {
-		log.Warn().
-			Str("thinking_type", raw).
-			Msg("invalid thinking_type, thinking disabled")
-	}
+	c.thinkingConfig = normalized
+	c.mu.Unlock()
+	logThinkingConfigIssues("client_config", cfg, normalized)
 }
 
-func (c *Client) reasoningEffortSnapshot() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.reasoningEffort
+func (c *Client) SetOutputConfig(cfg OutputConfig) {
+	normalized := normalizeOutputConfig(cfg)
+	c.mu.Lock()
+	c.outputConfig = normalized
+	c.mu.Unlock()
+	logOutputConfigIssues("client_config", cfg, normalized)
 }
 
-func (c *Client) thinkingTypeSnapshot() string {
+func (c *Client) thinkingConfigSnapshot() ThinkingConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.thinkingType
+	return normalizeThinkingConfig(c.thinkingConfig)
+}
+
+func (c *Client) outputConfigSnapshot() OutputConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return normalizeOutputConfig(c.outputConfig)
 }
 
 func (c *Client) SetShowReasoning(show bool) {
@@ -177,6 +247,28 @@ func (c *Client) ensureAPIKey() error {
 	return nil
 }
 
+func (c *Client) resolveRequestConfig(requestOptions RequestOptions) (ThinkingConfig, OutputConfig) {
+	thinkingConfig := c.thinkingConfigSnapshot()
+	outputConfig := c.outputConfigSnapshot()
+
+	if requestOptions.Thinking != nil {
+		raw := *requestOptions.Thinking
+		normalized := normalizeThinkingConfig(raw)
+		logThinkingConfigIssues("request_override", raw, normalized)
+		thinkingConfig = normalized
+	}
+	if requestOptions.OutputConfig != nil {
+		raw := *requestOptions.OutputConfig
+		normalized := normalizeOutputConfig(raw)
+		logOutputConfigIssues("request_override", raw, normalized)
+		outputConfig = normalized
+	}
+	if thinkingConfig.Type != "adaptive" {
+		outputConfig = OutputConfig{}
+	}
+	return thinkingConfig, outputConfig
+}
+
 func (c *Client) Generate(
 	ctx context.Context,
 	modelName, systemPrompt string,
@@ -188,25 +280,7 @@ func (c *Client) Generate(
 	}
 
 	requestOptions, _ := requestOptionsFromContext(ctx)
-	reasoningEffort := c.reasoningEffortSnapshot()
-	thinkingType := c.thinkingTypeSnapshot()
-	logReasoningEffort := reasoningEffort
-
-	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
-		if override == "none" {
-			reasoningEffort = ""
-			logReasoningEffort = "none"
-		} else {
-			reasoningEffort = override
-			logReasoningEffort = override
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(requestOptions.ThinkingType), "none") {
-		thinkingType = ""
-	}
-	if override := normalizeThinkingType(requestOptions.ThinkingType); override != "" {
-		thinkingType = override
-	}
+	thinkingConfig, outputConfig := c.resolveRequestConfig(requestOptions)
 
 	requestSource := strings.TrimSpace(requestOptions.Source)
 	if requestSource == "" {
@@ -222,14 +296,14 @@ func (c *Client) Generate(
 		Str("model", strings.TrimSpace(modelName)).
 		Int("message_count", len(inputMessages)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
-		Bool("reasoning_enabled", reasoningEffort != "").
-		Bool("thinking_enabled", thinkingType != "").
+		Bool("thinking_enabled", thinkingConfig.Type != "disabled").
+		Str("thinking_type", thinkingConfig.Type).
+		Int64("thinking_budget_tokens", thinkingConfig.BudgetTokens).
+		Str("output_effort", outputConfig.Effort).
 		Bool("show_reasoning", c.showReasoningSnapshot()).
-		Str("reasoning_effort", logReasoningEffort).
-		Str("thinking_type", thinkingType).
 		Msg("sending llm request")
 
-	params := buildMessageParams(modelName, inputMessages, systemPrompt, reasoningEffort, thinkingType)
+	params := buildMessageParams(modelName, inputMessages, systemPrompt, thinkingConfig, outputConfig)
 	resp, err := c.httpClient.Messages.New(ctx, params)
 	if err != nil {
 		log.Warn().
@@ -283,25 +357,7 @@ func (c *Client) GenerateStream(
 	}
 
 	requestOptions, _ := requestOptionsFromContext(ctx)
-	reasoningEffort := c.reasoningEffortSnapshot()
-	thinkingType := c.thinkingTypeSnapshot()
-	logReasoningEffort := reasoningEffort
-
-	if override := normalizeReasoningEffort(requestOptions.ReasoningEffort); override != "" {
-		if override == "none" {
-			reasoningEffort = ""
-			logReasoningEffort = "none"
-		} else {
-			reasoningEffort = override
-			logReasoningEffort = override
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(requestOptions.ThinkingType), "none") {
-		thinkingType = ""
-	}
-	if override := normalizeThinkingType(requestOptions.ThinkingType); override != "" {
-		thinkingType = override
-	}
+	thinkingConfig, outputConfig := c.resolveRequestConfig(requestOptions)
 
 	requestSource := strings.TrimSpace(requestOptions.Source)
 	if requestSource == "" {
@@ -317,14 +373,14 @@ func (c *Client) GenerateStream(
 		Str("model", strings.TrimSpace(modelName)).
 		Int("message_count", len(inputMessages)).
 		Bool("has_system_prompt", strings.TrimSpace(systemPrompt) != "").
-		Bool("reasoning_enabled", reasoningEffort != "").
-		Bool("thinking_enabled", thinkingType != "").
+		Bool("thinking_enabled", thinkingConfig.Type != "disabled").
+		Str("thinking_type", thinkingConfig.Type).
+		Int64("thinking_budget_tokens", thinkingConfig.BudgetTokens).
+		Str("output_effort", outputConfig.Effort).
 		Bool("show_reasoning", c.showReasoningSnapshot()).
-		Str("reasoning_effort", logReasoningEffort).
-		Str("thinking_type", thinkingType).
 		Msg("sending llm streaming request")
 
-	params := buildMessageParams(modelName, inputMessages, systemPrompt, reasoningEffort, thinkingType)
+	params := buildMessageParams(modelName, inputMessages, systemPrompt, thinkingConfig, outputConfig)
 	stream := c.httpClient.Messages.NewStreaming(ctx, params)
 
 	var replyBuilder strings.Builder
@@ -406,7 +462,9 @@ func buildMessagesInput(messages []model.Message) []anthropic.MessageParam {
 func buildMessageParams(
 	modelName string,
 	messages []anthropic.MessageParam,
-	systemPrompt, reasoningEffort, thinkingType string,
+	systemPrompt string,
+	thinkingConfig ThinkingConfig,
+	outputConfig OutputConfig,
 ) anthropic.MessageNewParams {
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(strings.TrimSpace(modelName)),
@@ -421,13 +479,22 @@ func buildMessageParams(
 		}
 	}
 
-	// Handle thinking/reasoning configuration
-	if reasoningEffort != "" {
-		// Use thinking with effort when reasoning is enabled
-		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(1024)
-	} else if thinkingType != "" && thinkingType != "disabled" {
-		// Use thinking with type when explicitly enabled but no effort
-		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(1024)
+	switch thinkingConfig.Type {
+	case "enabled":
+		params.Thinking = anthropic.ThinkingConfigParamUnion{
+			OfEnabled: &anthropic.ThinkingConfigEnabledParam{
+				BudgetTokens: thinkingConfig.BudgetTokens,
+			},
+		}
+	case "adaptive":
+		params.Thinking = anthropic.ThinkingConfigParamUnion{
+			OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{},
+		}
+		if outputConfig.Effort != "" {
+			params.OutputConfig = anthropic.OutputConfigParam{
+				Effort: anthropic.OutputConfigEffort(outputConfig.Effort),
+			}
+		}
 	}
 
 	return params
