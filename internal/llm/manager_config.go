@@ -9,7 +9,73 @@ import (
 	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
+	llmprompt "github.com/dongwlin/nekomimi/internal/llm/prompt"
 )
+
+func composeConfiguredSystemPrompt(configPrompt string) (basePrompt string, systemPrompt string) {
+	basePrompt = strings.TrimSpace(llmprompt.SpeakerSystemPrompt)
+	customPrompt := strings.TrimSpace(configPrompt)
+	if customPrompt == "" {
+		return basePrompt, composeSystemPrompt(basePrompt, llmprompt.DefaultSystemPrompt)
+	}
+	return basePrompt, composeSystemPrompt(basePrompt, customPrompt)
+}
+
+func (m *Manager) IsEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.current.enabled
+}
+
+func (m *Manager) SetEnabled(enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.current.enabled = enabled
+}
+
+func (m *Manager) SetModel(model string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.current.model = strings.TrimSpace(model)
+}
+
+func (m *Manager) SetSystemPrompt(prompt string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.current.systemPrompt = composeSystemPrompt(m.current.basePrompt, prompt)
+}
+
+func (m *Manager) SetAssistantSpeaker(speaker string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	trimmed := strings.TrimSpace(speaker)
+	if trimmed == "" {
+		trimmed = "name=assistant"
+	}
+	m.current.assistantSpeaker = trimmed
+}
+
+func (m *Manager) SetImmersive(sessionKey string, enabled bool) {
+	m.sessions.SetImmersive(sessionKey, enabled)
+}
+
+func (m *Manager) IsImmersive(sessionKey string) bool {
+	return m.sessions.IsImmersive(sessionKey)
+}
+
+func (m *Manager) ResetDefaults() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.current.model = m.defaults.model
+	m.current.systemPrompt = m.defaults.prompt
+	m.client.SetAPIURL(m.defaults.apiURL)
+}
+
+func (m *Manager) Status() (enabled bool, model string, systemPrompt string, apiURL string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.current.enabled, m.current.model, m.current.systemPrompt, m.client.APIURL()
+}
 
 // ReloadConfig refreshes runtime LLM settings without clearing in-memory history.
 func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
@@ -69,4 +135,17 @@ func (m *Manager) ReloadConfig(cfg config.LLMConfig) error {
 
 func defaultRequestTimeout() time.Duration {
 	return llmclient.DefaultRequestTimeout
+}
+
+func thinkingConfigFromConfig(cfg config.LLMConfig) llmclient.ThinkingConfig {
+	return llmclient.ThinkingConfig{
+		Type:         cfg.Thinking.Type,
+		BudgetTokens: int64(cfg.Thinking.BudgetTokens),
+	}
+}
+
+func outputConfigFromConfig(cfg config.LLMConfig) llmclient.OutputConfig {
+	return llmclient.OutputConfig{
+		Effort: cfg.OutputConfig.Effort,
+	}
 }
