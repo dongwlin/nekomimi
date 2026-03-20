@@ -5,9 +5,10 @@ import (
 	"strings"
 
 	llmclient "github.com/dongwlin/nekomimi/internal/llm/client"
+	"github.com/dongwlin/nekomimi/internal/llm/model"
 )
 
-func (m *Manager) generate(ctx context.Context, model, systemPrompt string, messages []Message, options llmclient.RequestOptions) (string, error) {
+func (m *Manager) generate(ctx context.Context, model, systemPrompt string, messages []model.Message, options llmclient.RequestOptions) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -21,7 +22,7 @@ func (m *Manager) generate(ctx context.Context, model, systemPrompt string, mess
 	return m.client.Generate(reqCtx, model, systemPrompt, messages)
 }
 
-func (m *Manager) generateStream(ctx context.Context, model, systemPrompt string, messages []Message, options llmclient.RequestOptions, onDelta func(delta string) error) (string, error) {
+func (m *Manager) generateStream(ctx context.Context, model, systemPrompt string, messages []model.Message, options llmclient.RequestOptions, onDelta func(delta string) error) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

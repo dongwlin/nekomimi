@@ -11,7 +11,7 @@ import (
 	"github.com/dongwlin/nekomimi/internal/config"
 	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
-	"github.com/dongwlin/nekomimi/internal/llm/token"
+	"github.com/dongwlin/nekomimi/internal/llm/model"
 )
 
 func TestSessionContextUsage_WithLimit(t *testing.T) {
@@ -40,10 +40,10 @@ func TestSessionContextUsage_WithLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("assemble failed: %v", err)
 	}
-	expectedUsed := token.EstimateContextTokens(m.current.systemPrompt, []Message{
+	expectedUsed := estimateContextTokens(m.current.systemPrompt, []model.Message{
 		{
 			Role:    "user",
-			Content: renderUsageAssembledBlocks(assembled.Blocks),
+			Content: renderAssembledBlocks(assembled.Blocks),
 		},
 	})
 	expectedPercent := float64(expectedUsed) * 100 / 1000

@@ -9,7 +9,7 @@ import (
 	"github.com/dongwlin/nekomimi/internal/chatlog"
 	"github.com/dongwlin/nekomimi/internal/ctxasm"
 	"github.com/dongwlin/nekomimi/internal/diary"
-	"github.com/dongwlin/nekomimi/internal/llm/token"
+	"github.com/dongwlin/nekomimi/internal/llm/model"
 	"github.com/rs/zerolog/log"
 )
 
@@ -277,18 +277,18 @@ func (m *Manager) SessionContextUsage(sessionKey string) SessionContextUsage {
 		if err == nil {
 			usage.AssembledChars = assembled.TotalChars
 			usage.TruncatedBlockCount = countTruncatedBlocks(assembled.Blocks)
-			assembledContent := renderUsageAssembledBlocks(assembled.Blocks)
+			assembledContent := renderAssembledBlocks(assembled.Blocks)
 			if strings.TrimSpace(assembledContent) == "" {
-				usage.UsedTokens = token.EstimateContextTokens(state.systemPrompt, nil)
+				usage.UsedTokens = estimateContextTokens(state.systemPrompt, nil)
 			} else {
-				usage.UsedTokens = token.EstimateContextTokens(state.systemPrompt, []Message{
+				usage.UsedTokens = estimateContextTokens(state.systemPrompt, []model.Message{
 					{Role: "user", Content: assembledContent},
 				})
 			}
 		}
 	}
 	if usage.UsedTokens == 0 {
-		usage.UsedTokens = token.EstimateContextTokens(state.systemPrompt, nil)
+		usage.UsedTokens = estimateContextTokens(state.systemPrompt, nil)
 	}
 	if usage.MaxTokens > 0 {
 		usage.UsagePercent = float64(usage.UsedTokens) * 100 / float64(usage.MaxTokens)
@@ -327,8 +327,4 @@ func countTruncatedBlocks(blocks []ctxasm.Block) int {
 		}
 	}
 	return count
-}
-
-func renderUsageAssembledBlocks(blocks []ctxasm.Block) string {
-	return renderAssembledBlocks(blocks)
 }

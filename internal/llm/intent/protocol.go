@@ -113,10 +113,6 @@ func Validate(value ControlIntent) error {
 	}
 }
 
-func IsProtocolError(err error) bool {
-	return errors.Is(err, ErrProtocol)
-}
-
 func wrapProtocolError(err error) error {
 	if err == nil {
 		return ErrProtocol
